@@ -1,0 +1,42 @@
+{
+    // Olası öznitelikler hakkında bilgi edinmek için IntelliSense kullanın.
+    // Mevcut özniteliklerin açıklamalarını görüntülemek için üzerine gelin.
+    // Daha fazla bilgi için şu adresi ziyaret edin: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": ".NET Core Launch (console)",
+            "type": "coreclr",
+            "request": "launch",
+            "UYARI01": "*********************************************************************************",
+            "UYARI02": "The C# extension was unable to automatically decode projects in the current",
+            "UYARI03": "workspace to create a runnable launch.json file. A template launch.json file has",
+            "UYARI04": "been created as a placeholder.",
+            "UYARI05": "",
+            "UYARI06": "If the server is currently unable to load your project, you can attempt to",
+            "UYARI07": "resolve this by restoring any missing project dependencies (example: run 'dotnet",
+            "UYARI08": "restore') and by fixing any reported errors from building the projects in your",
+            "UYARI09": "workspace.",
+            "UYARI10": "If this allows the server to now load your project then --",
+            "UYARI11": "  * Delete this file",
+            "UYARI12": "  * Open the Visual Studio Code command palette (View->Command Palette)",
+            "UYARI13": "  * run the command: '.NET: Generate Assets for Build and Debug'.",
+            "UYARI14": "",
+            "UYARI15": "If your project requires a more complex launch configuration, you may wish to",
+            "UYARI16": "delete this configuration and pick a different template using the 'Add",
+            "UYARI17": "Configuration...' button at the bottom of this file.",
+            "UYARI18": "*********************************************************************************",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/Debug/<insert-target-framework-here>/<insert-project-name-here>.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": ".NET Core Attach",
+            "type": "coreclr",
+            "request": "attach"
+        }
+    ]
+}

@@ -1,0 +1,79 @@
+﻿<Window x:Class="P5S_ceviri.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:P5S_ceviri"
+        mc:Ignorable="d"
+        Title="Anlık Oyun Çeviri Aracı" Height="600" Width="800">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="150"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Üst Kontrol Paneli -->
+        <StackPanel Grid.Row="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="5">
+            <Label Content="Uygulama:" VerticalAlignment="Center"/>
+            <ComboBox Name="cmbProcesses" Width="618" SelectionChanged="CmbProcesses_SelectionChanged">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal">
+                            <Image Source="{Binding IconImage}" Width="16" Height="16" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding ProcessName}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Name="btnRefresh" Content="Yenile" Margin="5,0" Click="btnRefresh_Click"/>
+            <Label Name="lblStatus" Content="Hazır." VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <!-- Orijinal ve Çevrilmiş Metin -->
+        <GroupBox Header="Orijinal Metin" Grid.Row="1" Grid.Column="0" Margin="5">
+            <TextBox Name="txtOriginal" TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
+        </GroupBox>
+        <GroupBox Header="Çevrilmiş Metin" Grid.Row="1" Grid.Column="1" Margin="5">
+            <TextBox Name="txtTranslated" TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
+        </GroupBox>
+
+        <GridSplitter Grid.Row="2" Grid.ColumnSpan="2" Height="5" HorizontalAlignment="Stretch"/>
+
+        <!-- Kontrol Panelleri -->
+        <StackPanel Grid.Row="3" Grid.Column="0" Margin="5">
+            <GroupBox Header="RAM'den Çeviri">
+                <StackPanel Margin="5">
+                    <Button Name="btnTranslate" Content="RAM Çevirisini Başlat" Click="btnTranslate_Click"/>
+                    <TextBlock Text="Bellek Adresi (Hex):" Margin="0,5,0,2"/>
+                    <TextBox Name="txtAddress" Text=""/>
+                </StackPanel>
+            </GroupBox>
+        </StackPanel>
+
+        <StackPanel Grid.Row="3" Grid.Column="1" Margin="5">
+            <GroupBox Header="Ekrandan Çeviri (OCR)">
+                <StackPanel Margin="5">
+                    <TextBlock Text="Seçilen oyun penceresinin alt kısmı otomatik olarak taranacaktır." TextWrapping="Wrap"/>
+                    <Button Name="btnContinuousOcr" Content="Ekran Çevirisini Başlat" Click="btnContinuousOcr_Click" Margin="0,10,0,0"/>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="Görsel Ayarlar" Margin="0,10,0,0">
+                <StackPanel Margin="5">
+                    <Button Name="btnToggleOverlay" Content="Çeviri Penceresini Göster/Gizle" Click="btnToggleOverlay_Click"/>
+                </StackPanel>
+            </GroupBox>
+        </StackPanel>
+
+        <!-- Log Çıktısı -->
+        <GroupBox Header="Log" Grid.Row="4" Grid.ColumnSpan="2" Margin="5,0,5,5">
+            <ListBox Name="txtOutput"/>
+        </GroupBox>
+    </Grid>
+</Window>
