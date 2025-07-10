@@ -19,7 +19,6 @@
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- Üst Kontrol Paneli -->
         <StackPanel Grid.Row="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="5">
             <Label Content="Uygulama:" VerticalAlignment="Center"/>
             <ComboBox Name="cmbProcesses" Width="618" SelectionChanged="CmbProcesses_SelectionChanged">
@@ -46,7 +45,7 @@
 
         <GridSplitter Grid.Row="2" Grid.ColumnSpan="2" Height="5" HorizontalAlignment="Stretch"/>
 
-        <!-- Kontrol Panelleri -->
+        <!-- Kontrol Panel -->
         <StackPanel Grid.Row="3" Grid.Column="0" Margin="5">
             <GroupBox Header="RAM'den Çeviri">
                 <StackPanel Margin="5">
@@ -55,6 +54,9 @@
                     <TextBox Name="txtAddress" Text=""/>
                 </StackPanel>
             </GroupBox>
+            <Label Content="Çeviri Servisi:" Margin="10,10,10,0" />
+            <ComboBox x:Name="cmbTranslationService" Margin="10,0,10,5" Padding="5"
+          DisplayMemberPath="Name" SelectedValuePath="Type" />
         </StackPanel>
 
         <StackPanel Grid.Row="3" Grid.Column="1" Margin="5">

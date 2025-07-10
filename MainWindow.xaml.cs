@@ -48,16 +48,9 @@ namespace P5S_ceviri
         private string _lastManualText = "";
 
         private bool _isContinuousOcrRunning = false;
-        private string _lastOcrText = "";
-        private string _ocrCandidateText = "";
-        private int _ocrStableCounter = 0;
-        private long _ocrTranslationVersion = 0;
-        private Bitmap _previousImage;
         private bool _isOcrTickBusy = false;
 
-        #region Fields & Properties  
-        private double cropPercentage = 0.3; // Varsayılan olarak ekranın alt %30'sini kırp  
-
+        private System.Drawing.Rectangle? _selectedOcrRegion = null;
         #endregion
 
         public MainWindow()
@@ -74,6 +67,8 @@ namespace P5S_ceviri
                 _gameRecipeService = ServiceContainer.GetService<IGameRecipeService>();
                 _settingsManager = new SettingsManager(_logger);
                 _appSettings = _settingsManager.LoadSettings();
+
+                InitializeTranslationServices();
 
                 _manualTranslationTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
                 _manualTranslationTimer.Tick += ManualTranslationTimer_Tick;
@@ -101,6 +96,116 @@ namespace P5S_ceviri
                 Application.Current.Shutdown();
             }
         }
+
+        private void InitializeTranslationServices()
+        {
+            if (_translationService is AdvancedTranslationService advancedService)
+            {
+                cmbTranslationService.ItemsSource = advancedService.AvailableStrategies;
+                cmbTranslationService.SelectedIndex = 0;
+            }
+        }
+
+        private Type GetSelectedTranslationStrategy()
+        {
+            if (cmbTranslationService.SelectedItem is StrategyInfo selectedStrategy)
+            {
+                return selectedStrategy.Type;
+            }
+            return null;
+        }
+
+        #region Timer Ticks
+        private async void ContinuousTranslationTimer_Tick(object sender, EventArgs e)
+        {
+            var pi = cmbProcesses.SelectedItem as ProcessInfo;
+            if (pi == null || !_isContinuousTranslationRunning || pi.Process.HasExited)
+            {
+                StopAllTranslations();
+                return;
+            }
+            if (_dynamicTextAddress == IntPtr.Zero) return;
+
+            string currentText = _memoryService.TryReadStringDeep(_dynamicTextAddress);
+            if (!string.IsNullOrEmpty(currentText) && currentText != _lastReadText)
+            {
+                _lastReadText = currentText;
+                string translated = await _translationService.TranslateAsync(currentText, "tr", GetSelectedTranslationStrategy());
+                Dispatcher.Invoke(() =>
+                {
+                    txtOriginal.Text = $"[RAM] {currentText}";
+                    txtTranslated.Text = translated;
+                    OnTranslatedTextChanged(translated);
+                });
+            }
+        }
+
+        private async void ManualTranslationTimer_Tick(object sender, EventArgs e)
+        {
+            if (_manualAddress == IntPtr.Zero) return;
+
+            string currentText = _memoryService.TryReadStringDeep(_manualAddress);
+            if (!string.IsNullOrWhiteSpace(currentText) && currentText != _lastManualText)
+            {
+                _lastManualText = currentText;
+                string translated = await _translationService.TranslateAsync(currentText, "tr", GetSelectedTranslationStrategy());
+                Dispatcher.Invoke(() =>
+                {
+                    txtOriginal.Text = $"[Manuel] {currentText}";
+                    txtTranslated.Text = translated;
+                    OnTranslatedTextChanged(translated);
+                });
+            }
+        }
+        private async void ContinuousOcrTimer_Tick(object sender, EventArgs e)
+        {
+            if (_isOcrTickBusy) return;
+            _isOcrTickBusy = true;
+
+            try
+            {
+                if (!_isContinuousOcrRunning) return;
+                var pi = cmbProcesses.SelectedItem as ProcessInfo;
+                if (pi == null || pi.Process.HasExited)
+                {
+                    StopContinuousOcr();
+                    return;
+                }
+
+                var handle = pi.Process.MainWindowHandle;
+                if (handle == IntPtr.Zero) return;
+
+                using (var screenshot = _ocrService.CaptureWindow(handle))
+                {
+                    if (screenshot == null) return;
+
+                    using (Bitmap imageToProcess = _selectedOcrRegion.HasValue ?
+                           _ocrService.CropImage(screenshot, _selectedOcrRegion.Value) :
+                           (Bitmap)screenshot.Clone())
+                    {
+                        string currentText = await _ocrService.GetTextAdaptiveAsync(imageToProcess, "eng");
+
+                        if (!string.IsNullOrWhiteSpace(currentText) && currentText != _lastReadText)
+                        {
+                            _lastReadText = currentText;
+                            string translated = await _translationService.TranslateAsync(currentText, "tr", GetSelectedTranslationStrategy());
+
+                            Dispatcher.Invoke(() =>
+                            {
+                                txtOriginal.Text = $"[OCR] {currentText}";
+                                txtTranslated.Text = translated;
+                                OnTranslatedTextChanged(translated);
+                            });
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                _isOcrTickBusy = false;
+            }
+        }
+        #endregion
 
         #region UI Event Handlers
         private void btnRefresh_Click(object sender, RoutedEventArgs e) => LoadProcesses();
@@ -133,7 +238,7 @@ namespace P5S_ceviri
             if (_isContinuousOcrRunning) StopContinuousOcr();
 
             string addressText = txtAddress.Text.Trim();
-            if (!string.IsNullOrWhiteSpace(addressText))
+            if (!string.IsNullOrWhiteSpace(addressText) && !addressText.Equals("Lütfen bir uygulama seçin.", StringComparison.OrdinalIgnoreCase))
             {
                 StartManualTranslation(addressText);
             }
@@ -155,6 +260,10 @@ namespace P5S_ceviri
             if (_outputWindow == null || !_outputWindow.IsLoaded)
             {
                 _outputWindow = new OutputWindow(this);
+                _outputWindow.RegionSelected += (region) => {
+                    _selectedOcrRegion = region;
+                    AppendToLog($"Yeni OCR bölgesi seçildi: {region}");
+                };
                 _outputWindow.Show();
                 AppendToLog("Çeviri penceresi gösterildi.");
             }
@@ -164,6 +273,15 @@ namespace P5S_ceviri
                 _outputWindow = null;
                 AppendToLog("Çeviri penceresi gizlendi.");
             }
+        }
+
+        private void btnSelectOcrRegion_Click(object sender, RoutedEventArgs e)
+        {
+            if (_outputWindow == null || !_outputWindow.IsLoaded)
+            {
+                btnToggleOverlay_Click(sender, e);
+            }
+            _outputWindow?.EnterSelectionMode();
         }
         #endregion
 
@@ -275,9 +393,7 @@ namespace P5S_ceviri
         {
             _isContinuousOcrRunning = false;
             _continuousOcrTimer.Stop();
-            _ocrCandidateText = "";
-            _ocrStableCounter = 0;
-            _ocrTranslationVersion = 0;
+            _lastReadText = "";
             _isOcrTickBusy = false;
             AppendToLog("Ekran çevirisi durduruldu.");
             UpdateUIState();
@@ -320,99 +436,6 @@ namespace P5S_ceviri
         }
         #endregion
 
-        #region Timer Ticks
-        private async void ContinuousTranslationTimer_Tick(object sender, EventArgs e)
-        {
-            var pi = cmbProcesses.SelectedItem as ProcessInfo;
-            if (pi == null || !_isContinuousTranslationRunning || pi.Process.HasExited)
-            {
-                StopAllTranslations();
-                return;
-            }
-            if (_dynamicTextAddress == IntPtr.Zero) return;
-
-            string currentText = _memoryService.TryReadStringDeep(_dynamicTextAddress);
-            if (!string.IsNullOrEmpty(currentText) && currentText != _lastReadText)
-            {
-                _lastReadText = currentText;
-                string translated = await _translationService.TranslateAsync(currentText, "tr");
-                Dispatcher.Invoke(() =>
-                {
-                    txtOriginal.Text = $"[RAM] {currentText}";
-                    txtTranslated.Text = translated;
-                    OnTranslatedTextChanged(translated);
-                });
-            }
-        }
-
-        private async void ManualTranslationTimer_Tick(object sender, EventArgs e)
-        {
-            if (_manualAddress == IntPtr.Zero) return;
-
-            string currentText = _memoryService.TryReadStringDeep(_manualAddress);
-            if (!string.IsNullOrWhiteSpace(currentText) && currentText != _lastManualText)
-            {
-                _lastManualText = currentText;
-                string translated = await _translationService.TranslateAsync(currentText, "tr");
-                Dispatcher.Invoke(() =>
-                {
-                    txtOriginal.Text = $"[Manuel] {currentText}";
-                    txtTranslated.Text = translated;
-                    OnTranslatedTextChanged(translated);
-                });
-            }
-        }
-
-        private async void ContinuousOcrTimer_Tick(object sender, EventArgs e)
-        {
-            if (_isOcrTickBusy) return;
-            _isOcrTickBusy = true;
-
-            try
-            {
-                if (!_isContinuousOcrRunning) return;
-                var pi = cmbProcesses.SelectedItem as ProcessInfo;
-                if (pi == null || pi.Process.HasExited)
-                {
-                    StopContinuousOcr();
-                    return;
-                }
-
-                var handle = pi.Process.MainWindowHandle;
-                if (handle == IntPtr.Zero) return;
-
-                using (var screenshot = _ocrService.CaptureWindow(handle))
-                {
-                    if (screenshot == null) return;
-
-                    // Ekranın altını slider'dan gelen yüzdeye göre kırp
-                    int cropHeight = (int)(screenshot.Height * cropPercentage);
-                    var cropRegion = new Rectangle(0, screenshot.Height - cropHeight, screenshot.Width, cropHeight);
-
-                    using (var croppedBitmap = screenshot.Clone(cropRegion, screenshot.PixelFormat))
-                    {
-                        string currentText = await Task.Run(() => _ocrService.GetTextFromImage(croppedBitmap, "eng"));
-
-                        if (!string.IsNullOrWhiteSpace(currentText))
-                        {
-                            string translated = await _translationService.TranslateAsync(currentText, "tr");
-                            Dispatcher.Invoke(() =>
-                            {
-                                txtOriginal.Text = $"[OCR] {currentText}";
-                                txtTranslated.Text = translated;
-                                OnTranslatedTextChanged(translated);
-                            });
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                _isOcrTickBusy = false;
-            }
-        }
-        #endregion
-       
         #region Helper Methods
         private void UpdateUIState()
         {
@@ -421,6 +444,7 @@ namespace P5S_ceviri
             bool anyTranslationRunning = anyRamTranslationRunning || _isContinuousOcrRunning;
 
             cmbProcesses.IsEnabled = !anyTranslationRunning;
+            cmbTranslationService.IsEnabled = !anyTranslationRunning;
 
             if (anyRamTranslationRunning)
             {
@@ -540,5 +564,4 @@ namespace P5S_ceviri
             TranslatedTextChanged?.Invoke(newText);
         #endregion
     }
-    #endregion
 }

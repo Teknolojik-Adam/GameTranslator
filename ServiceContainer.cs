@@ -10,22 +10,28 @@ namespace P5S_ceviri
 
         public static void Initialize()
         {
-            // Servis sağlayıcısı daha önce başlatılmadıysa başlat
             if (_serviceProvider != null) return;
 
             var services = new ServiceCollection();
 
-            // Logger servisi 
+
             services.AddSingleton<ILogger, ConsoleLogger>();
 
-
+            //servisler
             services.AddSingleton<IProcessService, ProcessService>();
             services.AddSingleton<IMemoryService, MemoryService>();
             services.AddSingleton<IGameRecipeService, GameRecipeService>();
             services.AddSingleton<ITranslationService, AdvancedTranslationService>();
-            services.AddSingleton<IOcrService, OcrService>();
 
-            // HttpClient servisi 
+            // servis sağlayıcısından (sp) alarak veriyoruz.
+            services.AddSingleton<IOcrService>(sp =>
+            {
+                // ILogger servisini bul ve OcrService'in constructor'ına parametre olarak gönder.
+                var logger = sp.GetRequiredService<ILogger>();
+                return new OcrService(logger);
+            });
+
+            // HttpClient servisi
             services.AddSingleton<HttpClient>(sp =>
             {
                 var client = new HttpClient();
@@ -35,10 +41,8 @@ namespace P5S_ceviri
                 return client;
             });
 
-            // Servis sağlayıcısı oluşturuluşturmak için
             _serviceProvider = services.BuildServiceProvider();
         }
-
 
         public static T GetService<T>() where T : class
         {
@@ -49,7 +53,6 @@ namespace P5S_ceviri
             return _serviceProvider.GetRequiredService<T>();
         }
 
-        // Temizlik işlemleri
         public static void Cleanup()
         {
             _serviceProvider?.Dispose();

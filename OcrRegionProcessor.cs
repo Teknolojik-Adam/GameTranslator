@@ -1,97 +1,86 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using OpenCvSharp;
+using OpenCvSharp.Extensions;
+using System;
 using System.Drawing;
 using System.Threading.Tasks;
-using System.Windows;
 
 namespace P5S_ceviri
 {
     public class OcrRegionProcessor
     {
-        private readonly OcrService _ocrService; // OCR işlemlerini gerçekleştiren servis
-        private readonly ITranslationService _translationService; // Çeviri işlemlerini gerçekleştiren servis
+        private readonly IOcrService _ocrService;
+        private readonly ITranslationService _translationService;
+        private Bitmap _previousImage;
 
-        private List<Rectangle> _ocrRegions; // OCR işlemi yapılacak bölgeler (x, y, genişlik, yükseklik)
-        private Bitmap _previousImage; // Önceki görüntü (değişiklikleri karşılaştırmak için)
-
-       
-        public OcrRegionProcessor(OcrService ocrService, ITranslationService translationService)
+        public OcrRegionProcessor(IOcrService ocrService, ITranslationService translationService)
         {
-            _ocrService = ocrService;
-            _translationService = translationService;
-            _ocrRegions = new List<Rectangle>(); // Başlangıçta boş bir bölge listesi
+            _ocrService = ocrService ?? throw new ArgumentNullException(nameof(ocrService));
+            _translationService = translationService ?? throw new ArgumentNullException(nameof(translationService));
         }
 
-      
-        public void SetOcrRegions(List<Rectangle> regions)
+        public async Task ProcessChangedRegionsAsync(Bitmap currentImage)
         {
-            _ocrRegions = regions ?? new List<Rectangle>(); // Eğer null gelirse boş bir liste ata
-        }
+            if (currentImage == null) return;
 
-        
-        public async Task ProcessRegionsAsync(Bitmap currentImage)
-        {
-            // Eğer önceki görüntü yoksa, ilk görüntüyü kaydedip çık
             if (_previousImage == null)
             {
-                _previousImage = currentImage;
+                _previousImage = new Bitmap(currentImage);
                 return;
             }
 
-            // Her bir bölge için değişiklik kontrolü ve OCR işlemi
-            foreach (var region in _ocrRegions)
+            var regions = _ocrService.FindTextRegions(currentImage);
+
+            foreach (var region in regions)
             {
                 if (IsRegionChanged(_previousImage, currentImage, region))
                 {
-                    // Değişen bölge için görüntüyü kırp
                     using (var regionImage = _ocrService.CropImage(currentImage, region))
                     {
-                        // OCR işlemi yap ve metni al
-                        string recognizedText = await Task.Run(() => _ocrService.GetTextFromImage(regionImage, "eng", true));
+                        string recognizedText = await _ocrService.GetTextAdaptiveAsync(regionImage, "eng");
+
                         if (!string.IsNullOrWhiteSpace(recognizedText))
                         {
-                            // Metni çevir
                             string translatedText = await _translationService.TranslateAsync(recognizedText, "tr");
-
-                            // Metni UI'ye gönder veya başka bir işlem yap
-                            // Örneğin, burada bir event tetikleyebilir veya bir callback çağırabilirsin
                             OnOcrRegionProcessed(region, recognizedText, translatedText);
                         }
                     }
                 }
             }
 
-            // Yeni görüntüyü önceki görüntü olarak kaydet
-            _previousImage = currentImage;
+            _previousImage?.Dispose();
+            _previousImage = new Bitmap(currentImage);
         }
 
-      
-        private bool IsRegionChanged(Bitmap previousImage, Bitmap currentImage, Rectangle region)
+        private bool IsRegionChanged(Bitmap previous, Bitmap current, Rectangle region)
         {
-            for (int y = region.Top; y < region.Bottom; y++)
+            using (var prevRoi = previous.Clone(region, previous.PixelFormat))
+            using (var currentRoi = current.Clone(region, current.PixelFormat))
+            using (var prevMat = BitmapConverter.ToMat(prevRoi))
+            using (var currentMat = BitmapConverter.ToMat(currentRoi))
+            using (var diff = new Mat())
             {
-                for (int x = region.Left; x < region.Right; x++)
+                Cv2.Absdiff(prevMat, currentMat, diff);
+
+                if (diff.Channels() > 1)
                 {
-                    // Her iki görüntüden de piksel rengini al
-                    Color previousColor = previousImage.GetPixel(x, y);
-                    Color currentColor = currentImage.GetPixel(x, y);
-
-                    // Pikseller farklıysa bölge değişmiş demektir
-                    if (previousColor != currentColor)
-                        return true;
+                    Cv2.CvtColor(diff, diff, ColorConversionCodes.BGR2GRAY);
                 }
-            }
 
-            // Tüm pikseller aynıysa bölge değişmemiş
-            return false;
+                return Cv2.CountNonZero(diff) > (region.Width * region.Height * 0.01);
+            }
         }
 
-      
         protected virtual void OnOcrRegionProcessed(Rectangle region, string recognizedText, string translatedText)
         {
-            Console.WriteLine($"[OCR Bölge] X: {region.X}, Y: {region.Y}, Genişlik: {region.Width}, Yükseklik: {region.Height}");
+            Console.WriteLine($"[Bölge Tespiti] Bölge: {region}");
             Console.WriteLine($"[Tanınan Metin] {recognizedText}");
             Console.WriteLine($"[Çevrilmiş Metin] {translatedText}");
+        }
+
+        public void Dispose()
+        {
+            _previousImage?.Dispose();
+            _previousImage = null;
         }
     }
 }

@@ -9,8 +9,16 @@ namespace P5S_ceviri
 {
     public class MemoryService : IMemoryService
     {
+        #region Constants and P/Invoke
         private const uint PROCESS_VM_READ = 0x0010;
         private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+
+        // Metin geçerliliği için sabitler
+        private const int MIN_VALID_TEXT_LENGTH = 3;
+        private const int MAX_VALID_TEXT_LENGTH = 1000;
+        private const double MAX_NON_PRINTABLE_CHAR_RATIO = 0.2;
+        private static readonly string[] SUPPORTED_ENCODINGS = { "UTF-8", "Unicode" };
+
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
@@ -19,38 +27,44 @@ namespace P5S_ceviri
         private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, [Out] byte[] lpBuffer, int dwSize, out int lpNumberOfBytesRead);
 
         [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool CloseHandle(IntPtr hObject);
+        #endregion
 
         private readonly ILogger _logger;
         private IntPtr _processHandle = IntPtr.Zero;
 
         public MemoryService(ILogger logger)
         {
-            _logger = logger;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public bool AttachToProcess(int processId)
         {
-            Dispose();
+            Dispose(); // Önceki handle'ı güvenle kapat
             _processHandle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, processId);
-            if (_processHandle == IntPtr.Zero)
-            {
-                _logger.LogError($"Process'e bağlanılamadı (ID: {processId}). Hata Kodu: {Marshal.GetLastWin32Error()}");
-                return false;
-            }
-            return true;
+
+            if (_processHandle != IntPtr.Zero) return true;
+
+            _logger.LogError($"Process'e bağlanılamadı (ID: {processId}). Hata Kodu: {Marshal.GetLastWin32Error()}");
+            return false;
         }
 
         public byte[] ReadBytes(IntPtr address, int length)
         {
-            var buffer = new byte[length];
-            if (_processHandle == IntPtr.Zero || address == IntPtr.Zero) return Array.Empty<byte>();
-
-            if (!ReadProcessMemory(_processHandle, address, buffer, length, out _))
+            if (_processHandle == IntPtr.Zero || address == IntPtr.Zero)
             {
                 return Array.Empty<byte>();
             }
-            return buffer;
+
+            var buffer = new byte[length];
+
+            if (ReadProcessMemory(_processHandle, address, buffer, length, out _))
+            {
+                return buffer;
+            }
+
+            return Array.Empty<byte>();
         }
 
         public IntPtr ResolveAddressFromPath(Process process, PathInfo path)
@@ -69,7 +83,6 @@ namespace P5S_ceviri
                 }
 
                 IntPtr currentAddress = IntPtr.Add(mainModule.BaseAddress, (int)path.BaseAddressOffset);
-                _logger.LogInformation($"Başlangıç adresi ({path.BaseAddressModule} + 0x{path.BaseAddressOffset:X}): 0x{currentAddress.ToInt64():X}");
 
                 foreach (var offset in path.PointerOffsets)
                 {
@@ -80,7 +93,8 @@ namespace P5S_ceviri
                         return IntPtr.Zero;
                     }
 
-                    currentAddress = (IntPtr.Size == 8)
+                    // 32-bit/64-bit sistemlere göre pointer'ı oku
+                    currentAddress = IntPtr.Size == 8
                         ? (IntPtr)BitConverter.ToInt64(pointerBytes, 0)
                         : (IntPtr)BitConverter.ToInt32(pointerBytes, 0);
 
@@ -90,9 +104,7 @@ namespace P5S_ceviri
                         return IntPtr.Zero;
                     }
 
-                    _logger.LogInformation($"Pointer okundu: 0x{currentAddress.ToInt64():X}");
                     currentAddress = IntPtr.Add(currentAddress, offset);
-                    _logger.LogInformation($"Ofset (0x{offset:X}) eklendi, yeni adres: 0x{currentAddress.ToInt64():X}");
                 }
 
                 _logger.LogInformation($"Pointer yolu başarıyla çözüldü. Son metin adresi: 0x{currentAddress.ToInt64():X}");
@@ -112,42 +124,67 @@ namespace P5S_ceviri
 
         private string ReadStringRecursive(IntPtr address, int maxDepth, int length, int currentDepth, HashSet<long> visited)
         {
+            // Sonsuz döngüleri ve geçersiz durumları engelle
             if (currentDepth > maxDepth || address == IntPtr.Zero || !visited.Add(address.ToInt64()))
+            {
                 return string.Empty;
+            }
 
             byte[] directBytes = ReadBytes(address, length);
             if (directBytes.Length == 0) return string.Empty;
 
-            string[] encodings = { "UTF-8", "Unicode" };
-            foreach (var encodingName in encodings)
+            // Desteklenen metin kodlamalarını döngü ile dene
+            foreach (var encodingName in SUPPORTED_ENCODINGS)
             {
                 try
                 {
                     string potentialText = Encoding.GetEncoding(encodingName).GetString(directBytes).Split('\0')[0];
-                    if (IsValidGameText(potentialText)) return potentialText;
+                    if (IsValidGameText(potentialText))
+                    {
+                        return potentialText;
+                    }
                 }
-                catch { /* Ignore */ }
+                catch {  }
             }
 
-
+            // Eğer doğrudan metin bulunamadıysa, bir pointer olup olmadığını kontrol et
             if (directBytes.Length >= IntPtr.Size)
             {
-                long pointerValue = (IntPtr.Size == 8) ? BitConverter.ToInt64(directBytes, 0) : BitConverter.ToInt32(directBytes, 0);
+                long pointerValue = IntPtr.Size == 8
+                    ? BitConverter.ToInt64(directBytes, 0)
+                    : BitConverter.ToInt32(directBytes, 0);
+
+                // Pointer değerinin mantıklı bir aralıkta olup olmadığını kontrol et
                 if (pointerValue > 0x10000 && pointerValue < 0x7FFFFFFFFFFF)
                 {
                     return ReadStringRecursive(new IntPtr(pointerValue), maxDepth, length, currentDepth + 1, visited);
                 }
             }
+
             return string.Empty;
         }
 
         private bool IsValidGameText(string s)
         {
-            if (string.IsNullOrWhiteSpace(s) || s.Length < 3 || s.Length > 1000) return false;
-            if (s.Contains('\uFFFD')) return false;
+            if (string.IsNullOrWhiteSpace(s) || s.Length < MIN_VALID_TEXT_LENGTH || s.Length > MAX_VALID_TEXT_LENGTH)
+            {
+                return false;
+            }
+
+            // Hatalı karakterleri ve kontrol karakterlerini filtrele
+            if (s.Contains('\uFFFD')) return false; // Hatalı karakter sembolü
             int nonPrintableCount = s.Count(c => char.IsControl(c) && !char.IsWhiteSpace(c));
-            if ((double)nonPrintableCount / s.Length > 0.2) return false;
-            if (!s.Any(char.IsLetterOrDigit)) return false;
+            if ((double)nonPrintableCount / s.Length > MAX_NON_PRINTABLE_CHAR_RATIO)
+            {
+                return false;
+            }
+
+            // Sadece sembollerden oluşmadığından emin ol
+            if (!s.Any(char.IsLetterOrDigit))
+            {
+                return false;
+            }
+
             return true;
         }
 
@@ -158,6 +195,7 @@ namespace P5S_ceviri
                 CloseHandle(_processHandle);
                 _processHandle = IntPtr.Zero;
             }
+
             GC.SuppressFinalize(this);
         }
     }
