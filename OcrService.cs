@@ -4,7 +4,7 @@ using System.Drawing;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using Tesseract;
+using Tesseract; 
 using OpenCvSharp;
 using OpenCvSharp.Extensions;
 using CvPoint = OpenCvSharp.Point;
@@ -28,30 +28,37 @@ namespace P5S_ceviri
             _logger = logger;
         }
 
-        public async Task<string> RecognizeTextInRegionsAsync(Bitmap image, string language = "eng")
+ 
+        public async Task<string> RecognizeTextInRegionsAsync(Bitmap image, string language = "eng", PageSegMode psm = PageSegMode.Auto)
         {
             if (image == null) return string.Empty;
 
             var regions = FindTextRegions(image);
-            if (!regions.Any()) return string.Empty;
+            if (!regions.Any())
+            {
+                // Eğer bölge bulunamazsa, tüm görüntüyü tek bir blok olarak okumayı dene.
+                return await GetTextAdaptiveAsync(image, language, PageSegMode.SingleBlock);
+            }
 
-            var tasks = regions.Select(region => RecognizeTextInSingleRegionAsync(image, region, language));
+            var tasks = regions.Select(region => RecognizeTextInSingleRegionAsync(image, region, language, psm));
             var recognizedTexts = await Task.WhenAll(tasks);
 
             return string.Join(" ", recognizedTexts.Where(t => !string.IsNullOrWhiteSpace(t)));
         }
 
-        private async Task<string> RecognizeTextInSingleRegionAsync(Bitmap sourceImage, Rectangle region, string language)
+        private async Task<string> RecognizeTextInSingleRegionAsync(Bitmap sourceImage, Rectangle region, string language, PageSegMode psm)
         {
             using (var regionImage = CropImage(sourceImage, region))
             {
-                return await GetTextAdaptiveAsync(regionImage, language);
+                // GÜNCELLENDİ: PSM parametresini iletiyoruz.
+                return await GetTextAdaptiveAsync(regionImage, language, psm);
             }
         }
 
-        public async Task<string> GetTextAdaptiveAsync(Bitmap image, string language)
+        // GÜNCELLENDİ: Metot artık PageSegMode parametresi alıyor.
+        public async Task<string> GetTextAdaptiveAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto)
         {
-            string recognizedText = GetTextWithPreprocessing(image, language, _lastOptimalThreshold);
+            string recognizedText = GetTextWithPreprocessing(image, language, _lastOptimalThreshold, psm);
 
             if (string.IsNullOrWhiteSpace(recognizedText) || recognizedText.Length < 3)
             {
@@ -60,18 +67,20 @@ namespace P5S_ceviri
                 {
                     _logger.LogInformation($"Yeni optimal OCR ayarı bulundu: {newThreshold}");
                     _lastOptimalThreshold = newThreshold;
-                    recognizedText = GetTextWithPreprocessing(image, language, newThreshold);
+                    recognizedText = GetTextWithPreprocessing(image, language, newThreshold, psm);
                 }
             }
             return recognizedText;
         }
 
-        private string GetTextWithPreprocessing(Bitmap image, string language, int threshold)
+        // GÜNCELLENDİ: Metot artık PageSegMode parametresi alıyor ve bunu Tesseract'a iletiyor.
+        private string GetTextWithPreprocessing(Bitmap image, string language, int threshold, PageSegMode psm)
         {
             try
             {
                 using (var preprocessedImage = PreprocessImageForOcr(image, threshold))
-                using (var engine = new TesseractEngine(@"./tessdata", language, EngineMode.LstmOnly))
+                // GÜNCELLENDİ: Tesseract motorunu belirtilen PSM ile başlatıyoruz.
+                using (var engine = new TesseractEngine(@"./tessdata", language, EngineMode.LstmOnly, null, null, false) { DefaultPageSegMode = psm })
                 {
                     engine.SetVariable("user_defined_dpi", "300");
                     using (var page = engine.Process(preprocessedImage))
@@ -82,11 +91,18 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError($"OCR işlemi sırasında hata (Threshold: {threshold})", ex);
+                _logger.LogError($"OCR işlemi sırasında hata (Threshold: {threshold}, PSM: {psm})", ex);
                 return string.Empty;
             }
         }
 
+        // Arayüze uyumluluk için bu metodu da güncelliyoruz.
+        public async Task<string> GetTextFromImage(Bitmap image, string language = "eng", bool invertColors = false)
+        {
+            return await GetTextAdaptiveAsync(image, language);
+        }
+
+        #region Mevcut Yardımcı Metotlar (Değişiklik Yok)
         private int FindOptimalThreshold(Bitmap image)
         {
             using (var grayMat = BitmapConverter.ToMat(image).CvtColor(ColorConversionCodes.BGR2GRAY))
@@ -107,6 +123,72 @@ namespace P5S_ceviri
             }
         }
 
+        private Bitmap PreprocessImageForOcr(Bitmap image, int threshold)
+        {
+            using (var mat = BitmapConverter.ToMat(image))
+            {
+                using (var deskewedMat = Deskew(mat))
+                {
+                    const double idealHeight = 100.0;
+                    double scale = idealHeight / deskewedMat.Height;
+                    Mat resizedMat;
+                    if (scale > 1.1)
+                    {
+                        resizedMat = deskewedMat.Resize(new CvSize(), scale, scale, InterpolationFlags.Cubic);
+                    }
+                    else
+                    {
+                        resizedMat = deskewedMat.Clone();
+                    }
+
+                    using (resizedMat)
+                    using (var gray = resizedMat.CvtColor(ColorConversionCodes.BGR2GRAY))
+                    {
+                        Cv2.MedianBlur(gray, gray, 3);
+                        Cv2.Threshold(gray, gray, threshold, 255, ThresholdTypes.Binary);
+                        return BitmapConverter.ToBitmap(gray);
+                    }
+                }
+            }
+        }
+
+        private Mat Deskew(Mat src)
+        {
+            try
+            {
+                using (var gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
+                using (var inverted = new Mat())
+                {
+                    Cv2.BitwiseNot(gray, inverted);
+                    var element = Cv2.GetStructuringElement(MorphShapes.Rect, new CvSize(25, 5));
+                    Cv2.Erode(inverted, inverted, element);
+
+                    using (var coords = new Mat())
+                    {
+                        Cv2.FindNonZero(inverted, coords);
+                        if (coords.Rows < 10) return src.Clone();
+
+                        var rect = Cv2.MinAreaRect(coords.FindNonZero());
+                        var angle = rect.Angle;
+                        if (angle < -45.0) angle = 90.0f + angle;
+
+                        var center = new Point2f(src.Width / 2f, src.Height / 2f);
+                        using (var rotMatrix = Cv2.GetRotationMatrix2D(center, angle, 1.0))
+                        {
+                            var result = new Mat();
+                            Cv2.WarpAffine(src, result, rotMatrix, src.Size(), InterpolationFlags.Cubic);
+                            return result;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Görüntü düzleştirme (deskew) sırasında hata oluştu.", ex);
+                return src.Clone();
+            }
+        }
+
         public List<Rectangle> FindTextRegions(Bitmap sourceImage)
         {
             using (Mat src = BitmapConverter.ToMat(sourceImage))
@@ -121,23 +203,6 @@ namespace P5S_ceviri
                                .Where(r => r.Width > 50 && r.Height > 20 && r.Width < src.Width * 0.95 && r.Height < src.Height * 0.95)
                                .Select(r => new Rectangle(r.X, r.Y, r.Width, r.Height))
                                .ToList();
-            }
-        }
-
-  
-        public async Task<string> GetTextFromImage(Bitmap image, string language = "eng", bool invertColors = false)
-        {
-            return await GetTextAdaptiveAsync(image, language);
-        }
-
-        private Bitmap PreprocessImageForOcr(Bitmap image, int threshold)
-        {
-            using (var mat = BitmapConverter.ToMat(image))
-            using (var gray = mat.CvtColor(ColorConversionCodes.BGR2GRAY))
-            {
-                Cv2.GaussianBlur(gray, gray, new CvSize(3, 3), 0);
-                Cv2.Threshold(gray, gray, threshold, 255, ThresholdTypes.Binary);
-                return BitmapConverter.ToBitmap(gray);
             }
         }
 
@@ -158,5 +223,6 @@ namespace P5S_ceviri
         }
 
         public Bitmap CropImage(Bitmap image, Rectangle region) => image.Clone(region, image.PixelFormat);
+        #endregion
     }
 }

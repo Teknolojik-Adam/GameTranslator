@@ -134,6 +134,8 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="PointerScanner.cs" />
+    <Compile Include="TranslationCacheManager.cs" />
     <Page Include="InputDialog.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>

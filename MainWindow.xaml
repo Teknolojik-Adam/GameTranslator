@@ -66,11 +66,13 @@
                     <Button Name="btnContinuousOcr" Content="Ekran Çevirisini Başlat" Click="btnContinuousOcr_Click" Margin="0,10,0,0"/>
                 </StackPanel>
             </GroupBox>
-            <GroupBox Header="Görsel Ayarlar" Margin="0,10,0,0">
+            <GroupBox Header="Görsel Ayarlar">
                 <StackPanel Margin="5">
-                    <Button Name="btnToggleOverlay" Content="Çeviri Penceresini Göster/Gizle" Click="btnToggleOverlay_Click"/>
+                    <Button x:Name="btnToggleOverlay" Content="Çeviri Penceresini Göster/Gizle" Click="btnToggleOverlay_Click"/>
                 </StackPanel>
             </GroupBox>
+          
+
         </StackPanel>
 
         <!-- Log Çıktısı -->
