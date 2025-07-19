@@ -36,7 +36,6 @@ namespace P5S_ceviri
             }
             catch
             {
-                // Hata durumunda boþ bir BitmapImage döndür
             }
             return new BitmapImage();
         }

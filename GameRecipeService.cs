@@ -95,17 +95,7 @@ namespace P5S_ceviri
                 : newRecipe.ProcessName;
             _recipeCache[processKey] = newRecipe.PathInfo;
 
-            try
-            {
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                string newJsonString = JsonSerializer.Serialize(recipes, options);
-                File.WriteAllText(RecipesFileName, newJsonString);
-                _logger.LogInformation($"json dosyası '{RecipesFileName}' başarıyla kaydedildi.");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"json dosyası kaydedilemedi.", ex);
-            }
+            SaveRecipesToFile(recipes);
         }
 
         private void CreateSampleRecipeFile()
@@ -114,26 +104,39 @@ namespace P5S_ceviri
             {
                 new GameRecipe
                 {
-                    ProcessName = "P5S",
+                    ProcessName = "",
                     PathInfo = new PathInfo
                     {
-                        BaseAddressModule = "P5S.exe",
+                        BaseAddressModule = ".exe",
                         BaseAddressOffset = 0x1A2B3C,
                         PointerOffsets = new List<int> { 0x40, 0x1F8, 0x10 }
                     }
                 }
             };
 
+            SaveRecipesToFile(sampleRecipes, true);
+        }
+
+        private void SaveRecipesToFile(List<GameRecipe> recipes, bool isSampleFile = false)
+        {
             try
             {
                 var options = new JsonSerializerOptions { WriteIndented = true };
-                string jsonString = JsonSerializer.Serialize(sampleRecipes, options);
+                string jsonString = JsonSerializer.Serialize(recipes, options);
                 File.WriteAllText(RecipesFileName, jsonString);
-                _logger.LogInformation($"Örnek json dosyası '{RecipesFileName}' oluşturuldu.");
+
+                if (isSampleFile)
+                {
+                    _logger.LogInformation($"Örnek json dosyası '{RecipesFileName}' oluşturuldu.");
+                }
+                else
+                {
+                    _logger.LogInformation($"json dosyası '{RecipesFileName}' başarıyla kaydedildi.");
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Örnek json dosyası oluşturulamadı.", ex);
+                _logger.LogError($"json dosyası kaydedilemedi.", ex);
             }
         }
 

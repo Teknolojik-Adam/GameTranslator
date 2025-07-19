@@ -8,7 +8,7 @@ namespace P5S_ceviri
     public class ProcessService : IProcessService
     {
         private readonly ILogger _logger;
-        // İşlem listesi için bir alan.
+
         private List<Process> _processes = new List<Process>();
 
         public ProcessService(ILogger logger)

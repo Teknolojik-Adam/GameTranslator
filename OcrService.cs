@@ -4,7 +4,7 @@ using System.Drawing;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using Tesseract; 
+using Tesseract;
 using OpenCvSharp;
 using OpenCvSharp.Extensions;
 using CvPoint = OpenCvSharp.Point;
@@ -28,15 +28,15 @@ namespace P5S_ceviri
             _logger = logger;
         }
 
- 
+
         public async Task<string> RecognizeTextInRegionsAsync(Bitmap image, string language = "eng", PageSegMode psm = PageSegMode.Auto)
         {
             if (image == null) return string.Empty;
 
-            var regions = FindTextRegions(image);
+            var regions = await Task.Run(() => FindTextRegions(image));
             if (!regions.Any())
             {
-                // Eğer bölge bulunamazsa, tüm görüntüyü tek bir blok olarak okumayı dene.
+                // Eğer bölge bulunamazsa, tüm görüntüyü tek bir blok olarak okumak için.
                 return await GetTextAdaptiveAsync(image, language, PageSegMode.SingleBlock);
             }
 
@@ -50,36 +50,34 @@ namespace P5S_ceviri
         {
             using (var regionImage = CropImage(sourceImage, region))
             {
-                // GÜNCELLENDİ: PSM parametresini iletiyoruz.
                 return await GetTextAdaptiveAsync(regionImage, language, psm);
             }
         }
 
-        // GÜNCELLENDİ: Metot artık PageSegMode parametresi alıyor.
         public async Task<string> GetTextAdaptiveAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto)
         {
-            string recognizedText = GetTextWithPreprocessing(image, language, _lastOptimalThreshold, psm);
+            string recognizedText = await Task.Run(() => GetTextWithPreprocessing(image, language, _lastOptimalThreshold, psm));
 
             if (string.IsNullOrWhiteSpace(recognizedText) || recognizedText.Length < 3)
             {
-                int newThreshold = FindOptimalThreshold(image);
+                int newThreshold = await Task.Run(() => FindOptimalThreshold(image));
                 if (newThreshold != -1 && newThreshold != _lastOptimalThreshold)
                 {
                     _logger.LogInformation($"Yeni optimal OCR ayarı bulundu: {newThreshold}");
                     _lastOptimalThreshold = newThreshold;
-                    recognizedText = GetTextWithPreprocessing(image, language, newThreshold, psm);
+                    recognizedText = await Task.Run(() => GetTextWithPreprocessing(image, language, newThreshold, psm));
                 }
             }
             return recognizedText;
         }
 
-        // GÜNCELLENDİ: Metot artık PageSegMode parametresi alıyor ve bunu Tesseract'a iletiyor.
+      
         private string GetTextWithPreprocessing(Bitmap image, string language, int threshold, PageSegMode psm)
         {
             try
             {
                 using (var preprocessedImage = PreprocessImageForOcr(image, threshold))
-                // GÜNCELLENDİ: Tesseract motorunu belirtilen PSM ile başlatıyoruz.
+
                 using (var engine = new TesseractEngine(@"./tessdata", language, EngineMode.LstmOnly, null, null, false) { DefaultPageSegMode = psm })
                 {
                     engine.SetVariable("user_defined_dpi", "300");
@@ -96,7 +94,7 @@ namespace P5S_ceviri
             }
         }
 
-        // Arayüze uyumluluk için bu metodu da güncelliyoruz.
+
         public async Task<string> GetTextFromImage(Bitmap image, string language = "eng", bool invertColors = false)
         {
             return await GetTextAdaptiveAsync(image, language);

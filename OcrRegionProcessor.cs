@@ -1,12 +1,13 @@
-﻿using OpenCvSharp;
-using OpenCvSharp.Extensions;
-using System;
+﻿using System;
 using System.Drawing;
+using System.Linq;
 using System.Threading.Tasks;
+using OpenCvSharp;
+using OpenCvSharp.Extensions;
 
 namespace P5S_ceviri
 {
-    public class OcrRegionProcessor
+    public class OcrRegionProcessor : IDisposable
     {
         private readonly IOcrService _ocrService;
         private readonly ITranslationService _translationService;
@@ -28,59 +29,51 @@ namespace P5S_ceviri
                 return;
             }
 
-            var regions = _ocrService.FindTextRegions(currentImage);
+            // Değişen bölgeleri filtreleme
+            var changedRegions = _ocrService
+                .FindTextRegions(currentImage)
+                .Where(r => IsRegionChanged(_previousImage, currentImage, r))
+                .ToList();
 
-            foreach (var region in regions)
+            // Her bölge için paralel OCR ile çeviri yapmak için
+            var tasks = changedRegions.Select(async region =>
             {
-                if (IsRegionChanged(_previousImage, currentImage, region))
+                var regionBmp = _ocrService.CropImage(currentImage, region);
+                string recognized = await _ocrService.GetTextAdaptiveAsync(regionBmp, "eng");
+                if (!string.IsNullOrWhiteSpace(recognized))
                 {
-                    using (var regionImage = _ocrService.CropImage(currentImage, region))
-                    {
-                        string recognizedText = await _ocrService.GetTextAdaptiveAsync(regionImage, "eng");
-
-                        if (!string.IsNullOrWhiteSpace(recognizedText))
-                        {
-                            string translatedText = await _translationService.TranslateAsync(recognizedText, "tr");
-                            OnOcrRegionProcessed(region, recognizedText, translatedText);
-                        }
-                    }
+                    string translated = await _translationService.TranslateAsync(recognized, "tr");
+                    OnOcrRegionProcessed(region, recognized, translated);
                 }
-            }
+            });
 
-            _previousImage?.Dispose();
+            await Task.WhenAll(tasks);
+
+            _previousImage.Dispose();
             _previousImage = new Bitmap(currentImage);
         }
 
-        private bool IsRegionChanged(Bitmap previous, Bitmap current, Rectangle region)
+        private bool IsRegionChanged(Bitmap prev, Bitmap curr, Rectangle region)
         {
-            using (var prevRoi = previous.Clone(region, previous.PixelFormat))
-            using (var currentRoi = current.Clone(region, current.PixelFormat))
-            using (var prevMat = BitmapConverter.ToMat(prevRoi))
-            using (var currentMat = BitmapConverter.ToMat(currentRoi))
-            using (var diff = new Mat())
-            {
-                Cv2.Absdiff(prevMat, currentMat, diff);
-
-                if (diff.Channels() > 1)
-                {
-                    Cv2.CvtColor(diff, diff, ColorConversionCodes.BGR2GRAY);
-                }
-
-                return Cv2.CountNonZero(diff) > (region.Width * region.Height * 0.01);
-            }
+            var prevRoi = prev.Clone(region, prev.PixelFormat);
+            var currRoi = curr.Clone(region, curr.PixelFormat);
+            var prevMat = BitmapConverter.ToMat(prevRoi);
+            var currMat = BitmapConverter.ToMat(currRoi);
+            var diff = new Mat();
+            Cv2.Absdiff(prevMat, currMat, diff);
+            if (diff.Channels() > 1)
+                Cv2.CvtColor(diff, diff, ColorConversionCodes.BGR2GRAY);
+            return Cv2.CountNonZero(diff) > (region.Width * region.Height * 0.01);
         }
 
         protected virtual void OnOcrRegionProcessed(Rectangle region, string recognizedText, string translatedText)
         {
-            Console.WriteLine($"[Bölge Tespiti] Bölge: {region}");
-            Console.WriteLine($"[Tanınan Metin] {recognizedText}");
-            Console.WriteLine($"[Çevrilmiş Metin] {translatedText}");
+            Console.WriteLine($"[Bölge: {region}] “{recognizedText}” → “{translatedText}”");
         }
 
         public void Dispose()
         {
             _previousImage?.Dispose();
-            _previousImage = null;
         }
     }
 }

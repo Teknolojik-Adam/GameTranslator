@@ -178,24 +178,40 @@ namespace P5S_ceviri
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
             if (pi == null || !_isContinuousTranslationRunning || pi.Process.HasExited) { StopAllTranslations(); return; }
             if (_dynamicTextAddress == IntPtr.Zero) return;
-            string currentText = _memoryService.TryReadStringDeep(_dynamicTextAddress);
-            if (!string.IsNullOrEmpty(currentText) && currentText != _lastReadText)
+
+            try
             {
-                _lastReadText = currentText;
-                string translated = await _translationService.TranslateAsync(currentText, "tr", GetSelectedTranslationStrategy());
-                Dispatcher.Invoke(() => { txtOriginal.Text = $"[RAM] {currentText}"; txtTranslated.Text = translated; OnTranslatedTextChanged(translated); });
+                string currentText = await Task.Run(() => _memoryService.TryReadStringDeep(_dynamicTextAddress));
+                if (!string.IsNullOrEmpty(currentText) && currentText != _lastReadText)
+                {
+                    _lastReadText = currentText;
+                    string translated = await _translationService.TranslateAsync(currentText, "tr", GetSelectedTranslationStrategy());
+                    Dispatcher.Invoke(() => { txtOriginal.Text = $"[RAM] {currentText}"; txtTranslated.Text = translated; OnTranslatedTextChanged(translated); });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Sürekli çeviri sırasında hata.", ex);
             }
         }
 
         private async void ManualTranslationTimer_Tick(object sender, EventArgs e)
         {
             if (_manualAddress == IntPtr.Zero) return;
-            string currentText = _memoryService.TryReadStringDeep(_manualAddress);
-            if (!string.IsNullOrWhiteSpace(currentText) && currentText != _lastManualText)
+
+            try
             {
-                _lastManualText = currentText;
-                string translated = await _translationService.TranslateAsync(currentText, "tr", GetSelectedTranslationStrategy());
-                Dispatcher.Invoke(() => { txtOriginal.Text = $"[Manuel] {currentText}"; txtTranslated.Text = translated; OnTranslatedTextChanged(translated); });
+                string currentText = await Task.Run(() => _memoryService.TryReadStringDeep(_manualAddress));
+                if (!string.IsNullOrWhiteSpace(currentText) && currentText != _lastManualText)
+                {
+                    _lastManualText = currentText;
+                    string translated = await _translationService.TranslateAsync(currentText, "tr", GetSelectedTranslationStrategy());
+                    Dispatcher.Invoke(() => { txtOriginal.Text = $"[Manuel] {currentText}"; txtTranslated.Text = translated; OnTranslatedTextChanged(translated); });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Manuel çeviri sırasında hata.", ex);
             }
         }
 
@@ -210,7 +226,8 @@ namespace P5S_ceviri
                 if (pi == null || pi.Process.HasExited) { StopContinuousOcr(); return; }
                 var handle = pi.Process.MainWindowHandle;
                 if (handle == IntPtr.Zero) return;
-                using (var screenshot = _ocrService.CaptureWindow(handle))
+
+                using (var screenshot = await Task.Run(() => _ocrService.CaptureWindow(handle)))
                 {
                     if (screenshot == null) return;
                     Bitmap imageToProcess;
@@ -246,6 +263,10 @@ namespace P5S_ceviri
                         }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Sürekli OCR sırasında hata.", ex);
             }
             finally { _isOcrTickBusy = false; }
         }
@@ -320,7 +341,7 @@ namespace P5S_ceviri
             _outputWindow?.EnterSelectionMode();
         }
 
-        private void StartManualTranslation(string addressText)
+        private async void StartManualTranslation(string addressText)
         {
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
             if (pi == null) { AppendToLog("Lütfen önce listeden bir uygulama seçin.", true); return; }

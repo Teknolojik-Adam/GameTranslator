@@ -32,7 +32,7 @@ namespace P5S_ceviri
         public bool AttachToProcess(int processId)
         {
             Dispose();
-            _processHandle = OpenProcess(0x10 | 0x0400, false, processId); 
+            _processHandle = OpenProcess(0x10 | 0x0400, false, processId);
             if (_processHandle != IntPtr.Zero) return true;
             _logger.LogError($"Process'e bağlanılamadı (ID: {processId}). Hata Kodu: {Marshal.GetLastWin32Error()}");
             return false;
@@ -74,7 +74,7 @@ namespace P5S_ceviri
             }
         }
 
-        /// Bir oyunun belleğinde belirli bir metni (Unicode) arar ve adreslerini bulur.
+        /// bellekte  belirli bir metni (Unicode) formatinda arar
         public List<IntPtr> FindStringAddresses(Process process, string searchText)
         {
             if (string.IsNullOrEmpty(searchText) || process == null) return new List<IntPtr>();

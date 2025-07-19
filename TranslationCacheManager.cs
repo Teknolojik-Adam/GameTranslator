@@ -36,7 +36,7 @@ namespace P5S_ceviri
             catch (Exception ex)
             {
                 _logger.LogError("Çeviri önbelleği yüklenirken hata oluştu.", ex);
-                return new Dictionary<string, string>(); // Hata durumunda boş başlat
+                return new Dictionary<string, string>();
             }
         }
         /// Verilen önbelleği diske JSON formatında kaydeder.

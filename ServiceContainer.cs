@@ -23,10 +23,10 @@ namespace P5S_ceviri
             services.AddSingleton<IGameRecipeService, GameRecipeService>();
             services.AddSingleton<ITranslationService, AdvancedTranslationService>();
 
-            // servis sağlayıcısından (sp) alarak veriyoruz.
+
             services.AddSingleton<IOcrService>(sp =>
             {
-                // ILogger servisini bul ve OcrService'in constructor'ına parametre olarak gönder.
+
                 var logger = sp.GetRequiredService<ILogger>();
                 return new OcrService(logger);
             });

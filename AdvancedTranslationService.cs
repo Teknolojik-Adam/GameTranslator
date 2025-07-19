@@ -7,24 +7,27 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
+using HtmlAgilityPack;
 
 namespace P5S_ceviri
 {
-  
+
     public class StrategyInfo
     {
         public string Name { get; set; }
         public Type Type { get; set; }
     }
 
-    /// Tüm çeviri stratejilerinin uyması gereken (arayüzü) tanımlar.
+
     public interface ITranslationStrategy
     {
+
         Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger);
     }
 
     #region Web Kazıma Stratejileri
-    /// DeepL web sitesini kazıyarak çeviri yapar.
+
+    /// DeepL web sitesini kazıyarak çeviri yapar
     public class DeepLWebScrapingStrategy : ITranslationStrategy
     {
         public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)
@@ -57,14 +60,26 @@ namespace P5S_ceviri
                 requestMessage.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
                 var response = await client.SendAsync(requestMessage);
                 if (!response.IsSuccessStatusCode) return null;
+
                 var html = await response.Content.ReadAsStringAsync();
-                var match = Regex.Match(html, @"<span data-complaint-type=""translation""[^>]*>(.*?)</span>", RegexOptions.Singleline);
-                if (match.Success) return HttpUtility.HtmlDecode(match.Groups[1].Value);
+
+                var htmlDoc = new HtmlDocument();
+                htmlDoc.LoadHtml(html);
+
+                var translationNode = htmlDoc.DocumentNode.SelectSingleNode("//span[@data-complaint-type='translation']");
+
+                if (translationNode != null)
+                {
+                    return HttpUtility.HtmlDecode(translationNode.InnerText);
+                }
+
+                logger.LogWarning("Yandex sayfasında çeviri metni bulunamadı. (Yapı değişmiş olabilir)");
                 return null;
             }
             catch (Exception ex) { logger.LogError("Yandex web kazıma sırasında hata.", ex); return null; }
         }
     }
+
     /// Google'ın web API'sini kullanarak çeviri yapar.
     public class GoogleWebTranslationStrategy : ITranslationStrategy
     {
@@ -97,14 +112,19 @@ namespace P5S_ceviri
             try
             {
                 string html = await client.GetStringAsync(url);
-                const string marker = "id=\"tta_output_ta\"";
-                int start = html.IndexOf(marker, StringComparison.Ordinal);
-                if (start == -1) return null;
-                start = html.IndexOf('>', start) + 1;
-                if (start < 1) return null;
-                int end = html.IndexOf('<', start);
-                if (end <= start) return null;
-                return HttpUtility.HtmlDecode(html.Substring(start, end - start));
+
+                var htmlDoc = new HtmlDocument();
+                htmlDoc.LoadHtml(html);
+
+                var translationNode = htmlDoc.GetElementbyId("tta_output_ta");
+
+                if (translationNode != null)
+                {
+                    return HttpUtility.HtmlDecode(translationNode.InnerText);
+                }
+
+                logger.LogWarning("Bing sayfasında çeviri metni bulunamadı. (ID 'tta_output_ta' değişmiş olabilir)");
+                return null;
             }
             catch (Exception ex) { logger.LogError($"Bing isteği sırasında hata: {ex.Message}", ex); return null; }
         }
