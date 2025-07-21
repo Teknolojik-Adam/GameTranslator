@@ -24,16 +24,15 @@ namespace P5S_ceviri
         private int _lastOptimalThreshold = 128;
         private readonly ILogger _logger;
 
-        // --- YENİ EKLENENLER: OpenCV DNN Modülü için alanlar ---
+
         private readonly Net _eastNet;
         private const string EastModelPath = "frozen_east_text_detection.pb";
-        // --- BİTİŞ ---
+
 
         public OcrService(ILogger logger)
         {
             _logger = logger;
 
-            // --- YENİ EKLENENLER: Constructor'da EAST modelini yükle ---
             if (File.Exists(EastModelPath))
             {
                 _eastNet = CvDnn.ReadNet(EastModelPath);
@@ -44,15 +43,15 @@ namespace P5S_ceviri
                 _logger.LogError($"EAST modeli bulunamadı: {Path.GetFullPath(EastModelPath)}. Metin tespiti bu yöntemle çalışmayacak.");
                 _eastNet = null;
             }
-            // --- BİTİŞ ---
+
         }
 
-        // Bu metot artık doğrudan FindTextRegions'ı çağırıp sonuçları işleyecek.
+
         public async Task<string> RecognizeTextInRegionsAsync(Bitmap image, string language = "eng", PageSegMode psm = PageSegMode.Auto)
         {
             if (image == null) return string.Empty;
 
-            // FindTextRegions artık yapay zeka destekli EAST modelini kullanacak
+
             var regions = FindTextRegions(image);
 
             if (!regions.Any())
@@ -71,7 +70,7 @@ namespace P5S_ceviri
         {
             using (var regionImage = CropImage(sourceImage, region))
             {
-                // Her bir bölge için en iyi sonucu almak üzere adaptive metodu kullanıyoruz.
+
                 return await GetTextAdaptiveAsync(regionImage, language, psm);
             }
         }
@@ -80,7 +79,6 @@ namespace P5S_ceviri
         {
             string recognizedText = await Task.Run(() => GetTextWithPreprocessing(image, language, _lastOptimalThreshold, psm));
 
-            // İlk deneme başarısızsa, yeni bir optimal eşik değeri bulup tekrar dene
             if (string.IsNullOrWhiteSpace(recognizedText) || recognizedText.Length < 3)
             {
                 int newThreshold = await Task.Run(() => FindOptimalThreshold(image));
@@ -94,7 +92,6 @@ namespace P5S_ceviri
             return recognizedText;
         }
 
-        // Bu metotta değişiklik yok, Tesseract ile metin okumayı yapıyor.
         private string GetTextWithPreprocessing(Bitmap image, string language, int threshold, PageSegMode psm)
         {
             try
@@ -122,18 +119,17 @@ namespace P5S_ceviri
             return await GetTextAdaptiveAsync(image, language);
         }
 
-        // --- TAMAMEN GÜNCELLENEN METOT: FindTextRegions artık EAST modelini kullanıyor ---
         public List<Rectangle> FindTextRegions(Bitmap sourceImage)
         {
             if (_eastNet == null || sourceImage == null)
             {
                 if (_eastNet == null) _logger.LogWarning("EAST modeli yüklenmediği için metin tespiti atlanıyor.");
-                return new List<Rectangle>(); // Model yüklenmemişse boş liste döndür
+                return new List<Rectangle>(); 
             }
 
             using (Mat src = BitmapConverter.ToMat(sourceImage))
             {
-                // EAST modeli 32'nin katları olan boyutlarda daha iyi çalışır
+
                 int newW = (int)(src.Width / 32.0) * 32;
                 int newH = (int)(src.Height / 32.0) * 32;
 
@@ -146,7 +142,6 @@ namespace P5S_ceviri
                 double rW = (double)src.Width / newW;
                 double rH = (double)src.Height / newH;
 
-                // Görüntüyü modele uygun hale getiriyoruz (blob oluşturma)
                 using (Mat blob = CvDnn.BlobFromImage(src, 1.0, new OpenCvSharp.Size(newW, newH), new Scalar(123.68, 116.78, 103.94), true, false))
                 {
                     _eastNet.SetInput(blob);
@@ -157,10 +152,10 @@ namespace P5S_ceviri
                     using (Mat scores = output[0])
                     using (Mat geometry = output[1])
                     {
-                        // Modelin çıktısını deşifre edip kutuları buluyoruz
+
                         var (boxes, confidences) = Decode(scores, geometry, 0.5f);
 
-                        // Zayıf ve üst üste binen kutuları temizliyoruz (Non-Maximum Suppression)
+
                         CvDnn.NMSBoxes(boxes, confidences, 0.5f, 0.4f, out int[] indices);
 
                         var finalRects = new List<Rectangle>();
@@ -206,7 +201,6 @@ namespace P5S_ceviri
             }
         }
 
-        // --- YENİ YARDIMCI METOT: EAST modelinin çıktısını anlamlı kutulara çevirir ---
         private (List<RotatedRect> boxes, List<float> confidences) Decode(Mat scores, Mat geometry, float confidenceThreshold)
         {
             var boxes = new List<RotatedRect>();
@@ -267,7 +261,7 @@ namespace P5S_ceviri
             }
         }
 
-        // Bu metot OCR'a göndermeden önce Tesseract'ın seveceği bir formata getirir.
+
         private Pix PreprocessImageForOcr(Bitmap image, int threshold)
         {
             using (var mat = BitmapConverter.ToMat(image))
@@ -299,7 +293,7 @@ namespace P5S_ceviri
             using (var gfx = Graphics.FromImage(bmp))
             {
                 IntPtr hdc = gfx.GetHdc();
-                PrintWindow(hWnd, hdc, 2); // 2 -> PW_RENDERFULLCONTENT (WPF pencereleri için daha iyi)
+                PrintWindow(hWnd, hdc, 2);
                 gfx.ReleaseHdc(hdc);
             }
             return bmp;
