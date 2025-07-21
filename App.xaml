@@ -4,7 +4,9 @@
              xmlns:local="clr-namespace:P5S_ceviri"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
+        <Style TargetType="Window" BasedOn="{StaticResource MaterialDesignWindow}" />
         <Style TargetType="Button">
+            
             <Setter Property="Padding" Value="10,5"/>
             <Setter Property="Margin" Value="0,5"/>
             <Setter Property="Background" Value="#2196F3"/>

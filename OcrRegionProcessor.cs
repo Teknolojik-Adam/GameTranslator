@@ -52,7 +52,6 @@ namespace P5S_ceviri
             _previousImage.Dispose();
             _previousImage = new Bitmap(currentImage);
         }
-
         private bool IsRegionChanged(Bitmap prev, Bitmap curr, Rectangle region)
         {
             var prevRoi = prev.Clone(region, prev.PixelFormat);
@@ -65,15 +64,10 @@ namespace P5S_ceviri
                 Cv2.CvtColor(diff, diff, ColorConversionCodes.BGR2GRAY);
             return Cv2.CountNonZero(diff) > (region.Width * region.Height * 0.01);
         }
-
         protected virtual void OnOcrRegionProcessed(Rectangle region, string recognizedText, string translatedText)
         {
             Console.WriteLine($"[Bölge: {region}] “{recognizedText}” → “{translatedText}”");
         }
 
-        public void Dispose()
-        {
-            _previousImage?.Dispose();
-        }
     }
 }

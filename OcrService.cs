@@ -1,14 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Tesseract;
 using OpenCvSharp;
+using OpenCvSharp.Dnn;
 using OpenCvSharp.Extensions;
-using CvPoint = OpenCvSharp.Point;
-using CvSize = OpenCvSharp.Size;
+// CvPoint ve CvSize için çakışmayı önlemek adına using alias kullanmıyoruz, doğrudan OpenCvSharp.Point ve OpenCvSharp.Size kullanacağız.
 
 namespace P5S_ceviri
 {
@@ -23,20 +24,40 @@ namespace P5S_ceviri
         private int _lastOptimalThreshold = 128;
         private readonly ILogger _logger;
 
+        // --- YENİ EKLENENLER: OpenCV DNN Modülü için alanlar ---
+        private readonly Net _eastNet;
+        private const string EastModelPath = "frozen_east_text_detection.pb";
+        // --- BİTİŞ ---
+
         public OcrService(ILogger logger)
         {
             _logger = logger;
+
+            // --- YENİ EKLENENLER: Constructor'da EAST modelini yükle ---
+            if (File.Exists(EastModelPath))
+            {
+                _eastNet = CvDnn.ReadNet(EastModelPath);
+                _logger.LogInformation("EAST metin tespit modeli başarıyla yüklendi.");
+            }
+            else
+            {
+                _logger.LogError($"EAST modeli bulunamadı: {Path.GetFullPath(EastModelPath)}. Metin tespiti bu yöntemle çalışmayacak.");
+                _eastNet = null;
+            }
+            // --- BİTİŞ ---
         }
 
-
+        // Bu metot artık doğrudan FindTextRegions'ı çağırıp sonuçları işleyecek.
         public async Task<string> RecognizeTextInRegionsAsync(Bitmap image, string language = "eng", PageSegMode psm = PageSegMode.Auto)
         {
             if (image == null) return string.Empty;
 
-            var regions = await Task.Run(() => FindTextRegions(image));
+            // FindTextRegions artık yapay zeka destekli EAST modelini kullanacak
+            var regions = FindTextRegions(image);
+
             if (!regions.Any())
             {
-                // Eğer bölge bulunamazsa, tüm görüntüyü tek bir blok olarak okumak için.
+                _logger.LogWarning("Görüntüde metin bölgesi tespit edilemedi. Görüntünün tamamı taranacak.");
                 return await GetTextAdaptiveAsync(image, language, PageSegMode.SingleBlock);
             }
 
@@ -50,6 +71,7 @@ namespace P5S_ceviri
         {
             using (var regionImage = CropImage(sourceImage, region))
             {
+                // Her bir bölge için en iyi sonucu almak üzere adaptive metodu kullanıyoruz.
                 return await GetTextAdaptiveAsync(regionImage, language, psm);
             }
         }
@@ -58,12 +80,13 @@ namespace P5S_ceviri
         {
             string recognizedText = await Task.Run(() => GetTextWithPreprocessing(image, language, _lastOptimalThreshold, psm));
 
+            // İlk deneme başarısızsa, yeni bir optimal eşik değeri bulup tekrar dene
             if (string.IsNullOrWhiteSpace(recognizedText) || recognizedText.Length < 3)
             {
                 int newThreshold = await Task.Run(() => FindOptimalThreshold(image));
                 if (newThreshold != -1 && newThreshold != _lastOptimalThreshold)
                 {
-                    _logger.LogInformation($"Yeni optimal OCR ayarı bulundu: {newThreshold}");
+                    _logger.LogInformation($"Yeni optimal OCR eşik değeri bulundu: {newThreshold}");
                     _lastOptimalThreshold = newThreshold;
                     recognizedText = await Task.Run(() => GetTextWithPreprocessing(image, language, newThreshold, psm));
                 }
@@ -71,15 +94,15 @@ namespace P5S_ceviri
             return recognizedText;
         }
 
-      
+        // Bu metotta değişiklik yok, Tesseract ile metin okumayı yapıyor.
         private string GetTextWithPreprocessing(Bitmap image, string language, int threshold, PageSegMode psm)
         {
             try
             {
                 using (var preprocessedImage = PreprocessImageForOcr(image, threshold))
-
-                using (var engine = new TesseractEngine(@"./tessdata", language, EngineMode.LstmOnly, null, null, false) { DefaultPageSegMode = psm })
+                using (var engine = new TesseractEngine(@"./tessdata", language, EngineMode.Default))
                 {
+                    engine.DefaultPageSegMode = psm;
                     engine.SetVariable("user_defined_dpi", "300");
                     using (var page = engine.Process(preprocessedImage))
                     {
@@ -94,16 +117,139 @@ namespace P5S_ceviri
             }
         }
 
-
         public async Task<string> GetTextFromImage(Bitmap image, string language = "eng", bool invertColors = false)
         {
             return await GetTextAdaptiveAsync(image, language);
         }
 
+        // --- TAMAMEN GÜNCELLENEN METOT: FindTextRegions artık EAST modelini kullanıyor ---
+        public List<Rectangle> FindTextRegions(Bitmap sourceImage)
+        {
+            if (_eastNet == null || sourceImage == null)
+            {
+                if (_eastNet == null) _logger.LogWarning("EAST modeli yüklenmediği için metin tespiti atlanıyor.");
+                return new List<Rectangle>(); // Model yüklenmemişse boş liste döndür
+            }
+
+            using (Mat src = BitmapConverter.ToMat(sourceImage))
+            {
+                // EAST modeli 32'nin katları olan boyutlarda daha iyi çalışır
+                int newW = (int)(src.Width / 32.0) * 32;
+                int newH = (int)(src.Height / 32.0) * 32;
+
+                if (newW <= 0 || newH <= 0)
+                {
+                    _logger.LogWarning($"Görüntü boyutu ({src.Width}x{src.Height}) EAST modeli için çok küçük.");
+                    return new List<Rectangle>();
+                }
+
+                double rW = (double)src.Width / newW;
+                double rH = (double)src.Height / newH;
+
+                // Görüntüyü modele uygun hale getiriyoruz (blob oluşturma)
+                using (Mat blob = CvDnn.BlobFromImage(src, 1.0, new OpenCvSharp.Size(newW, newH), new Scalar(123.68, 116.78, 103.94), true, false))
+                {
+                    _eastNet.SetInput(blob);
+                    string[] outNames = { "feature_fusion/Conv_7/Sigmoid", "feature_fusion/GELU_2/Sigmoid" }; // Orijinal EAST modelinin katman adları
+                    var output = new Mat[outNames.Length];
+                    _eastNet.Forward(output, outNames);
+
+                    using (Mat scores = output[0])
+                    using (Mat geometry = output[1])
+                    {
+                        // Modelin çıktısını deşifre edip kutuları buluyoruz
+                        var (boxes, confidences) = Decode(scores, geometry, 0.5f);
+
+                        // Zayıf ve üst üste binen kutuları temizliyoruz (Non-Maximum Suppression)
+                        CvDnn.NMSBoxes(boxes, confidences, 0.5f, 0.4f, out int[] indices);
+
+                        var finalRects = new List<Rectangle>();
+                        foreach (int i in indices)
+                        {
+                            RotatedRect box = boxes[i];
+                            Point2f[] vertices = box.Points();
+
+                            // Orijinal görüntü boyutuna göre ölçekle
+                            for (int j = 0; j < 4; j++)
+                            {
+                                vertices[j].X = (int)(vertices[j].X * rW);
+                                vertices[j].Y = (int)(vertices[j].Y * rH);
+                            }
+
+                            // Eksenlere hizalı bir sınırlayıcı kutu (bounding box) oluştur
+                            var boundingBox = Cv2.BoundingRect(vertices);
+
+                            // Görüntü sınırları dışına taşmayı önle
+                            int x = Math.Max(0, boundingBox.X);
+                            int y = Math.Max(0, boundingBox.Y);
+                            int width = Math.Min(sourceImage.Width - x, boundingBox.Width);
+                            int height = Math.Min(sourceImage.Height - y, boundingBox.Height);
+
+                            // Kenarlara biraz pay ekleyerek harflerin kesilmesini önle
+                            int padding = (int)(height * 0.1);
+                            x = Math.Max(0, x - padding);
+                            y = Math.Max(0, y - padding);
+                            width = Math.Min(sourceImage.Width - x, width + 2 * padding);
+                            height = Math.Min(sourceImage.Height - y, height + 2 * padding);
+
+
+                            if (width > 10 && height > 5) // Çok küçük kutuları filtrele
+                                finalRects.Add(new Rectangle(x, y, width, height));
+                        }
+
+                        // Kullanılan Mat nesnelerini serbest bırak
+                        foreach (var mat in output) mat.Dispose();
+
+                        return finalRects;
+                    }
+                }
+            }
+        }
+
+        // --- YENİ YARDIMCI METOT: EAST modelinin çıktısını anlamlı kutulara çevirir ---
+        private (List<RotatedRect> boxes, List<float> confidences) Decode(Mat scores, Mat geometry, float confidenceThreshold)
+        {
+            var boxes = new List<RotatedRect>();
+            var confidences = new List<float>();
+
+            int height = scores.Size(2);
+            int width = scores.Size(3);
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    float score = scores.At<float>(0, 0, y, x);
+                    if (score < confidenceThreshold) continue;
+
+                    float offsetX = x * 4.0f;
+                    float offsetY = y * 4.0f;
+
+                    float angle = geometry.At<float>(0, 4, y, x);
+                    float h = geometry.At<float>(0, 0, y, x) + geometry.At<float>(0, 2, y, x);
+                    float w = geometry.At<float>(0, 1, y, x) + geometry.At<float>(0, 3, y, x);
+
+                    var center = new Point2f(
+                        offsetX + (float)(Math.Cos(angle) * geometry.At<float>(0, 1, y, x)) + (float)(Math.Sin(angle) * geometry.At<float>(0, 2, y, x)),
+                        offsetY - (float)(Math.Sin(angle) * geometry.At<float>(0, 1, y, x)) + (float)(Math.Cos(angle) * geometry.At<float>(0, 2, y, x))
+                    );
+
+                    var size = new Size2f(w, h);
+
+                    boxes.Add(new RotatedRect(center, size, -angle * 180 / (float)Math.PI));
+                    confidences.Add(score);
+                }
+            }
+
+            return (boxes, confidences);
+        }
+
         #region Mevcut Yardımcı Metotlar (Değişiklik Yok)
         private int FindOptimalThreshold(Bitmap image)
         {
-            using (var grayMat = BitmapConverter.ToMat(image).CvtColor(ColorConversionCodes.BGR2GRAY))
+            if (image == null) return -1;
+            using (var mat = BitmapConverter.ToMat(image))
+            using (var grayMat = mat.CvtColor(ColorConversionCodes.BGR2GRAY))
             {
                 return Enumerable.Range(8, 11)
                                  .Select(i => i * 10)
@@ -121,86 +267,25 @@ namespace P5S_ceviri
             }
         }
 
-        private Bitmap PreprocessImageForOcr(Bitmap image, int threshold)
+        // Bu metot OCR'a göndermeden önce Tesseract'ın seveceği bir formata getirir.
+        private Pix PreprocessImageForOcr(Bitmap image, int threshold)
         {
             using (var mat = BitmapConverter.ToMat(image))
             {
-                using (var deskewedMat = Deskew(mat))
+                // Görüntüyü gri tonlamaya çevir
+                using (var gray = new Mat())
                 {
-                    const double idealHeight = 100.0;
-                    double scale = idealHeight / deskewedMat.Height;
-                    Mat resizedMat;
-                    if (scale > 1.1)
-                    {
-                        resizedMat = deskewedMat.Resize(new CvSize(), scale, scale, InterpolationFlags.Cubic);
-                    }
-                    else
-                    {
-                        resizedMat = deskewedMat.Clone();
-                    }
+                    Cv2.CvtColor(mat, gray, ColorConversionCodes.BGR2GRAY);
 
-                    using (resizedMat)
-                    using (var gray = resizedMat.CvtColor(ColorConversionCodes.BGR2GRAY))
-                    {
-                        Cv2.MedianBlur(gray, gray, 3);
-                        Cv2.Threshold(gray, gray, threshold, 255, ThresholdTypes.Binary);
-                        return BitmapConverter.ToBitmap(gray);
-                    }
+                    // Gürültüyü azaltmak için median blur uygula
+                    Cv2.MedianBlur(gray, gray, 3);
+
+                    // Eşikleme (thresholding) uygula
+                    Cv2.Threshold(gray, gray, threshold, 255, ThresholdTypes.Binary);
+
+                    // Tesseract'ın kullandığı Pix formatına dönüştür
+                    return PixConverter.ToPix(BitmapConverter.ToBitmap(gray));
                 }
-            }
-        }
-
-        private Mat Deskew(Mat src)
-        {
-            try
-            {
-                using (var gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
-                using (var inverted = new Mat())
-                {
-                    Cv2.BitwiseNot(gray, inverted);
-                    var element = Cv2.GetStructuringElement(MorphShapes.Rect, new CvSize(25, 5));
-                    Cv2.Erode(inverted, inverted, element);
-
-                    using (var coords = new Mat())
-                    {
-                        Cv2.FindNonZero(inverted, coords);
-                        if (coords.Rows < 10) return src.Clone();
-
-                        var rect = Cv2.MinAreaRect(coords.FindNonZero());
-                        var angle = rect.Angle;
-                        if (angle < -45.0) angle = 90.0f + angle;
-
-                        var center = new Point2f(src.Width / 2f, src.Height / 2f);
-                        using (var rotMatrix = Cv2.GetRotationMatrix2D(center, angle, 1.0))
-                        {
-                            var result = new Mat();
-                            Cv2.WarpAffine(src, result, rotMatrix, src.Size(), InterpolationFlags.Cubic);
-                            return result;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Görüntü düzleştirme (deskew) sırasında hata oluştu.", ex);
-                return src.Clone();
-            }
-        }
-
-        public List<Rectangle> FindTextRegions(Bitmap sourceImage)
-        {
-            using (Mat src = BitmapConverter.ToMat(sourceImage))
-            using (Mat gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
-            using (Mat edges = gray.Canny(100, 200, 3))
-            using (Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new CvSize(5, 5)))
-            {
-                Cv2.Dilate(edges, edges, kernel, iterations: 2);
-                Cv2.FindContours(edges, out CvPoint[][] contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
-
-                return contours.Select(c => Cv2.BoundingRect(c))
-                               .Where(r => r.Width > 50 && r.Height > 20 && r.Width < src.Width * 0.95 && r.Height < src.Height * 0.95)
-                               .Select(r => new Rectangle(r.X, r.Y, r.Width, r.Height))
-                               .ToList();
             }
         }
 
@@ -214,7 +299,7 @@ namespace P5S_ceviri
             using (var gfx = Graphics.FromImage(bmp))
             {
                 IntPtr hdc = gfx.GetHdc();
-                PrintWindow(hWnd, hdc, 2);
+                PrintWindow(hWnd, hdc, 2); // 2 -> PW_RENDERFULLCONTENT (WPF pencereleri için daha iyi)
                 gfx.ReleaseHdc(hdc);
             }
             return bmp;
