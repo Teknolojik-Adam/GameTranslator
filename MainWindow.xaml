@@ -21,7 +21,7 @@
 
         <StackPanel Grid.Row="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="5">
             <Label Content="Uygulama:" VerticalAlignment="Center"/>
-            <ComboBox Name="cmbProcesses" Width="618" SelectionChanged="CmbProcesses_SelectionChanged">
+            <ComboBox Name="cmbProcesses" Width="480" SelectionChanged="CmbProcesses_SelectionChanged">
                 <ComboBox.ItemTemplate>
                     <DataTemplate>
                         <StackPanel Orientation="Horizontal">
@@ -32,6 +32,11 @@
                 </ComboBox.ItemTemplate>
             </ComboBox>
             <Button Name="btnRefresh" Content="Yenile" Margin="5,0" Click="btnRefresh_Click"/>
+            <Label Content="Tema:" VerticalAlignment="Center" Margin="10,0,0,0"/>
+            <ComboBox Name="cmbTheme" Width="100" Margin="5,0" SelectionChanged="CmbTheme_SelectionChanged">
+                <ComboBoxItem Content="Aydınlık" Tag="Light"/>
+                <ComboBoxItem Content="Karanlık" Tag="Dark"/>
+            </ComboBox>
             <Label Name="lblStatus" Content="Hazır." VerticalAlignment="Center"/>
         </StackPanel>
 
@@ -62,7 +67,16 @@
         <StackPanel Grid.Row="3" Grid.Column="1" Margin="5">
             <GroupBox Header="Ekrandan Çeviri (OCR)">
                 <StackPanel Margin="5">
-                    <TextBlock Text="Seçilen oyun penceresinin alt kısmı otomatik olarak taranacaktır." TextWrapping="Wrap"/>
+                    <!-- YENİ EKLENEN KONTROL -->
+                    <!--
+                    <CheckBox x:Name="chkUseWindowsOcr"
+                      Content="Windows OCR Servisini Kullan"
+                      Margin="0,0,0,10"
+                      VerticalAlignment="Center"
+                      Checked="chkUseWindowsOcr_StateChanged"
+                      Unchecked="chkUseWindowsOcr_StateChanged"/>-->
+
+                    <TextBlock Text="Seçilen oyun penceresinin otomatik olarak taranacaktır." TextWrapping="Wrap"/>
                     <Button Name="btnContinuousOcr" Content="Ekran Çevirisini Başlat" Click="btnContinuousOcr_Click" Margin="0,10,0,0"/>
                 </StackPanel>
             </GroupBox>
@@ -71,7 +85,44 @@
                     <Button x:Name="btnToggleOverlay" Content="Çeviri Penceresini Göster/Gizle" Click="btnToggleOverlay_Click"/>
                 </StackPanel>
             </GroupBox>
-          
+
+      
+            <GroupBox Header="Gelişmiş Pointer Tarama" Margin="0,5,0,0">
+                <StackPanel Margin="5">
+                    <TextBlock Text="RAM'de aranacak metin:" Margin="0,0,0,2"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                        <TextBox Name="txtScanText" Width="150" Margin="0,0,5,0" ToolTip="RAM'de aranacak tam metin"/>
+                        <Button Name="btnScanPointers" Content="Tara" Click="btnScanPointers_Click" IsEnabled="False" Width="60"/>
+                        <Button Name="btnStopScan" Content="Durdur" Click="btnStopScan_Click" IsEnabled="False" Width="60" Margin="5,0,0,0"/>
+                    </StackPanel>
+                    
+                    <StackPanel Orientation="Horizontal" Margin="0,5,0,5">
+                        <TextBlock Text="Encoding:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                        <ComboBox Name="cmbEncoding" Width="80" SelectedIndex="0">
+                            <ComboBoxItem Content="Unicode" Tag="Unicode"/>
+                            <ComboBoxItem Content="UTF-8" Tag="UTF-8"/>
+                            <ComboBoxItem Content="ASCII" Tag="ASCII"/>
+                        </ComboBox>
+                        <TextBlock Text="Derinlik:" VerticalAlignment="Center" Margin="10,0,5,0"/>
+                        <ComboBox Name="cmbDepth" Width="50" SelectedIndex="1">
+                            <ComboBoxItem Content="1" Tag="1"/>
+                            <ComboBoxItem Content="2" Tag="2"/>
+                            <ComboBoxItem Content="3" Tag="3"/>
+                            <ComboBoxItem Content="4" Tag="4"/>
+                            <ComboBoxItem Content="5" Tag="5"/>
+                        </ComboBox>
+                    </StackPanel>
+                    
+                    <ProgressBar Name="progressScan" Height="20" Margin="0,5,0,5" Visibility="Collapsed"/>
+                    <TextBlock Name="lblScanStatus" Text="" Margin="0,0,0,5" FontSize="11" Foreground="Blue"/>
+                    
+                    <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                        <Button Name="btnTestPointer" Content="Test Et" Click="btnTestPointer_Click" IsEnabled="False" Width="60"/>
+                        <Button Name="btnSavePointers" Content="Kaydet" Click="btnSavePointers_Click" IsEnabled="False" Width="60" Margin="5,0,0,0"/>
+                        <Button Name="btnLoadPointers" Content="Yükle" Click="btnLoadPointers_Click" Width="60" Margin="5,0,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
 
         </StackPanel>
 

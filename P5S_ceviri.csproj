@@ -154,6 +154,14 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+    <Page Include="Themes\LightTheme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Themes\DarkTheme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
     <Compile Include="AdvancedTranslationService.cs" />
     <Compile Include="App.xaml.cs">
       <DependentUpon>App.xaml</DependentUpon>
@@ -188,6 +196,9 @@
     <Compile Include="ProcessService.cs" />
     <Compile Include="ServiceContainer.cs" />
     <Compile Include="SettingsManager.cs" />
+    <Compile Include="ThemeManager.cs" />
+    <Compile Include="EnhancedMemoryService.cs" />
+    <Compile Include="PointerValidationService.cs" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Properties\AssemblyInfo.cs">

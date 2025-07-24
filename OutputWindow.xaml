@@ -10,7 +10,7 @@
         SizeToContent="WidthAndHeight"
         Loaded="Window_Loaded">
     <Grid>
-        <Border x:Name="DisplayBorder" Background="#CC000000" CornerRadius="5" MouseLeftButtonDown="Border_MouseLeftButtonDown">
+        <Border x:Name="DisplayBorder" Background="#E6000000" CornerRadius="5" MouseLeftButtonDown="Border_MouseLeftButtonDown">
             <TextBlock x:Name="txtOutputDisplay" Text="Çeviri burada görünecek..." Margin="10" Foreground="White" FontSize="16" TextWrapping="Wrap"/>
         </Border>
 

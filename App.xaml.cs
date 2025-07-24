@@ -8,14 +8,15 @@ using System.Windows;
 
 namespace P5S_ceviri
 {
-    /// <summary>
-    /// App.xaml etkileşim mantığı
-    /// </summary>
+
     public partial class App : Application
     {
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+
+            // Initialize theme system
+            InitializeTheme();
 
             // Set up global exception handling
             AppDomain.CurrentDomain.UnhandledException += (s, args) =>
@@ -36,6 +37,29 @@ namespace P5S_ceviri
                               MessageBoxImage.Error);
                 args.Handled = true;
             };
+        }
+
+        private void InitializeTheme()
+        {
+            try
+            {
+                // Geçici bir logger oluştur (ana logger henüz hazır değil)
+                var tempLogger = new ConsoleLogger();
+                var settingsManager = new SettingsManager(tempLogger);
+                var appSettings = settingsManager.LoadSettings();
+
+                // Kullanıcının tema tercihini al
+                var selectedTheme = ThemeManager.GetThemeFromString(appSettings.Theme);
+
+                // Temayı uygula
+                ThemeManager.ChangeTheme(selectedTheme);
+            }
+            catch (Exception ex)
+            {
+                // Hata durumunda varsayılan tema kullan
+                ThemeManager.ChangeTheme(ThemeManager.Theme.Light);
+                System.Diagnostics.Debug.WriteLine($"Tema başlatma hatası: {ex.Message}");
+            }
         }
     }
 }

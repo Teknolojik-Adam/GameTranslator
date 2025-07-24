@@ -69,5 +69,9 @@ namespace P5S_ceviri
             Console.WriteLine($"[Bölge: {region}] “{recognizedText}” → “{translatedText}”");
         }
 
+        public void Dispose()
+        {
+            throw new NotImplementedException();
+        }
     }
 }

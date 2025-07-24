@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -31,6 +32,8 @@ namespace P5S_ceviri
         private readonly IGameRecipeService _gameRecipeService;
         private readonly SettingsManager _settingsManager;
         private readonly AppSettings _appSettings;
+        private readonly EnhancedMemoryService _enhancedMemoryService;
+        private readonly PointerValidationService _pointerValidationService;
         private readonly DispatcherTimer _continuousTranslationTimer;
         private readonly DispatcherTimer _manualTranslationTimer;
         private readonly DispatcherTimer _continuousOcrTimer;
@@ -46,6 +49,8 @@ namespace P5S_ceviri
         private bool _isContinuousOcrRunning = false;
         private bool _isOcrTickBusy = false;
         private System.Drawing.Rectangle? _selectedOcrRegion = null;
+        private CancellationTokenSource _scanCancellationTokenSource;
+        private List<PointerPath> _lastFoundPaths = new List<PointerPath>();
         #endregion
 
         public MainWindow()
@@ -62,6 +67,8 @@ namespace P5S_ceviri
                 _gameRecipeService = ServiceContainer.GetService<IGameRecipeService>();
                 _settingsManager = new SettingsManager(_logger);
                 _appSettings = _settingsManager.LoadSettings();
+                _enhancedMemoryService = new EnhancedMemoryService(_logger);
+                _pointerValidationService = new PointerValidationService(_memoryService, _logger);
 
                 InitializeTranslationServices();
 
@@ -87,6 +94,7 @@ namespace P5S_ceviri
                 };
 
                 LoadProcesses();
+                InitializeThemeUI();
                 UpdateUIState();
             }
             catch (Exception ex)
@@ -96,66 +104,272 @@ namespace P5S_ceviri
             }
         }
 
-        #region Pointer Scanner UI Logic
+        #region Enhanced Pointer Scanner UI Logic
 
-        /// <summary>
-        /// YENİ: "Pointer Tara" butonuna tıklandığında çalışacak olay.
-        /// </summary>
-        //private async void btnScanPointers_Click(object sender, RoutedEventArgs e)
-        //{
-        //    var pi = cmbProcesses.SelectedItem as ProcessInfo;
-        //    if (pi == null)
-        //    {
-        //        AppendToLog("Lütfen önce bir oyun seçin.", true);
-        //        return;
-        //    }
+        private async void btnScanPointers_Click(object sender, RoutedEventArgs e)
+        {
+            var pi = cmbProcesses.SelectedItem as ProcessInfo;
+            if (pi == null)
+            {
+                AppendToLog("Lütfen önce bir oyun/uygulama seçin.", true);
+                return;
+            }
 
-        //    string searchText = txtScanText.Text;
-        //    if (string.IsNullOrWhiteSpace(searchText))
-        //    {
-        //        AppendToLog("Lütfen pointer'ı aranacak bir metin girin.", true);
-        //        return;
-        //    }
+            string searchText = txtScanText.Text;
+            if (string.IsNullOrWhiteSpace(searchText))
+            {
+                AppendToLog("Lütfen pointer'ı aranacak bir metin girin.", true);
+                return;
+            }
 
-        //    AppendToLog($"'{searchText}' metni için pointer taraması başlatılıyor. Bu işlem uzun sürebilir...");
-        //    btnScanPointers.IsEnabled = false;
+            // UI kontrollerini ayarla
+            btnScanPointers.IsEnabled = false;
+            btnStopScan.IsEnabled = true;
+            progressScan.Visibility = Visibility.Visible;
+            progressScan.Value = 0;
+            lblScanStatus.Text = "Tarama başlatılıyor...";
 
-        //    try
-        //    {
-        //        var addresses = await Task.Run(() => _memoryService.FindStringAddresses(pi.Process, searchText));
-        //        if (!addresses.Any())
-        //        {
-        //            AppendToLog($"'{searchText}' metni bellekte bulunamadı.", true);
-        //            return;
-        //        }
+            // Encoding ve derinlik ayarlarını al
+            string encoding = ((ComboBoxItem)cmbEncoding.SelectedItem)?.Tag?.ToString() ?? "Unicode";
+            int depth = int.Parse(((ComboBoxItem)cmbDepth.SelectedItem)?.Tag?.ToString() ?? "3");
 
-        //        var targetAddress = addresses.First();
-        //        AppendToLog($"Metnin ilk adresi bulundu: 0x{targetAddress.ToInt64():X}. Bu adrese giden yollar aranıyor...");
+            // Cancellation token oluştur
+            _scanCancellationTokenSource = new CancellationTokenSource();
 
-        //        var scanner = new PointerScanner(pi.Process);
-        //        var paths = await scanner.FindPointers(targetAddress);
+            try
+            {
+                // Progress handler
+                var progress = new Progress<int>(value => 
+                {
+                    progressScan.Value = value;
+                });
 
-        //        if (!paths.Any())
-        //        {
-        //            AppendToLog("Bu adrese giden kararlı bir pointer yolu bulunamadı.", true);
-        //            return;
-        //        }
+                // Status handler
+                _enhancedMemoryService.StatusChanged += OnScanStatusChanged;
+                _enhancedMemoryService.ProgressChanged += OnScanProgressChanged;
 
-        //        AppendToLog($"Toplam {paths.Count} adet olası pointer yolu bulundu (en iyi sonuçlar genellikle listenin başındadır):");
-        //        foreach (var path in paths.Take(20))
-        //        {
-        //            AppendToLog(path.ToString());
-        //        }
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        AppendToLog($"Pointer taraması sırasında hata oluştu: {ex.Message}", true);
-        //    }
-        //    finally
-        //    {
-        //        btnScanPointers.IsEnabled = true;
-        //    }
-        //}
+                AppendToLog($"'{searchText}' metni için gelişmiş pointer taraması başlatılıyor (Encoding: {encoding}, Derinlik: {depth})...");
+
+                // 1. Adım: Gelişmiş metin arama
+                var addresses = await _enhancedMemoryService.FindStringAddressesMultiEncodingAsync(
+                    pi.Process, searchText, encoding, _scanCancellationTokenSource.Token, progress);
+
+                if (!addresses.Any())
+                {
+                    AppendToLog($"'{searchText}' metni {encoding} encoding ile bellekte bulunamadı.", true);
+                    return;
+                }
+
+                AppendToLog($"{addresses.Count} adet adres bulundu. Pointer yolları aranıyor...");
+                lblScanStatus.Text = "Pointer yolları aranıyor...";
+
+                // 2. Adım: Her adres için pointer yollarını bul
+                var allPaths = new List<PointerPath>();
+                int addressIndex = 0;
+
+                foreach (var address in addresses.Take(5)) // İlk 5 adresi işle (performans için)
+                {
+                    addressIndex++;
+                    if (_scanCancellationTokenSource.Token.IsCancellationRequested) break;
+
+                    lblScanStatus.Text = $"Pointer yolları aranıyor ({addressIndex}/{Math.Min(5, addresses.Count)})...";
+                    
+                    var scanner = new PointerScanner(pi.Process, _logger);
+                    var paths = await scanner.FindPointers(address, maxDepth: depth);
+                    allPaths.AddRange(paths);
+                }
+
+                if (!allPaths.Any())
+                {
+                    AppendToLog("Bu adreslere giden kararlı pointer yolu bulunamadı.", true);
+                    return;
+                }
+
+                // 3. Adım: Pointer'ları doğrula ve skorla
+                lblScanStatus.Text = "Pointer'lar doğrulanıyor...";
+                var validationResults = await _pointerValidationService.ValidatePointersAsync(pi.Process, allPaths, searchText);
+
+                // 4. Adım: Sonuçları göster
+                _lastFoundPaths = validationResults.Select(r => r.Path).ToList();
+                DisplayPointerResults(validationResults);
+
+                // UI kontrollerini etkinleştir
+                btnTestPointer.IsEnabled = true;
+                btnSavePointers.IsEnabled = true;
+
+                AppendToLog($"Tarama tamamlandı! {validationResults.Count(r => r.IsValid)} geçerli pointer yolu bulundu.");
+            }
+            catch (OperationCanceledException)
+            {
+                AppendToLog("Pointer taraması kullanıcı tarafından durduruldu.");
+            }
+            catch (Exception ex)
+            {
+                AppendToLog($"Pointer taraması sırasında hata oluştu: {ex.Message}", true);
+            }
+            finally
+            {
+                // Cleanup
+                _enhancedMemoryService.StatusChanged -= OnScanStatusChanged;
+                _enhancedMemoryService.ProgressChanged -= OnScanProgressChanged;
+                
+                btnScanPointers.IsEnabled = true;
+                btnStopScan.IsEnabled = false;
+                progressScan.Visibility = Visibility.Collapsed;
+                lblScanStatus.Text = "";
+                _scanCancellationTokenSource?.Dispose();
+                _scanCancellationTokenSource = null;
+            }
+        }
+
+        private void btnStopScan_Click(object sender, RoutedEventArgs e)
+        {
+            _scanCancellationTokenSource?.Cancel();
+            AppendToLog("Tarama durdurma komutu verildi...");
+        }
+
+        private async void btnTestPointer_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_lastFoundPaths.Any())
+            {
+                AppendToLog("Test edilecek pointer yolu bulunamadı. Önce tarama yapın.", true);
+                return;
+            }
+
+            var pi = cmbProcesses.SelectedItem as ProcessInfo;
+            if (pi == null) return;
+
+            // En iyi skorlu pointer'ı test et
+            var bestPath = _lastFoundPaths.First();
+            AppendToLog($"Pointer stabilite testi başlatılıyor: {bestPath}");
+
+            try
+            {
+                var stabilityResult = await _pointerValidationService.TestPointerStabilityAsync(pi.Process, bestPath, 15, 500);
+                
+                AppendToLog($"Stabilite Testi Sonuçları:");
+                AppendToLog($"  • Başarı Oranı: {stabilityResult.SuccessRate:F1}%");
+                AppendToLog($"  • Adres Tutarlılığı: {stabilityResult.AddressConsistency:F1}%");
+                AppendToLog($"  • Değer Tutarlılığı: {stabilityResult.ValueConsistency:F1}%");
+                AppendToLog($"  • Genel Stabilite Skoru: {stabilityResult.StabilityScore}/100");
+                
+                if (stabilityResult.StabilityScore >= 80)
+                    AppendToLog("Bu pointer güvenilir görünüyor!");
+                else if (stabilityResult.StabilityScore >= 60)
+                    AppendToLog("Bu pointer orta derecede güvenilir.");
+                else
+                    AppendToLog("Bu pointer güvenilir değil, başka pointer'lar deneyin.", true);
+            }
+            catch (Exception ex)
+            {
+                AppendToLog($"Stabilite testi sırasında hata: {ex.Message}", true);
+            }
+        }
+
+        private void btnSavePointers_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_lastFoundPaths.Any())
+            {
+                AppendToLog("Kaydedilecek pointer bulunamadı.", true);
+                return;
+            }
+
+            try
+            {
+                var saveDialog = new Microsoft.Win32.SaveFileDialog
+                {
+                    Filter = "JSON dosyası (*.json)|*.json",
+                    FileName = $"pointers_{DateTime.Now:yyyyMMdd_HHmmss}.json"
+                };
+
+                if (saveDialog.ShowDialog() == true)
+                {
+                    var json = System.Text.Json.JsonSerializer.Serialize(_lastFoundPaths, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                    System.IO.File.WriteAllText(saveDialog.FileName, json);
+                    AppendToLog($"Pointer'lar kaydedildi: {saveDialog.FileName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendToLog($"Kaydetme sırasında hata: {ex.Message}", true);
+            }
+        }
+
+        private void btnLoadPointers_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var openDialog = new Microsoft.Win32.OpenFileDialog
+                {
+                    Filter = "JSON dosyası (*.json)|*.json"
+                };
+
+                if (openDialog.ShowDialog() == true)
+                {
+                    var json = System.IO.File.ReadAllText(openDialog.FileName);
+                    var loadedPaths = System.Text.Json.JsonSerializer.Deserialize<List<PointerPath>>(json);
+                    
+                    if (loadedPaths?.Any() == true)
+                    {
+                        _lastFoundPaths = loadedPaths;
+                        AppendToLog($"{loadedPaths.Count} adet pointer yolu yüklendi: {openDialog.FileName}");
+                        
+                        // Loaded pointer'ları göster
+                        foreach (var path in loadedPaths.Take(10))
+                        {
+                            AppendToLog($"  • {path}");
+                        }
+                        
+                        btnTestPointer.IsEnabled = true;
+                        btnSavePointers.IsEnabled = true;
+                    }
+                    else
+                    {
+                        AppendToLog("Dosyada geçerli pointer bulunamadı.", true);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendToLog($"Yükleme sırasında hata: {ex.Message}", true);
+            }
+        }
+
+        private void OnScanStatusChanged(string status)
+        {
+            Dispatcher.Invoke(() => lblScanStatus.Text = status);
+        }
+
+        private void OnScanProgressChanged(int progress)
+        {
+            Dispatcher.Invoke(() => progressScan.Value = progress);
+        }
+
+        private void DisplayPointerResults(List<PointerValidationResult> results)
+        {
+            var validResults = results.Where(r => r.IsValid).OrderByDescending(r => r.Score).Take(15);
+            var invalidResults = results.Where(r => !r.IsValid).OrderByDescending(r => r.Score).Take(5);
+
+                         AppendToLog("=== GEÇERLİ POINTER'LAR (En İyiden Kötüye) ===");
+            foreach (var result in validResults)
+            {
+                string preview = result.CurrentValue != null ? 
+                    result.CurrentValue.Substring(0, Math.Min(50, result.CurrentValue.Length)) : 
+                    "[Boş]";
+                AppendToLog($"[Skor: {result.Score}] {result.Path} -> \"{preview}...\"");
+            }
+
+            if (invalidResults.Any())
+            {
+                AppendToLog("=== GEÇERSİZ POINTER'LAR ===");
+                foreach (var result in invalidResults.Take(3))
+                {
+                    AppendToLog($"[Hata] {result.Path} -> {result.ErrorMessage}");
+                }
+            }
+
+            AppendToLog("İpucu: Yüksek skorlu pointer'lar daha güvenilirdir.");
+        }
         #endregion
 
         #region Existing Methods
@@ -287,9 +501,16 @@ namespace P5S_ceviri
                 var recipe = await _gameRecipeService.GetRecipeForProcessAsync(pi.Process);
                 _isSetupMode = (recipe == null);
                 UpdateUIState();
+
+                // YENİ SATIR: Pointer tarama butonunu etkinleştir
+                btnScanPointers.IsEnabled = true;
+            }
+            else
+            {
+                // YENİ SATIR: İşlem seçili değilse pointer tarama butonunu devre dışı bırak
+                btnScanPointers.IsEnabled = false;
             }
         }
-
         private void btnTranslate_Click(object sender, RoutedEventArgs e)
         {
             if (_isContinuousTranslationRunning || _manualTranslationTimer.IsEnabled) { StopAllTranslations(); return; }
@@ -479,6 +700,66 @@ namespace P5S_ceviri
         }
 
         protected virtual void OnTranslatedTextChanged(string newText) => TranslatedTextChanged?.Invoke(newText);
+
+        #region Theme Management
+        /// Tema UI'ını başlatır ve mevcut tema tercihini yükler
+        private void InitializeThemeUI()
+        {
+            try
+            {
+                // Mevcut tema tercihini al
+                var currentTheme = ThemeManager.GetThemeFromString(_appSettings.Theme);
+                
+                // ComboBox'ta doğru seçimi yap
+                foreach (ComboBoxItem item in cmbTheme.Items)
+                {
+                    if (item.Tag.ToString() == ThemeManager.GetStringFromTheme(currentTheme))
+                    {
+                        cmbTheme.SelectedItem = item;
+                        break;
+                    }
+                }
+
+                // Eğer hiçbiri seçili değilse, varsayılan olarak Light'ı seç
+                if (cmbTheme.SelectedItem == null)
+                {
+                    cmbTheme.SelectedIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Tema UI başlatılırken hata oluştu.", ex);
+                cmbTheme.SelectedIndex = 0;
+            }
+        }
+// Tema değişikliği event handler'ı
+        private void CmbTheme_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            try
+            {
+                if (cmbTheme.SelectedItem is ComboBoxItem selectedItem)
+                {
+                    string themeString = selectedItem.Tag.ToString();
+                    var selectedTheme = ThemeManager.GetThemeFromString(themeString);
+                    
+                    // Temayı değiştir
+                    ThemeManager.ChangeTheme(selectedTheme);
+                    
+                    // Ayarlara kaydet
+                    _appSettings.Theme = themeString;
+                    _settingsManager.SaveSettings(_appSettings);
+                    
+                    // Log kaydet
+                    AppendToLog($"Tema değiştirildi: {selectedItem.Content}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Tema değiştirme sırasında hata oluştu.", ex);
+                AppendToLog("Tema değiştirme sırasında hata oluştu.", true);
+            }
+        }
+        #endregion
         #endregion
     }
 }
