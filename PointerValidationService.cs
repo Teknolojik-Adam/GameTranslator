@@ -13,7 +13,7 @@ namespace P5S_ceviri
         public string CurrentValue { get; set; }
         public string ExpectedValue { get; set; }
         public string ErrorMessage { get; set; }
-        public int Score { get; set; } // 0-100, yüksek = daha iyi
+        public int Score { get; set; } 
         public TimeSpan ResponseTime { get; set; }
     }
 
@@ -28,9 +28,7 @@ namespace P5S_ceviri
             _logger = logger;
         }
 
-        /// <summary>
-        /// Pointer yollarını test eder ve en iyilerini seçer
-        /// </summary>
+
         public async Task<List<PointerValidationResult>> ValidatePointersAsync(Process process, 
             List<PointerPath> paths, string expectedText = null)
         {
@@ -52,9 +50,6 @@ namespace P5S_ceviri
             return results.OrderByDescending(r => r.Score).ToList();
         }
 
-        /// <summary>
-        /// Tek bir pointer yolunu test eder
-        /// </summary>
         private async Task<PointerValidationResult> ValidateSinglePointerAsync(Process process, 
             PointerPath path, string expectedText)
         {
@@ -100,7 +95,7 @@ namespace P5S_ceviri
                 }
                 else if (!string.IsNullOrEmpty(expectedText))
                 {
-                    // Beklenen metinle karşılaştır
+                    
                     result.ExpectedValue = expectedText;
                     if (currentValue.Contains(expectedText) || expectedText.Contains(currentValue))
                     {
@@ -110,7 +105,7 @@ namespace P5S_ceviri
                     else
                     {
                         result.ErrorMessage = "Beklenen metin bulunamadı";
-                        result.Score = 10; // En azından veri okunabildi
+                        result.Score = 10;
                     }
                 }
                 else
@@ -131,9 +126,6 @@ namespace P5S_ceviri
             return result;
         }
 
-        /// <summary>
-        /// Pointer yolunu sürekli test eder (stability test)
-        /// </summary>
         public async Task<PointerStabilityResult> TestPointerStabilityAsync(Process process, 
             PointerPath path, int testDurationSeconds = 30, int sampleIntervalMs = 1000)
         {
@@ -195,8 +187,8 @@ namespace P5S_ceviri
             {
                 if (path.ModuleName == "[EXTERNAL]")
                 {
-                    // External pointer'lar için özel işlem
-                    return null; // Şimdilik desteklenmemsin
+                    
+                    return null; 
                 }
 
                 return new PathInfo
@@ -223,7 +215,7 @@ namespace P5S_ceviri
             if (current.Contains(expected) || expected.Contains(current))
                 return 80;
 
-            // Levenshtein distance tabanlı benzerlik
+            
             var distance = LevenshteinDistance(current, expected);
             var maxLength = Math.Max(current.Length, expected.Length);
             var similarity = (1.0 - (double)distance / maxLength) * 100;
@@ -258,7 +250,7 @@ namespace P5S_ceviri
             if (string.IsNullOrWhiteSpace(s) || s.Length < 2 || s.Length > 1000) 
                 return false;
             
-            if (s.Contains('\uFFFD')) // Unicode replacement character
+            if (s.Contains('\uFFFD')) 
                 return false;
                 
             // Yazdırılabilir karakter oranı
@@ -308,18 +300,17 @@ namespace P5S_ceviri
         {
             if (!Samples.Any()) return;
 
-            // Success rate
+           
             SuccessRate = (double)Samples.Count(s => s.IsSuccessful) / Samples.Count * 100;
 
-            // Address consistency
+           
             var addresses = Samples.Where(s => s.Address != IntPtr.Zero).Select(s => s.Address).Distinct();
             AddressConsistency = addresses.Count() <= 1 ? 100 : 0;
 
-            // Value consistency
+           
             var values = Samples.Where(s => !string.IsNullOrEmpty(s.Value)).Select(s => s.Value).Distinct();
             ValueConsistency = values.Count() <= 3 ? 100 : Math.Max(0, 100 - (values.Count() * 10));
 
-            // Overall stability score
             StabilityScore = (int)((SuccessRate * 0.4) + (AddressConsistency * 0.3) + (ValueConsistency * 0.3));
         }
     }

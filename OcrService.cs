@@ -83,7 +83,7 @@ namespace P5S_ceviri
             // İlk deneme: son kullanılan eşik değeriyle
             string recognizedText = await Task.Run(() => GetTextWithPreprocessing(image, language, _lastOptimalThreshold, psm));
 
-            // Metin yoksa veya çok kısaysa, en iyi eşik değerini ara
+            // Metin yoksa en iyi eşik değerini ara
             if (string.IsNullOrWhiteSpace(recognizedText) || recognizedText.Length < 3)
             {
                 int newThreshold = await Task.Run(() => FindOptimalThreshold(image));
@@ -153,7 +153,7 @@ namespace P5S_ceviri
                 using (Mat blob = CvDnn.BlobFromImage(src, 1.0, new OpenCvSharp.Size(newW, newH), new Scalar(123.68, 116.78, 103.94), true, false))
                 {
                     _eastNet.SetInput(blob);
-                    string[] outNames = { "feature_fusion/Conv_7/Sigmoid", "feature_fusion/GELU_2/Sigmoid" }; // Orijinal EAST modelinin katman adları
+                    string[] outNames = { "feature_fusion/Conv_7/Sigmoid", "feature_fusion/GELU_2/Sigmoid" };
                     var output = new Mat[outNames.Length];
                     _eastNet.Forward(output, outNames);
 
@@ -179,16 +179,16 @@ namespace P5S_ceviri
                                 vertices[j].Y = (int)(vertices[j].Y * rH);
                             }
 
-                            // Eksenlere hizalı bir sınırlayıcı kutu (bounding box) oluştur
+                            
                             var boundingBox = Cv2.BoundingRect(vertices);
 
-                            // Görüntü sınırları dışına taşmayı önle
+                            // Görüntü sınırları dışına taşmayı önlemek için
                             int x = Math.Max(0, boundingBox.X);
                             int y = Math.Max(0, boundingBox.Y);
                             int width = Math.Min(sourceImage.Width - x, boundingBox.Width);
                             int height = Math.Min(sourceImage.Height - y, boundingBox.Height);
 
-                            // Kenarlara biraz pay ekleyerek harflerin kesilmesini önle
+                            // Kenarlara biraz pay ekleyerek harflerin kesilmesini önlemek için
                             int padding = (int)(height * 0.1);
                             x = Math.Max(0, x - padding);
                             y = Math.Max(0, y - padding);

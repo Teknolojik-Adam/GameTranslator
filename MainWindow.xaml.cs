@@ -121,7 +121,7 @@ namespace P5S_ceviri
                 return;
             }
 
-            // UI kontrollerini ayarla
+            // UI kontrolleri
             btnScanPointers.IsEnabled = false;
             btnStopScan.IsEnabled = true;
             progressScan.Visibility = Visibility.Visible;
@@ -149,7 +149,7 @@ namespace P5S_ceviri
 
                 AppendToLog($"'{searchText}' metni için gelişmiş pointer taraması başlatılıyor (Encoding: {encoding}, Derinlik: {depth})...");
 
-                // 1. Adım: Gelişmiş metin arama
+                //Gelişmiş metin arama
                 var addresses = await _enhancedMemoryService.FindStringAddressesMultiEncodingAsync(
                     pi.Process, searchText, encoding, _scanCancellationTokenSource.Token, progress);
 
@@ -162,11 +162,11 @@ namespace P5S_ceviri
                 AppendToLog($"{addresses.Count} adet adres bulundu. Pointer yolları aranıyor...");
                 lblScanStatus.Text = "Pointer yolları aranıyor...";
 
-                // 2. Adım: Her adres için pointer yollarını bul
+                // Her adres için pointer yollarını bul
                 var allPaths = new List<PointerPath>();
                 int addressIndex = 0;
 
-                foreach (var address in addresses.Take(5)) // İlk 5 adresi işle (performans için)
+                foreach (var address in addresses.Take(5)) 
                 {
                     addressIndex++;
                     if (_scanCancellationTokenSource.Token.IsCancellationRequested) break;
@@ -184,15 +184,15 @@ namespace P5S_ceviri
                     return;
                 }
 
-                // 3. Adım: Pointer'ları doğrula ve skorla
+                //  Pointer'ları doğrula ve skorla
                 lblScanStatus.Text = "Pointer'lar doğrulanıyor...";
                 var validationResults = await _pointerValidationService.ValidatePointersAsync(pi.Process, allPaths, searchText);
 
-                // 4. Adım: Sonuçları göster
+                //  Sonuçları göster
                 _lastFoundPaths = validationResults.Select(r => r.Path).ToList();
                 DisplayPointerResults(validationResults);
 
-                // UI kontrollerini etkinleştir
+                //  etkinleştirme
                 btnTestPointer.IsEnabled = true;
                 btnSavePointers.IsEnabled = true;
 
@@ -208,7 +208,7 @@ namespace P5S_ceviri
             }
             finally
             {
-                // Cleanup
+
                 _enhancedMemoryService.StatusChanged -= OnScanStatusChanged;
                 _enhancedMemoryService.ProgressChanged -= OnScanProgressChanged;
 
@@ -459,13 +459,13 @@ namespace P5S_ceviri
 
                     Bitmap imageToProcess;
 
-                    // Kullanıcı özel bir OCR bölgesi seçtiyse, kırp
+                    //  kırpma
                     if (_selectedOcrRegion.HasValue)
                     {
                         var cropRect = _selectedOcrRegion.Value;
                         using (var cropped = _ocrService.CropImage(screenshot, cropRect))
                         {
-                            // Clone ile yeni bir bitmap oluştur (Dispose güvenliği)
+                            // Clone ile yeni bir bitmap oluştur (Dispose güvenliği için)
                             imageToProcess = new Bitmap(cropped);
                         }
                     }
@@ -475,10 +475,10 @@ namespace P5S_ceviri
                         imageToProcess = new Bitmap(screenshot);
                     }
 
-                    // OCR işlemini ve çeviriyi arka plan thread'inde çalıştır
+
                     string currentText = await _ocrService.GetTextAdaptiveAsync(imageToProcess, "eng");
 
-                    // OCR sonrası orijinal resim artık gerekmiyor → Dispose et
+
                     imageToProcess.Dispose();
 
                     // Geçerli metin yoksa veya değişmediyse işlem yapma
@@ -493,7 +493,7 @@ namespace P5S_ceviri
                         "tr",
                         GetSelectedTranslationStrategy());
 
-                    // UI güncelleme (Dispatcher ile)
+
                     Dispatcher.Invoke(() =>
                     {
                         txtOriginal.Text = $"[OCR] {currentText}";
@@ -529,12 +529,12 @@ namespace P5S_ceviri
                 _isSetupMode = (recipe == null);
                 UpdateUIState();
 
-                // YENİ SATIR: Pointer tarama butonunu etkinleştir
+
                 btnScanPointers.IsEnabled = true;
             }
             else
             {
-                // YENİ SATIR: İşlem seçili değilse pointer tarama butonunu devre dışı bırak
+
                 btnScanPointers.IsEnabled = false;
             }
         }
@@ -679,7 +679,6 @@ namespace P5S_ceviri
             bool anyTranslationRunning = _isContinuousTranslationRunning || _manualTranslationTimer.IsEnabled || _isContinuousOcrRunning;
             cmbProcesses.IsEnabled = !anyTranslationRunning;
             cmbTranslationService.IsEnabled = !anyTranslationRunning;
-            //btnScanPointers.IsEnabled = !anyTranslationRunning && processSelected;
 
             if (_isContinuousTranslationRunning || _manualTranslationTimer.IsEnabled) { btnTranslate.Content = "RAM Çevirisini Durdur"; btnTranslate.IsEnabled = true; }
             else if (_isSetupMode && processSelected) { btnTranslate.Content = "Yeni Çeviri Yolu Kur..."; btnTranslate.IsEnabled = !anyTranslationRunning; }
@@ -710,10 +709,10 @@ namespace P5S_ceviri
                     return (null, 0, null);
                 }
 
-                // İlk kısmı temizle (modül + baz adres)
+    
                 string basePart = parts[0].Trim();
 
-                // Regex: "Modul.exe"+offset  veya Modul.exe+offset
+
                 var baseRegex = new Regex(
                     @"[""']?(?<module>[^""']+\.exe)[""']?\s*\+\s*(0x)?(?<offset>[0-9A-Fa-f]+)",
                     RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -741,7 +740,7 @@ namespace P5S_ceviri
                 {
                     string part = parts[i].Trim();
 
-                    // FIX: "0x" prefix'ini case-insensitive şekilde kaldır
+
                     if (part.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
                     {
                         part = part.Substring(2);
@@ -791,7 +790,7 @@ namespace P5S_ceviri
         protected virtual void OnTranslatedTextChanged(string newText) => TranslatedTextChanged?.Invoke(newText);
 
         #region Theme Management
-        /// Tema UI'ını başlatır ve mevcut tema tercihini yükler
+
         private void InitializeThemeUI()
         {
             try
@@ -821,7 +820,6 @@ namespace P5S_ceviri
                 cmbTheme.SelectedIndex = 0;
             }
         }
-        // Tema değişikliği event handler'ı
         private void CmbTheme_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             try

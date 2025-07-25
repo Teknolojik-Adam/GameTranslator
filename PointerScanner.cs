@@ -175,7 +175,7 @@ namespace P5S_ceviri
         }
     }
 
-    // PointerPath nesnelerinin benzersiz olup olmadığını kontrol etmek için comparer
+    // PointerPath nesnelerinin benzersiz olup olmadığını kontrol etmek için
     public class PointerPathComparer : IEqualityComparer<PointerPath>
     {
         public bool Equals(PointerPath x, PointerPath y)

@@ -15,10 +15,10 @@ namespace P5S_ceviri
         {
             base.OnStartup(e);
 
-            // Initialize theme system
+           
             InitializeTheme();
 
-            // Set up global exception handling
+         
             AppDomain.CurrentDomain.UnhandledException += (s, args) =>
             {
                 Exception ex = (Exception)args.ExceptionObject;
@@ -28,7 +28,7 @@ namespace P5S_ceviri
                               MessageBoxImage.Error);
             };
 
-            // Handle UI thread exceptions
+            
             Current.DispatcherUnhandledException += (s, args) =>
             {
                 MessageBox.Show($"An error occurred: {args.Exception.Message}",

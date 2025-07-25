@@ -17,7 +17,7 @@ namespace P5S_ceviri
             _cacheFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "translation_cache.json");
         }
 
-        /// Önbelleği diskten yükler. Dosya yoksa boş bir sözlük döndürür.
+        // Önbelleği diskten yükler. Dosya yoksa boş bir sözlük döndürür.
         public Dictionary<string, string> LoadCache()
         {
             if (!File.Exists(_cacheFilePath))
@@ -39,7 +39,7 @@ namespace P5S_ceviri
                 return new Dictionary<string, string>();
             }
         }
-        /// Verilen önbelleği diske JSON formatında kaydeder.
+        // Verilen önbelleği diske JSON formatında kaydeder.
         public void SaveCache(Dictionary<string, string> cache)
         {
             try

@@ -48,7 +48,7 @@ namespace P5S_ceviri
             {
                 return result;
             }
-            return Theme.Light; // Varsayılan tema
+            return Theme.Light; 
         }
 
 
