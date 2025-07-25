@@ -77,18 +77,26 @@ namespace P5S_ceviri
 
         public async Task<string> GetTextAdaptiveAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto)
         {
+            if (image == null)
+                return string.Empty;
+
+            // İlk deneme: son kullanılan eşik değeriyle
             string recognizedText = await Task.Run(() => GetTextWithPreprocessing(image, language, _lastOptimalThreshold, psm));
 
+            // Metin yoksa veya çok kısaysa, en iyi eşik değerini ara
             if (string.IsNullOrWhiteSpace(recognizedText) || recognizedText.Length < 3)
             {
                 int newThreshold = await Task.Run(() => FindOptimalThreshold(image));
+
                 if (newThreshold != -1 && newThreshold != _lastOptimalThreshold)
                 {
                     _logger.LogInformation($"Yeni optimal OCR eşik değeri bulundu: {newThreshold}");
                     _lastOptimalThreshold = newThreshold;
+
                     recognizedText = await Task.Run(() => GetTextWithPreprocessing(image, language, newThreshold, psm));
                 }
             }
+
             return recognizedText;
         }
 

@@ -9,7 +9,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Threading;
 
 namespace P5S_ceviri
@@ -139,7 +138,7 @@ namespace P5S_ceviri
             try
             {
                 // Progress handler
-                var progress = new Progress<int>(value => 
+                var progress = new Progress<int>(value =>
                 {
                     progressScan.Value = value;
                 });
@@ -173,7 +172,7 @@ namespace P5S_ceviri
                     if (_scanCancellationTokenSource.Token.IsCancellationRequested) break;
 
                     lblScanStatus.Text = $"Pointer yolları aranıyor ({addressIndex}/{Math.Min(5, addresses.Count)})...";
-                    
+
                     var scanner = new PointerScanner(pi.Process, _logger);
                     var paths = await scanner.FindPointers(address, maxDepth: depth);
                     allPaths.AddRange(paths);
@@ -212,7 +211,7 @@ namespace P5S_ceviri
                 // Cleanup
                 _enhancedMemoryService.StatusChanged -= OnScanStatusChanged;
                 _enhancedMemoryService.ProgressChanged -= OnScanProgressChanged;
-                
+
                 btnScanPointers.IsEnabled = true;
                 btnStopScan.IsEnabled = false;
                 progressScan.Visibility = Visibility.Collapsed;
@@ -246,13 +245,13 @@ namespace P5S_ceviri
             try
             {
                 var stabilityResult = await _pointerValidationService.TestPointerStabilityAsync(pi.Process, bestPath, 15, 500);
-                
+
                 AppendToLog($"Stabilite Testi Sonuçları:");
                 AppendToLog($"  • Başarı Oranı: {stabilityResult.SuccessRate:F1}%");
                 AppendToLog($"  • Adres Tutarlılığı: {stabilityResult.AddressConsistency:F1}%");
                 AppendToLog($"  • Değer Tutarlılığı: {stabilityResult.ValueConsistency:F1}%");
                 AppendToLog($"  • Genel Stabilite Skoru: {stabilityResult.StabilityScore}/100");
-                
+
                 if (stabilityResult.StabilityScore >= 80)
                     AppendToLog("Bu pointer güvenilir görünüyor!");
                 else if (stabilityResult.StabilityScore >= 60)
@@ -308,18 +307,18 @@ namespace P5S_ceviri
                 {
                     var json = System.IO.File.ReadAllText(openDialog.FileName);
                     var loadedPaths = System.Text.Json.JsonSerializer.Deserialize<List<PointerPath>>(json);
-                    
+
                     if (loadedPaths?.Any() == true)
                     {
                         _lastFoundPaths = loadedPaths;
                         AppendToLog($"{loadedPaths.Count} adet pointer yolu yüklendi: {openDialog.FileName}");
-                        
+
                         // Loaded pointer'ları göster
                         foreach (var path in loadedPaths.Take(10))
                         {
                             AppendToLog($"  • {path}");
                         }
-                        
+
                         btnTestPointer.IsEnabled = true;
                         btnSavePointers.IsEnabled = true;
                     }
@@ -350,11 +349,11 @@ namespace P5S_ceviri
             var validResults = results.Where(r => r.IsValid).OrderByDescending(r => r.Score).Take(15);
             var invalidResults = results.Where(r => !r.IsValid).OrderByDescending(r => r.Score).Take(5);
 
-                         AppendToLog("=== GEÇERLİ POINTER'LAR (En İyiden Kötüye) ===");
+            AppendToLog("=== GEÇERLİ POINTER'LAR (En İyiden Kötüye) ===");
             foreach (var result in validResults)
             {
-                string preview = result.CurrentValue != null ? 
-                    result.CurrentValue.Substring(0, Math.Min(50, result.CurrentValue.Length)) : 
+                string preview = result.CurrentValue != null ?
+                    result.CurrentValue.Substring(0, Math.Min(50, result.CurrentValue.Length)) :
                     "[Boş]";
                 AppendToLog($"[Skor: {result.Score}] {result.Path} -> \"{preview}...\"");
             }
@@ -431,60 +430,88 @@ namespace P5S_ceviri
 
         private async void ContinuousOcrTimer_Tick(object sender, EventArgs e)
         {
+            // Aynı anda birden fazla OCR tick'i çalışmasını engelle
             if (_isOcrTickBusy) return;
             _isOcrTickBusy = true;
+
             try
             {
-                if (!_isContinuousOcrRunning) return;
-                var pi = cmbProcesses.SelectedItem as ProcessInfo;
-                if (pi == null || pi.Process.HasExited) { StopContinuousOcr(); return; }
-                var handle = pi.Process.MainWindowHandle;
-                if (handle == IntPtr.Zero) return;
+                // OCR devre dışıysa veya kullanıcı durdurduysa
+                if (!_isContinuousOcrRunning)
+                    return;
 
+                var pi = cmbProcesses.SelectedItem as ProcessInfo;
+                if (pi == null || pi.Process.HasExited)
+                {
+                    StopContinuousOcr();
+                    return;
+                }
+
+                IntPtr handle = pi.Process.MainWindowHandle;
+                if (handle == IntPtr.Zero)
+                    return;
+
+                // Ekran görüntüsü al (arka planda)
                 using (var screenshot = await Task.Run(() => _ocrService.CaptureWindow(handle)))
                 {
-                    if (screenshot == null) return;
+                    if (screenshot == null)
+                        return;
+
                     Bitmap imageToProcess;
+
+                    // Kullanıcı özel bir OCR bölgesi seçtiyse, kırp
                     if (_selectedOcrRegion.HasValue)
                     {
-                        GetWindowRect(handle, out RECT windowRect);
-                        var selection = _selectedOcrRegion.Value;
-                        int relativeX = selection.X - windowRect.Left;
-                        int relativeY = selection.Y - windowRect.Top;
-                        relativeX = Math.Max(0, relativeX);
-                        relativeY = Math.Max(0, relativeY);
-                        int width = Math.Min(selection.Width, screenshot.Width - relativeX);
-                        int height = Math.Min(selection.Height, screenshot.Height - relativeY);
-                        var cropRect = new Rectangle(relativeX, relativeY, width, height);
-                        imageToProcess = (cropRect.Width > 0 && cropRect.Height > 0) ? _ocrService.CropImage(screenshot, cropRect) : (Bitmap)screenshot.Clone();
+                        var cropRect = _selectedOcrRegion.Value;
+                        using (var cropped = _ocrService.CropImage(screenshot, cropRect))
+                        {
+                            // Clone ile yeni bir bitmap oluştur (Dispose güvenliği)
+                            imageToProcess = new Bitmap(cropped);
+                        }
                     }
                     else
                     {
-                        imageToProcess = (Bitmap)screenshot.Clone();
+                        // Tüm pencereyi kullan, güvenli kopya al
+                        imageToProcess = new Bitmap(screenshot);
                     }
-                    using (imageToProcess)
+
+                    // OCR işlemini ve çeviriyi arka plan thread'inde çalıştır
+                    string currentText = await _ocrService.GetTextAdaptiveAsync(imageToProcess, "eng");
+
+                    // OCR sonrası orijinal resim artık gerekmiyor → Dispose et
+                    imageToProcess.Dispose();
+
+                    // Geçerli metin yoksa veya değişmediyse işlem yapma
+                    if (string.IsNullOrWhiteSpace(currentText) || currentText == _lastReadText)
+                        return;
+
+                    _lastReadText = currentText;
+
+                    // Çeviri isteği
+                    string translated = await _translationService.TranslateAsync(
+                        currentText,
+                        "tr",
+                        GetSelectedTranslationStrategy());
+
+                    // UI güncelleme (Dispatcher ile)
+                    Dispatcher.Invoke(() =>
                     {
-                        string currentText = await _ocrService.GetTextAdaptiveAsync(imageToProcess, "eng");
-                        if (!string.IsNullOrWhiteSpace(currentText) && currentText != _lastReadText)
-                        {
-                            _lastReadText = currentText;
-                            string translated = await _translationService.TranslateAsync(currentText, "tr", GetSelectedTranslationStrategy());
-                            Dispatcher.Invoke(() => {
-                                txtOriginal.Text = $"[OCR] {currentText}";
-                                txtTranslated.Text = translated;
-                                OnTranslatedTextChanged(translated);
-                            });
-                        }
-                    }
+                        txtOriginal.Text = $"[OCR] {currentText}";
+                        txtTranslated.Text = translated;
+                        OnTranslatedTextChanged(translated);
+                    });
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError("Sürekli OCR sırasında hata.", ex);
+                _logger?.LogError("Sürekli OCR sırasında hata.", ex);
             }
-            finally { _isOcrTickBusy = false; }
+            finally
+            {
+                
+                _isOcrTickBusy = false;
+            }
         }
-
         private void btnRefresh_Click(object sender, RoutedEventArgs e) => LoadProcesses();
 
         private async void CmbProcesses_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -538,7 +565,8 @@ namespace P5S_ceviri
             if (_outputWindow == null || !_outputWindow.IsLoaded)
             {
                 _outputWindow = new OutputWindow(this);
-                _outputWindow.RegionSelected += (region) => {
+                _outputWindow.RegionSelected += (region) =>
+                {
                     _selectedOcrRegion = region;
                     AppendToLog($"Yeni OCR bölgesi seçildi: {region}");
                 };
@@ -667,16 +695,77 @@ namespace P5S_ceviri
         {
             try
             {
-                var parts = input.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 1) return (null, 0, null);
-                var baseMatch = Regex.Match(parts[0].Trim(), @"[""']?(?<module>.+?\.exe)[""']?\s*\+\s*(0x)?(?<offset>[0-9A-Fa-f]+)");
-                if (!baseMatch.Success) return (null, 0, null);
-                var offsets = parts.Skip(1).Select(p => int.TryParse(p.Trim().Replace("0x", ""), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int val) ? val : 0).ToList();
-                return (baseMatch.Groups["module"].Value, long.Parse(baseMatch.Groups["offset"].Value, NumberStyles.HexNumber), offsets);
-            }
-            catch (Exception ex) { _logger.LogError("Pointer yolu ayrıştırılırken hata oluştu.", ex); return (null, 0, null); }
-        }
+                // Giriş null veya boşsa
+                if (string.IsNullOrWhiteSpace(input))
+                {
+                    _logger?.LogError("ParsePointerPath: Giriş boş veya null.");
+                    return (null, 0, null);
+                }
 
+                // Virgüllere göre ayır ve boşları temizle
+                var parts = input.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 1)
+                {
+                    _logger?.LogError("ParsePointerPath: Geçersiz format - en az bir kısım gerekli.");
+                    return (null, 0, null);
+                }
+
+                // İlk kısmı temizle (modül + baz adres)
+                string basePart = parts[0].Trim();
+
+                // Regex: "Modul.exe"+offset  veya Modul.exe+offset
+                var baseRegex = new Regex(
+                    @"[""']?(?<module>[^""']+\.exe)[""']?\s*\+\s*(0x)?(?<offset>[0-9A-Fa-f]+)",
+                    RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+                var match = baseRegex.Match(basePart);
+                if (!match.Success)
+                {
+                    _logger?.LogError($"ParsePointerPath: Modül ve baz adres ayrıştırılamadı. Girdi: {basePart}");
+                    return (null, 0, null);
+                }
+
+                string moduleName = match.Groups["module"].Value.Trim();
+                string offsetHex = match.Groups["offset"].Value;
+
+                // Baz adresi (hex) parse et
+                if (!long.TryParse(offsetHex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out long baseOffset))
+                {
+                    _logger?.LogError($"ParsePointerPath: Baz adres geçersiz. Girdi: {offsetHex}");
+                    return (null, 0, null);
+                }
+
+                // Kalan offset'leri parse et
+                var offsets = new List<int>();
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    string part = parts[i].Trim();
+
+                    // FIX: "0x" prefix'ini case-insensitive şekilde kaldır
+                    if (part.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                    {
+                        part = part.Substring(2);
+                    }
+
+                    if (int.TryParse(part, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int offset))
+                    {
+                        offsets.Add(offset);
+                    }
+                    else
+                    {
+                        _logger?.LogError($"ParsePointerPath: Geçersiz offset. Girdi: {parts[i].Trim()}");
+                        return (null, 0, null);
+                    }
+                }
+
+                return (moduleName, baseOffset, offsets);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"ParsePointerPath: Beklenmeyen hata: {ex.Message}", ex);
+                return (null, 0, null);
+            }
+        }
         private void LoadProcesses()
         {
             AppendToLog("Çalışan işlemler listeleniyor...");
@@ -709,7 +798,7 @@ namespace P5S_ceviri
             {
                 // Mevcut tema tercihini al
                 var currentTheme = ThemeManager.GetThemeFromString(_appSettings.Theme);
-                
+
                 // ComboBox'ta doğru seçimi yap
                 foreach (ComboBoxItem item in cmbTheme.Items)
                 {
@@ -732,7 +821,7 @@ namespace P5S_ceviri
                 cmbTheme.SelectedIndex = 0;
             }
         }
-// Tema değişikliği event handler'ı
+        // Tema değişikliği event handler'ı
         private void CmbTheme_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             try
@@ -741,14 +830,14 @@ namespace P5S_ceviri
                 {
                     string themeString = selectedItem.Tag.ToString();
                     var selectedTheme = ThemeManager.GetThemeFromString(themeString);
-                    
+
                     // Temayı değiştir
                     ThemeManager.ChangeTheme(selectedTheme);
-                    
+
                     // Ayarlara kaydet
                     _appSettings.Theme = themeString;
                     _settingsManager.SaveSettings(_appSettings);
-                    
+
                     // Log kaydet
                     AppendToLog($"Tema değiştirildi: {selectedItem.Content}");
                 }
