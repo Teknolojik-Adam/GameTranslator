@@ -35,7 +35,6 @@ namespace P5S_ceviri
                 .Where(r => IsRegionChanged(_previousImage, currentImage, r))
                 .ToList();
 
-            // Her bölge için paralel OCR ile çeviri yapmak için
             var tasks = changedRegions.Select(async region =>
             {
                 var regionBmp = _ocrService.CropImage(currentImage, region);

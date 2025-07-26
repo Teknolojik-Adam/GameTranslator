@@ -9,6 +9,7 @@ namespace P5S_ceviri
 {
     public class MemoryService : IMemoryService
     {
+
         #region P/Invoke
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, [Out] byte[] lpBuffer, int dwSize, out int lpNumberOfBytesRead);
@@ -74,7 +75,7 @@ namespace P5S_ceviri
             }
         }
 
-        /// bellekte  belirli bir metni (Unicode) formatinda arar
+        // bellekte  belirli bir metni (Unicode) formatinda arar
         public List<IntPtr> FindStringAddresses(Process process, string searchText)
         {
             if (string.IsNullOrEmpty(searchText) || process == null) return new List<IntPtr>();

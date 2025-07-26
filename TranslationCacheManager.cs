@@ -13,11 +13,11 @@ namespace P5S_ceviri
         public TranslationCacheManager(ILogger logger)
         {
             _logger = logger;
-            // Önbellek dosyasının yolu: .../GameTranslator/bin/Debug/translation_cache.json
+            //dosya yolu: .../GameTranslator/bin/Debug/translation_cache.json
             _cacheFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "translation_cache.json");
         }
 
-        // Önbelleği diskten yükler. Dosya yoksa boş bir sözlük döndürür.
+        // Önbelleği diskten yükler. Dosya yoksa boş döndürür.
         public Dictionary<string, string> LoadCache()
         {
             if (!File.Exists(_cacheFilePath))
@@ -39,7 +39,7 @@ namespace P5S_ceviri
                 return new Dictionary<string, string>();
             }
         }
-        // Verilen önbelleği diske JSON formatında kaydeder.
+        // verileri önbelleği diske JSON formatında kaydetmek için.
         public void SaveCache(Dictionary<string, string> cache)
         {
             try

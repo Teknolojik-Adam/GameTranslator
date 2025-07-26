@@ -19,7 +19,7 @@ namespace P5S_ceviri
         {
             return _processes.AsReadOnly();
         }
-        /// Çalışan işlem listesini yeniler, erişilemeyen veya kapanmış olanları filtreler.
+        // Çalışan işlem listesini yeniler, erişilemeyen veya kapanmış olanları filtreler.
         public void RefreshProcesses()
         {
             _logger.LogInformation("Proses listesi yenileniyor...");

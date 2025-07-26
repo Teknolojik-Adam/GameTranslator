@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -11,265 +12,107 @@ namespace P5S_ceviri
 {
     public class EnhancedMemoryService : MemoryService
     {
-        public event Action<int> ProgressChanged;
         public event Action<string> StatusChanged;
+        public event Action<int> ProgressChanged; // 0-100
 
         public EnhancedMemoryService(ILogger logger) : base(logger)
         {
         }
 
-        /// Çoklu encoding ile metin arama
-        public async Task<List<IntPtr>> FindStringAddressesMultiEncodingAsync(Process process, string searchText, 
-            string encoding = "Unicode", CancellationToken cancellationToken = default, IProgress<int> progress = null)
+        private void ReportProgress(int value) => ProgressChanged?.Invoke(value);
+        private void ReportStatus(string status) => StatusChanged?.Invoke(status);
+
+        public async Task<List<IntPtr>> FindPatternAddressesAsync(Process process, string pattern, CancellationToken ct, IProgress<int> progress = null)
         {
-            if (string.IsNullOrEmpty(searchText) || process == null) 
+            ReportStatus("Pattern aranıyor...");
+            (byte[] bytes, bool[] masks) parsedPattern;
+            try
+            {
+                parsedPattern = ParsePattern(pattern);
+            }
+            catch (ArgumentException ex)
+            {
+                ReportStatus($"Hata: {ex.Message}");
+                AppendToLog($"Pattern ayrıştırma hatası: {ex.Message}"); // Logger'a protected erişim yoksa _logger'ı private yapıp property ile erişim sağlayın
                 return new List<IntPtr>();
+            }
+
+            var module = process.MainModule;
+            var memory = new byte[module.ModuleMemorySize];
+
+            ReportStatus("Bellek okunuyor...");
+            if (!ReadProcessMemory(process.Handle, module.BaseAddress, memory, memory.Length, out _))
+            {
+                ReportStatus("Bellek okuma hatası!");
+                AppendToLog($"Bellek okuma hatası! Hata kodu: {Marshal.GetLastWin32Error()}"); // Aynı şekilde burada da _logger'a property ile erişin
+                return new List<IntPtr>();
+            }
 
             return await Task.Run(() =>
             {
+                ReportStatus("Tarama başlatıldı...");
                 var results = new List<IntPtr>();
-                var mainModule = process.MainModule;
-                
-                StatusChanged?.Invoke($"Bellek okunuyor ({encoding})...");
-                byte[] memoryDump = new byte[mainModule.ModuleMemorySize];
-
-                if (!ReadProcessMemory(process.Handle, mainModule.BaseAddress, memoryDump, memoryDump.Length, out _))
+                int total = memory.Length - parsedPattern.bytes.Length;
+                for (int i = 0; i <= total; i++)
                 {
-                    StatusChanged?.Invoke("Bellek okuma hatası!");
-                    return results;
+                    ct.ThrowIfCancellationRequested();
+                    if (MatchesWithMask(memory, i, parsedPattern.bytes, parsedPattern.masks))
+                        results.Add(IntPtr.Add(module.BaseAddress, i));
+
+                    if (progress != null && i % 100000 == 0)
+                        progress.Report((int)((double)i / total * 100));
+
+                    ReportProgress((int)((double)i / total * 100));
                 }
-
-                byte[] searchBytes = GetSearchBytes(searchText, encoding);
-                if (searchBytes == null || searchBytes.Length == 0)
-                {
-                    StatusChanged?.Invoke("Encoding hatası!");
-                    return results;
-                }
-
-                StatusChanged?.Invoke($"Tarama başlatıldı - {searchBytes.Length} byte aranıyor...");
-                
-                int totalSize = memoryDump.Length - searchBytes.Length;
-                int lastReportedProgress = 0;
-
-                for (int i = 0; i <= totalSize; i++)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    // Progress güncelleme (her %1'de bir)
-                    int currentProgress = (int)((double)i / totalSize * 100);
-                    if (currentProgress > lastReportedProgress)
-                    {
-                        lastReportedProgress = currentProgress;
-                        progress?.Report(currentProgress);
-                        ProgressChanged?.Invoke(currentProgress);
-                    }
-
-                    if (IsMatchAt(memoryDump, i, searchBytes))
-                    {
-                        results.Add(IntPtr.Add(mainModule.BaseAddress, i));
-                    }
-                }
-
-                StatusChanged?.Invoke($"Tarama tamamlandı - {results.Count} adet adres bulundu");
-                progress?.Report(100);
-                ProgressChanged?.Invoke(100);
+                ReportStatus($"Tarama tamamlandı. {results.Count} adet sonuç bulundu.");
+                AppendToLog($"Pattern taraması tamamlandı. {results.Count} adet sonuç bulundu."); // Ve burada
                 return results;
-            }, cancellationToken);
+            }, ct);
         }
 
-   
-        public async Task<List<FuzzyMatch>> FindFuzzyStringMatchesAsync(Process process, string searchText, 
-            string encoding = "Unicode", int tolerance = 2, CancellationToken cancellationToken = default)
+        private void AppendToLog(string v)
         {
-            var results = new List<FuzzyMatch>();
-            var mainModule = process.MainModule;
-            
-            return await Task.Run(() =>
+            throw new NotImplementedException();
+        }
+
+        private (byte[] bytes, bool[] masks) ParsePattern(string pattern)
+        {
+            var parts = pattern.Split(new char[]{' '}, StringSplitOptions.RemoveEmptyEntries);
+            var bytes = new List<byte>();
+            var masks = new List<bool>();
+
+            foreach (var p in parts)
             {
-                byte[] memoryDump = new byte[mainModule.ModuleMemorySize];
-                if (!ReadProcessMemory(process.Handle, mainModule.BaseAddress, memoryDump, memoryDump.Length, out _))
-                    return results;
-
-                byte[] searchBytes = GetSearchBytes(searchText, encoding);
-                if (searchBytes == null) return results;
-
-                for (int i = 0; i <= memoryDump.Length - searchBytes.Length; i++)
+                if (p == "??" || p == "?")
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    
-                    int differences = CountDifferences(memoryDump, i, searchBytes);
-                    if (differences <= tolerance)
-                    {
-                        var address = IntPtr.Add(mainModule.BaseAddress, i);
-                        var foundText = ExtractStringAt(memoryDump, i, searchBytes.Length, encoding);
-                        
-                        results.Add(new FuzzyMatch
-                        {
-                            Address = address,
-                            FoundText = foundText,
-                            Differences = differences,
-                            Similarity = (double)(searchBytes.Length - differences) / searchBytes.Length * 100
-                        });
-                    }
+                    bytes.Add(0);
+                    masks.Add(false);
                 }
-                return results.OrderBy(x => x.Differences).ToList();
-            }, cancellationToken);
-        }
-
-
-        public async Task<List<PatternMatch>> FindPatternMatchesAsync(Process process, string pattern, 
-            CancellationToken cancellationToken = default)
-        {
-            // Basit pattern matching - geliştirillebilir
-            var results = new List<PatternMatch>();
-            var mainModule = process.MainModule;
-
-            return await Task.Run(() =>
-            {
-                byte[] memoryDump = new byte[mainModule.ModuleMemorySize];
-                if (!ReadProcessMemory(process.Handle, mainModule.BaseAddress, memoryDump, memoryDump.Length, out _))
-                    return results;
-
-                // Örnek: "Hello*World" -> "Hello" ile başlayıp "World" ile biten metinler
-                if (pattern.Contains("*"))
+                else if (byte.TryParse(p, NumberStyles.HexNumber, null, out byte b))
                 {
-                    var parts = pattern.Split('*');
-                    if (parts.Length == 2)
-                    {
-                        results.AddRange(FindPatternWithWildcard(memoryDump, mainModule.BaseAddress, 
-                            parts[0], parts[1], cancellationToken));
-                    }
+                    bytes.Add(b);
+                    masks.Add(true);
                 }
-
-                return results;
-            }, cancellationToken);
+                else
+                {
+                    throw new ArgumentException($"Geçersiz hex: {p}");
+                }
+            }
+            return (bytes.ToArray(), masks.ToArray());
         }
 
-                 private byte[] GetSearchBytes(string text, string encoding)
-         {
-             try
-             {
-                 switch (encoding.ToLower())
-                 {
-                     case "unicode":
-                         return Encoding.Unicode.GetBytes(text);
-                     case "utf-8":
-                         return Encoding.UTF8.GetBytes(text);
-                     case "ascii":
-                         return Encoding.ASCII.GetBytes(text);
-                     case "shift-jis":
-                         return Encoding.GetEncoding("Shift-JIS").GetBytes(text);
-                     default:
-                         return Encoding.Unicode.GetBytes(text);
-                 }
-             }
-             catch
-             {
-                 return Encoding.Unicode.GetBytes(text); // Fallback
-             }
-         }
-
-        private bool IsMatchAt(byte[] memory, int offset, byte[] pattern)
+        private bool MatchesWithMask(byte[] memory, int position, byte[] patternBytes, bool[] patternMasks)
         {
-            for (int i = 0; i < pattern.Length; i++)
+            for (int i = 0; i < patternBytes.Length; i++)
             {
-                if (memory[offset + i] != pattern[i])
+                if (patternMasks[i] && memory[position + i] != patternBytes[i])
                     return false;
             }
             return true;
         }
 
-        private int CountDifferences(byte[] memory, int offset, byte[] pattern)
-        {
-            int differences = 0;
-            for (int i = 0; i < pattern.Length && offset + i < memory.Length; i++)
-            {
-                if (memory[offset + i] != pattern[i])
-                    differences++;
-            }
-            return differences;
-        }
-
-                 private string ExtractStringAt(byte[] memory, int offset, int length, string encoding)
-         {
-             try
-             {
-                 byte[] data = new byte[length];
-                 Array.Copy(memory, offset, data, 0, Math.Min(length, memory.Length - offset));
-                 
-                 switch (encoding.ToLower())
-                 {
-                     case "unicode":
-                         return Encoding.Unicode.GetString(data).Split('\0')[0];
-                     case "utf-8":
-                         return Encoding.UTF8.GetString(data).Split('\0')[0];
-                     case "ascii":
-                         return Encoding.ASCII.GetString(data).Split('\0')[0];
-                     default:
-                         return Encoding.Unicode.GetString(data).Split('\0')[0];
-                 }
-             }
-             catch
-             {
-                 return "[Decode Error]";
-             }
-         }
-
-        private List<PatternMatch> FindPatternWithWildcard(byte[] memory, IntPtr baseAddress, 
-            string start, string end, CancellationToken cancellationToken)
-        {
-            var results = new List<PatternMatch>();
-            var startBytes = Encoding.Unicode.GetBytes(start);
-            var endBytes = Encoding.Unicode.GetBytes(end);
-
-            for (int i = 0; i <= memory.Length - startBytes.Length; i++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                
-                if (IsMatchAt(memory, i, startBytes))
-                {
-                    // Start bulundu, şimdi end'i ara
-                    for (int j = i + startBytes.Length; j <= memory.Length - endBytes.Length; j++)
-                    {
-                        if (IsMatchAt(memory, j, endBytes))
-                        {
-                            // Pattern bulundu
-                            var address = IntPtr.Add(baseAddress, i);
-                            var length = j + endBytes.Length - i;
-                            var text = ExtractStringAt(memory, i, length, "unicode");
-                            
-                            results.Add(new PatternMatch
-                            {
-                                Address = address,
-                                MatchedText = text,
-                                Length = length
-                            });
-                            break; // İlk eşleşmeyi al
-                        }
-                    }
-                }
-            }
-            return results;
-        }
-
-        // P/Invoke - parent class'tan alıyoruz
         [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, 
+        private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress,
             [Out] byte[] lpBuffer, int dwSize, out int lpNumberOfBytesRead);
     }
-
-    public class FuzzyMatch
-    {
-        public IntPtr Address { get; set; }
-        public string FoundText { get; set; }
-        public int Differences { get; set; }
-        public double Similarity { get; set; }
-    }
-
-    public class PatternMatch
-    {
-        public IntPtr Address { get; set; }
-        public string MatchedText { get; set; }
-        public int Length { get; set; }
-    }
-} 
+}

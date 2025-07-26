@@ -26,7 +26,7 @@ namespace P5S_ceviri
 
     #region Web Kazıma Stratejileri
 
-    /// DeepL web sitesini kazıyarak çeviri yapar
+    // DeepL web sitesini kazıyarak çeviri yapar
     public class DeepLWebScrapingStrategy : ITranslationStrategy
     {
         public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)
@@ -46,7 +46,7 @@ namespace P5S_ceviri
         }
     }
 
-    /// Yandex Translate web sitesini kazıyarak çeviri yapar.
+    // Yandex Translate web sitesini kazıyarak çeviri yapar.
     public class YandexWebScrapingStrategy : ITranslationStrategy
     {
         public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)
@@ -79,7 +79,7 @@ namespace P5S_ceviri
         }
     }
 
-    /// Google'ın web API'sini kullanarak çeviri yapar.
+    // Google'ın web API'sini kullanarak çeviri yapar.
     public class GoogleWebTranslationStrategy : ITranslationStrategy
     {
         public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)
@@ -101,7 +101,7 @@ namespace P5S_ceviri
         }
     }
 
-    /// Bing Translator web sitesini kazıyarak çevirisi
+    // Bing Translator web sitesini kazıyarak çevirisi
     public class BingWebTranslationStrategy : ITranslationStrategy
     {
         public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)

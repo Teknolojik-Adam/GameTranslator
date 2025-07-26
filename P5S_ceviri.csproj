@@ -140,6 +140,7 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="HotkeyManager.cs" />
     <Compile Include="PointerScanner.cs" />
     <Compile Include="TranslationCacheManager.cs" />
     <Page Include="InputDialog.xaml">

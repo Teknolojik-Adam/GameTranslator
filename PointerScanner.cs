@@ -9,27 +9,25 @@ namespace P5S_ceviri
 {
     public class PointerPath
     {
-        public string ModuleName { get; set; } // Genellikle .exe dosyasının adı
-        public long BaseOffset { get; set; } // Modülün başlangıcından itibaren sabit offset
-        public List<int> Offsets { get; set; } = new List<int>(); // Pointer zincirindeki offsetler (sonuncusu hedefe olan offset)
+        public string ModuleName { get; set; } 
+        public long BaseOffset { get; set; } 
+        public List<int> Offsets { get; set; } = new List<int>();
 
         public override string ToString()
         {
-            // Cheat Engine formatında çıktı verir.
-            // oradan okunan değere 0x90 ekleyerek hedef adrese ulaşacağınız anlamına gelir.
+           
             return $"\"{ModuleName}\"+0x{BaseOffset:X}" + (Offsets.Any() ? ", " + string.Join(", ", Offsets.Select(o => "0x" + o.ToString("X"))) : "");
         }
     }
 
     public class PointerScanner
     {
-        // P/Invoke: Bellek okuma
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, [Out] byte[] lpBuffer, int dwSize, out int lpNumberOfBytesRead);
 
         private readonly Process _process;
         private readonly ProcessModule _mainModule;
-        private readonly ILogger _logger; // Logger eklenebilir
+        private readonly ILogger _logger; 
 
         public PointerScanner(Process process, ILogger logger = null)
         {
@@ -42,9 +40,8 @@ namespace P5S_ceviri
             return await Task.Run(() =>
             {
                 var paths = new List<PointerPath>();
-                var visitedAddresses = new HashSet<IntPtr>(); // Sonsuz döngüyü önlemek için
+                var visitedAddresses = new HashSet<IntPtr>(); 
 
-                // Bellek okuma için gerekli değişkenler
                 IntPtr regionStart = searchRegionStart ?? _mainModule.BaseAddress;
                 int regionSize = searchRegionSize ?? _mainModule.ModuleMemorySize;
                 byte[] memoryDump = new byte[regionSize];
@@ -52,10 +49,10 @@ namespace P5S_ceviri
                 if (!ReadProcessMemory(_process.Handle, regionStart, memoryDump, memoryDump.Length, out _))
                 {
                     _logger?.LogError($"Bellek okunamadı: 0x{regionStart.ToInt64():X} - {_process.ProcessName}");
-                    return paths; // Boş liste döndür
+                    return paths; 
                 }
 
-                // Hedef adresin doğrudan modüldeki offset'ini bulmaya çalış (çok nadir)
+                // Hedef adresin doğrudan modüldeki offset
                 long relativeTargetAddress = targetAddress.ToInt64() - _mainModule.BaseAddress.ToInt64();
                 if (relativeTargetAddress >= 0 && relativeTargetAddress < regionSize)
                 {
@@ -73,7 +70,7 @@ namespace P5S_ceviri
                 return paths.Distinct(new PointerPathComparer()).ToList();
             });
         }
-        /// Geriye dönük pointer araması yapar.
+        // Geriye dönük pointer araması yapar.
         private void SearchPointersRecursive(IntPtr currentTarget, List<int> currentOffsets, int depth, byte[] memoryDump, IntPtr memoryBase, HashSet<IntPtr> visited, List<PointerPath> foundPaths)
         {
             // Temel durumlar
@@ -81,7 +78,7 @@ namespace P5S_ceviri
             visited.Add(currentTarget);
 
             int pointerSize = IntPtr.Size; // 32-bit için 4, 64-bit için 8
-            long targetValue = currentTarget.ToInt64(); // Aradığımız değer (pointer'ın göstermesi gereken adres)
+            long targetValue = currentTarget.ToInt64();
 
             // Bellekteki her adreste pointer olup olmadığını kontrol et
             // 4-byte hizalama genellikle iyidir ve performansı artırır.
@@ -94,18 +91,17 @@ namespace P5S_ceviri
                         ? BitConverter.ToInt64(memoryDump, i)
                         : BitConverter.ToInt32(memoryDump, i);
 
-                    // Bu değer, hedef adresle eşleşiyor mu? (Yani bu adres, hedefi gösteren bir pointer mı?)
+                    // Bu değer, hedef adresle eşleşiyor mu? (Yani bu adres, hedefi gösteren bir pointer mı? sorgusu)
                     if (potentialPointerValue == targetValue)
                     {
                         // Evet, eşleşiyor. Bu adres bir pointer.
-                        IntPtr pointerAddress = IntPtr.Add(memoryBase, i); // Pointer'ın bulunduğu adres
+                        IntPtr pointerAddress = IntPtr.Add(memoryBase, i); 
                         long relativePointerAddress = pointerAddress.ToInt64() - _mainModule.BaseAddress.ToInt64();
 
                         // Pointer adresi modül içinde mi?
                         if (relativePointerAddress >= 0 && relativePointerAddress < _mainModule.ModuleMemorySize)
                         {
-                            // Modül içi pointer: Kararlı ve tercih edilen yol
-                            int calculatedOffset = (int)(targetValue - potentialPointerValue); // Her zaman 0
+                            int calculatedOffset = (int)(targetValue - potentialPointerValue);
 
                             // Yeni offset zinciri oluştur: [yeni_offset] + [önceki_zincir]
                             var newOffsets = new List<int> { calculatedOffset };
@@ -115,16 +111,14 @@ namespace P5S_ceviri
                             foundPaths.Add(new PointerPath
                             {
                                 ModuleName = _mainModule.ModuleName,
-                                BaseOffset = relativePointerAddress, // Bu pointer'ın modül içindeki sabit offset'i
-                                Offsets = newOffsets // Bu zincire ait tüm offsetler
+                                BaseOffset = relativePointerAddress, 
+                                Offsets = newOffsets
                             });
 
-                            // Zinciri daha derin araştırmak için özyinelemeyi çağır
-                            // Şimdi bu pointer adresine (pointerAddress) giden yolları aramalıyız.
                             if (depth > 1)
                             {
                                 SearchPointersRecursive(
-                                    pointerAddress, // Yeni hedef: bu pointer adresi
+                                    pointerAddress, // girilen hedef:pointer adresi
                                     newOffsets,     // Bu hedef için yeni offset zinciri
                                     depth - 1,      // Derinliği azalt
                                     memoryDump,
@@ -134,10 +128,10 @@ namespace P5S_ceviri
                                 );
                             }
                         }
-                        else // Pointer adresi modül dışında (örneğin heap).
+                        else 
                         {
-                            // Modül dışı adres: Daha az kararlı, mutlak adres olarak ele alındı.
-                            int calculatedOffset = (int)(targetValue - potentialPointerValue); // Her zaman 0
+                          
+                            int calculatedOffset = (int)(targetValue - potentialPointerValue);
 
                             var newOffsets = new List<int> { calculatedOffset };
                             newOffsets.AddRange(currentOffsets);
@@ -155,7 +149,7 @@ namespace P5S_ceviri
                             {
                                 SearchPointersRecursive(
                                     pointerAddress, // Yeni hedef: bu pointer adresi
-                                    newOffsets,     // Bu hedef için yeni offset zinciri
+                                    newOffsets,     //hedef için yeni offset zinciri
                                     depth - 1,      // Derinliği azalt
                                     memoryDump,
                                     memoryBase,

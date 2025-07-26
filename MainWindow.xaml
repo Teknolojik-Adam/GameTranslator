@@ -67,14 +67,6 @@
         <StackPanel Grid.Row="3" Grid.Column="1" Margin="5">
             <GroupBox Header="Ekrandan Çeviri (OCR)">
                 <StackPanel Margin="5">
-                    <!-- YENİ EKLENEN KONTROL -->
-                    <!--
-                    <CheckBox x:Name="chkUseWindowsOcr"
-                      Content="Windows OCR Servisini Kullan"
-                      Margin="0,0,0,10"
-                      VerticalAlignment="Center"
-                      Checked="chkUseWindowsOcr_StateChanged"
-                      Unchecked="chkUseWindowsOcr_StateChanged"/>-->
 
                     <TextBlock Text="Seçilen oyun penceresinin otomatik olarak taranacaktır." TextWrapping="Wrap"/>
                     <Button Name="btnContinuousOcr" Content="Ekran Çevirisini Başlat" Click="btnContinuousOcr_Click" Margin="0,10,0,0"/>
@@ -86,16 +78,16 @@
                 </StackPanel>
             </GroupBox>
 
-      
+
             <GroupBox Header="Gelişmiş Pointer Tarama" Margin="0,5,0,0">
                 <StackPanel Margin="5">
-                    <TextBlock Text="RAM'de aranacak metin:" Margin="0,0,0,2"/>
+                    <TextBlock Text="RAM'de aranacak pattern:" Margin="0,0,0,2"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
-                        <TextBox Name="txtScanText" Width="150" Margin="0,0,5,0" ToolTip="RAM'de aranacak tam metin"/>
+                        <TextBox Name="txtScanText" Width="150" Margin="0,0,5,0" ToolTip="RAM'de aranacak pattern"/>
                         <Button Name="btnScanPointers" Content="Tara" Click="btnScanPointers_Click" IsEnabled="False" Width="60"/>
                         <Button Name="btnStopScan" Content="Durdur" Click="btnStopScan_Click" IsEnabled="False" Width="60" Margin="5,0,0,0"/>
                     </StackPanel>
-                    
+
                     <StackPanel Orientation="Horizontal" Margin="0,5,0,5">
                         <TextBlock Text="Encoding:" VerticalAlignment="Center" Margin="0,0,5,0"/>
                         <ComboBox Name="cmbEncoding" Width="80" SelectedIndex="0">
@@ -112,14 +104,15 @@
                             <ComboBoxItem Content="5" Tag="5"/>
                         </ComboBox>
                     </StackPanel>
-                    
+
                     <ProgressBar Name="progressScan" Height="20" Margin="0,5,0,5" Visibility="Collapsed"/>
-                    <TextBlock Name="lblScanStatus" Text="" Margin="0,0,0,5" FontSize="11" Foreground="Blue"/>
-                    
+                    <TextBlock Name="lblScanStatus" Text="" Margin="0,0,0,5" FontSize="11" Foreground="Blue" Height="12"/>
+                    <ListBox Name="lstAddresses" Height="86" Margin="0,5,0,5"/>
+
                     <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
-                        <Button Name="btnTestPointer" Content="Test Et" Click="btnTestPointer_Click" IsEnabled="False" Width="60"/>
-                        <Button Name="btnSavePointers" Content="Kaydet" Click="btnSavePointers_Click" IsEnabled="False" Width="60" Margin="5,0,0,0"/>
-                        <Button Name="btnLoadPointers" Content="Yükle" Click="btnLoadPointers_Click" Width="60" Margin="5,0,0,0"/>
+                        <Button x:Name="btnTestPointer" Content="Test Et" Click="btnTestPointer_Click" IsEnabled="False" Width="60"/>
+                        <Button x:Name="btnSavePointers" Content="Kaydet" Click="btnSavePointers_Click" IsEnabled="False" Width="60" Margin="5,0,0,0"/>
+                        <Button x:Name="btnLoadPointers" Content="Yükle" Click="btnLoadPointers_Click" Width="60" Margin="5,0,0,0"/>
                     </StackPanel>
                 </StackPanel>
             </GroupBox>

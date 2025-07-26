@@ -43,7 +43,7 @@ namespace P5S_ceviri
         {
             try
             {
-                // Geçici bir logger oluştur (ana logger henüz hazır değil)
+                // Geçici bir logger
                 var tempLogger = new ConsoleLogger();
                 var settingsManager = new SettingsManager(tempLogger);
                 var appSettings = settingsManager.LoadSettings();

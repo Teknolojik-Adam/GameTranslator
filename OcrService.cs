@@ -9,7 +9,6 @@ using Tesseract;
 using OpenCvSharp;
 using OpenCvSharp.Dnn;
 using OpenCvSharp.Extensions;
-// CvPoint ve CvSize için çakışmayı önlemek adına using alias kullanmıyoruz, doğrudan OpenCvSharp.Point ve OpenCvSharp.Size kullanacağız.
 
 namespace P5S_ceviri
 {

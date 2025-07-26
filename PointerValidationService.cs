@@ -235,10 +235,8 @@ namespace P5S_ceviri
             if (text.Length >= 3 && text.Length <= 200)
                 score += 20;
 
-            // Pointer depth penalty (daha az depth = daha iyi)
             score += Math.Max(0, 30 - (path.Offsets.Count * 5));
 
-            // Module içi bonus
             if (path.ModuleName != "[EXTERNAL]")
                 score += 20;
 

@@ -4,11 +4,14 @@ using System.Drawing;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Threading;
 
 namespace P5S_ceviri
@@ -36,6 +39,10 @@ namespace P5S_ceviri
         private readonly DispatcherTimer _continuousTranslationTimer;
         private readonly DispatcherTimer _manualTranslationTimer;
         private readonly DispatcherTimer _continuousOcrTimer;
+        private HotkeyManager _hotkeyManager;
+        private int _ocrHotkeyId;
+        private int _translateWindowHotkeyId;
+        private int _switchTranslationServiceHotkeyId; 
 
         private OutputWindow _outputWindow;
         public event Action<string> TranslatedTextChanged;
@@ -105,6 +112,66 @@ namespace P5S_ceviri
 
         #region Enhanced Pointer Scanner UI Logic
 
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+
+            HwndSource hwndSource = PresentationSource.FromVisual(this) as HwndSource;
+            _hotkeyManager = new HotkeyManager(hwndSource);
+
+            // Kısayolları kaydet
+            RegisterHotkeys();
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            // Kısayolları kaldır
+            UnregisterHotkeys();
+
+            base.OnClosed(e);
+        }
+
+        private void RegisterHotkeys()
+        {
+            // OCR başlatma/durdurma kısayolu
+            _ocrHotkeyId = _hotkeyManager.RegisterHotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.O, ToggleOcr);
+
+            // Çeviri penceresini açma/kapama kısayolu
+            _translateWindowHotkeyId = _hotkeyManager.RegisterHotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.T, ToggleTranslateWindow);
+
+            // Çeviri servisleri arasında geçiş kısayolu
+            _switchTranslationServiceHotkeyId = _hotkeyManager.RegisterHotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.S, SwitchTranslationService); // Yeni kısayol
+        }
+
+        private void UnregisterHotkeys()
+        {
+            _hotkeyManager.UnregisterHotkey(_ocrHotkeyId);
+            _hotkeyManager.UnregisterHotkey(_translateWindowHotkeyId);
+            _hotkeyManager.UnregisterHotkey(_switchTranslationServiceHotkeyId); // Yeni kısayol
+        }
+
+        private void ToggleOcr()
+        {
+            if (_isContinuousOcrRunning)
+                StopContinuousOcr();
+            else
+                StartContinuousOcr();
+        }
+
+        private void ToggleTranslateWindow()
+        {
+            btnToggleOverlay_Click(null, null);
+        }
+
+        private void SwitchTranslationService()
+        {
+            // Çeviri servisleri arasında geçiş yap
+            if (cmbTranslationService.SelectedIndex < cmbTranslationService.Items.Count - 1)
+                cmbTranslationService.SelectedIndex++;
+            else
+                cmbTranslationService.SelectedIndex = 0;
+        }
+    
         private async void btnScanPointers_Click(object sender, RoutedEventArgs e)
         {
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
@@ -117,114 +184,86 @@ namespace P5S_ceviri
             string searchText = txtScanText.Text;
             if (string.IsNullOrWhiteSpace(searchText))
             {
-                AppendToLog("Lütfen pointer'ı aranacak bir metin girin.", true);
+                AppendToLog("Lütfen pattern girin.", true);
                 return;
             }
+            // Arama metnini normalize et
+            searchText = NormalizeString(searchText).Trim();
 
-            // UI kontrolleri
+            // UI ayarları
             btnScanPointers.IsEnabled = false;
             btnStopScan.IsEnabled = true;
             progressScan.Visibility = Visibility.Visible;
             progressScan.Value = 0;
             lblScanStatus.Text = "Tarama başlatılıyor...";
 
-            // Encoding ve derinlik ayarlarını al
-            string encoding = ((ComboBoxItem)cmbEncoding.SelectedItem)?.Tag?.ToString() ?? "Unicode";
-            int depth = int.Parse(((ComboBoxItem)cmbDepth.SelectedItem)?.Tag?.ToString() ?? "3");
+            // ListBox'ı temizle
+            lstAddresses.Items.Clear();
 
-            // Cancellation token oluştur
             _scanCancellationTokenSource = new CancellationTokenSource();
 
             try
             {
-                // Progress handler
                 var progress = new Progress<int>(value =>
                 {
-                    progressScan.Value = value;
+                    Dispatcher.Invoke(() => progressScan.Value = value);
                 });
 
-                // Status handler
                 _enhancedMemoryService.StatusChanged += OnScanStatusChanged;
                 _enhancedMemoryService.ProgressChanged += OnScanProgressChanged;
 
-                AppendToLog($"'{searchText}' metni için gelişmiş pointer taraması başlatılıyor (Encoding: {encoding}, Derinlik: {depth})...");
+                AppendToLog($"'{searchText}' pattern'i için pattern taraması başlatılıyor...");
 
-                //Gelişmiş metin arama
-                var addresses = await _enhancedMemoryService.FindStringAddressesMultiEncodingAsync(
-                    pi.Process, searchText, encoding, _scanCancellationTokenSource.Token, progress);
+                // Pattern araması
+                List<IntPtr> addresses = await _enhancedMemoryService.FindPatternAddressesAsync(
+                    pi.Process, searchText, _scanCancellationTokenSource.Token, progress);
 
-                if (!addresses.Any())
+                if (addresses == null || addresses.Count == 0)
                 {
-                    AppendToLog($"'{searchText}' metni {encoding} encoding ile bellekte bulunamadı.", true);
+                    AppendToLog($"'{searchText}' pattern'i bulunamadı.", true);
                     return;
                 }
 
-                AppendToLog($"{addresses.Count} adet adres bulundu. Pointer yolları aranıyor...");
-                lblScanStatus.Text = "Pointer yolları aranıyor...";
+                AppendToLog($"{addresses.Count} adres bulundu.");
 
-                // Her adres için pointer yollarını bul
-                var allPaths = new List<PointerPath>();
-                int addressIndex = 0;
-
-                foreach (var address in addresses.Take(5)) 
+                // Adresleri ListBox'a ekle
+                foreach (var address in addresses)
                 {
-                    addressIndex++;
-                    if (_scanCancellationTokenSource.Token.IsCancellationRequested) break;
-
-                    lblScanStatus.Text = $"Pointer yolları aranıyor ({addressIndex}/{Math.Min(5, addresses.Count)})...";
-
-                    var scanner = new PointerScanner(pi.Process, _logger);
-                    var paths = await scanner.FindPointers(address, maxDepth: depth);
-                    allPaths.AddRange(paths);
+                    string addressString = $"0x{address.ToInt64():X}";
+                    lstAddresses.Items.Add(addressString);
+                    AppendToLog($"Bulunan adres: {addressString}");
                 }
-
-                if (!allPaths.Any())
-                {
-                    AppendToLog("Bu adreslere giden kararlı pointer yolu bulunamadı.", true);
-                    return;
-                }
-
-                //  Pointer'ları doğrula ve skorla
-                lblScanStatus.Text = "Pointer'lar doğrulanıyor...";
-                var validationResults = await _pointerValidationService.ValidatePointersAsync(pi.Process, allPaths, searchText);
-
-                //  Sonuçları göster
-                _lastFoundPaths = validationResults.Select(r => r.Path).ToList();
-                DisplayPointerResults(validationResults);
-
-                //  etkinleştirme
-                btnTestPointer.IsEnabled = true;
-                btnSavePointers.IsEnabled = true;
-
-                AppendToLog($"Tarama tamamlandı! {validationResults.Count(r => r.IsValid)} geçerli pointer yolu bulundu.");
             }
             catch (OperationCanceledException)
             {
-                AppendToLog("Pointer taraması kullanıcı tarafından durduruldu.");
+                AppendToLog("Pattern taraması kullanıcı tarafından durduruldu.");
             }
             catch (Exception ex)
             {
-                AppendToLog($"Pointer taraması sırasında hata oluştu: {ex.Message}", true);
+                AppendToLog($"Tarama sırasında hata: {ex.Message}", true);
             }
             finally
             {
-
                 _enhancedMemoryService.StatusChanged -= OnScanStatusChanged;
                 _enhancedMemoryService.ProgressChanged -= OnScanProgressChanged;
-
                 btnScanPointers.IsEnabled = true;
                 btnStopScan.IsEnabled = false;
-                progressScan.Visibility = Visibility.Collapsed;
+                //progressScan.Visibility.Collapsed = Visibility.Collapsed;
                 lblScanStatus.Text = "";
                 _scanCancellationTokenSource?.Dispose();
                 _scanCancellationTokenSource = null;
             }
         }
 
+        private string NormalizeString(string input)
+        {
+            string normalized = input.Normalize(NormalizationForm.FormKD);
+            return normalized;
+        }
         private void btnStopScan_Click(object sender, RoutedEventArgs e)
         {
             _scanCancellationTokenSource?.Cancel();
-            AppendToLog("Tarama durdurma komutu verildi...");
+            AppendToLog("Pattern taraması durdurma komutu verildi...");
         }
 
         private async void btnTestPointer_Click(object sender, RoutedEventArgs e)
