@@ -245,7 +245,7 @@ namespace P5S_ceviri
             return (boxes, confidences);
         }
 
-        #region Mevcut Yardımcı Metotlar (Değişiklik Yok)
+        #region Mevcut Yardımcı Metotlar 
         private int FindOptimalThreshold(Bitmap image)
         {
             if (image == null) return -1;

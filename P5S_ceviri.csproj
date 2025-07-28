@@ -242,6 +242,12 @@
     </BootstrapperPackage>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+
+  <ItemGroup>
+    <None Include="packages\OpenCvSharp4.runtime.win.4.11.0.20250507\runtimes\win-x64\native\*.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
   <ItemGroup>
     <None Include="tessdata\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
