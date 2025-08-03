@@ -19,3 +19,7 @@ Ekran Çevirisini Başlat ile OCR tabanlı çeviri yapabilirsiniz.
 Not:
 • Bazı oyunlarda RAM adresleri güncellenirse, yeniden pointer yolu girmeniz gerekebilir.
 • OCR kalitesi, oyunun fontuna ve arka planına göre değişiklik gösterebilir.
+
+Akiş Şemasi
+
+<img width="318" height="466" alt="image"  src="https://github.com/user-attachments/assets/e6217574-e2d1-42ca-a6b4-bcb0e8d86f1b" />
