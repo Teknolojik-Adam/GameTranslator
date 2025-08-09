@@ -14,13 +14,13 @@
     <SolidColorBrush x:Key="DisabledBackgroundBrush" Color="#404040"/>
     <SolidColorBrush x:Key="DisabledTextBrush" Color="#888888"/>
 
-    <!-- Window  -->
+ 
     <Style TargetType="Window" x:Key="ThemedWindow">
         <Setter Property="Background" Value="{StaticResource PrimaryBackgroundBrush}"/>
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
     </Style>
 
-    <!-- Button  -->
+    
     <Style TargetType="Button" x:Key="ThemedButton">
         <Setter Property="Padding" Value="10,5"/>
         <Setter Property="Margin" Value="0,5"/>
@@ -51,7 +51,7 @@
         </Style.Triggers>
     </Style>
 
-    <!-- TextBox  -->
+   
     <Style TargetType="TextBox" x:Key="ThemedTextBox">
         <Setter Property="Padding" Value="5"/>
         <Setter Property="BorderThickness" Value="1"/>
@@ -61,7 +61,7 @@
         <Setter Property="CaretBrush" Value="{StaticResource PrimaryTextBrush}"/>
     </Style>
 
-    <!-- ComboBox  -->
+  
     <Style TargetType="ComboBox" x:Key="ThemedComboBox">
         <Setter Property="Padding" Value="5"/>
         <Setter Property="BorderThickness" Value="1"/>
@@ -70,7 +70,7 @@
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
     </Style>
 
-    <!-- GroupBox  -->
+    
     <Style TargetType="GroupBox" x:Key="ThemedGroupBox">
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
@@ -79,12 +79,12 @@
         <Setter Property="Padding" Value="5"/>
     </Style>
 
-    <!-- Label  -->
+    
     <Style TargetType="Label" x:Key="ThemedLabel">
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
     </Style>
 
-    <!-- ListBox  -->
+   
     <Style TargetType="ListBox" x:Key="ThemedListBox">
         <Setter Property="Background" Value="{StaticResource ControlBackgroundBrush}"/>
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
@@ -92,9 +92,9 @@
         <Setter Property="BorderThickness" Value="1"/>
     </Style>
 
-    <!-- CheckBox  -->
+    
     <Style TargetType="CheckBox" x:Key="ThemedCheckBox">
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
     </Style>
 
-</ResourceDictionary> 
+</ResourceDictionary>

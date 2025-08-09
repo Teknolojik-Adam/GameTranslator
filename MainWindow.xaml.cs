@@ -4,7 +4,6 @@ using System.Drawing;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,7 +41,7 @@ namespace P5S_ceviri
         private HotkeyManager _hotkeyManager;
         private int _ocrHotkeyId;
         private int _translateWindowHotkeyId;
-        private int _switchTranslationServiceHotkeyId; 
+        private int _switchTranslationServiceHotkeyId;
 
         private OutputWindow _outputWindow;
         public event Action<string> TranslatedTextChanged;
@@ -57,6 +56,7 @@ namespace P5S_ceviri
         private System.Drawing.Rectangle? _selectedOcrRegion = null;
         private CancellationTokenSource _scanCancellationTokenSource;
         private List<PointerPath> _lastFoundPaths = new List<PointerPath>();
+
         #endregion
 
         public MainWindow()
@@ -64,6 +64,7 @@ namespace P5S_ceviri
             InitializeComponent();
             try
             {
+
                 ServiceContainer.Initialize();
                 _processService = ServiceContainer.GetService<IProcessService>();
                 _memoryService = ServiceContainer.GetService<IMemoryService>();
@@ -87,6 +88,8 @@ namespace P5S_ceviri
                 _continuousOcrTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
                 _continuousOcrTimer.Tick += ContinuousOcrTimer_Tick;
 
+
+
                 this.Closing += (s, e) =>
                 {
                     if (_translationService is AdvancedTranslationService advancedService)
@@ -95,6 +98,7 @@ namespace P5S_ceviri
                     }
                     StopAllTranslations();
                     _memoryService?.Dispose();
+
                     _outputWindow?.Close();
                     ServiceContainer.Cleanup();
                 };
@@ -116,11 +120,31 @@ namespace P5S_ceviri
         {
             base.OnSourceInitialized(e);
 
-            HwndSource hwndSource = PresentationSource.FromVisual(this) as HwndSource;
-            _hotkeyManager = new HotkeyManager(hwndSource);
+            try
+            {
+                var presentationSource = PresentationSource.FromVisual(this);
+                if (presentationSource == null)
+                {
+                    _logger?.LogError("PresentationSource.FromVisual returned null");
+                    return;
+                }
 
-            // Kısayolları kaydet
-            RegisterHotkeys();
+                var hwndSource = presentationSource as HwndSource;
+                if (hwndSource == null)
+                {
+                    _logger?.LogError("Failed to cast PresentationSource to HwndSource");
+                    return;
+                }
+
+                _hotkeyManager = new HotkeyManager(hwndSource);
+
+                // Kısayolları kaydet
+                RegisterHotkeys();
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("HotkeyManager initialization failed", ex);
+            }
         }
 
         protected override void OnClosed(EventArgs e)
@@ -145,9 +169,19 @@ namespace P5S_ceviri
 
         private void UnregisterHotkeys()
         {
-            _hotkeyManager.UnregisterHotkey(_ocrHotkeyId);
-            _hotkeyManager.UnregisterHotkey(_translateWindowHotkeyId);
-            _hotkeyManager.UnregisterHotkey(_switchTranslationServiceHotkeyId); // Yeni kısayol
+            try
+            {
+                if (_hotkeyManager != null)
+                {
+                    _hotkeyManager.UnregisterHotkey(_ocrHotkeyId);
+                    _hotkeyManager.UnregisterHotkey(_translateWindowHotkeyId);
+                    _hotkeyManager.UnregisterHotkey(_switchTranslationServiceHotkeyId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Failed to unregister hotkeys", ex);
+            }
         }
 
         private void ToggleOcr()
@@ -171,7 +205,7 @@ namespace P5S_ceviri
             else
                 cmbTranslationService.SelectedIndex = 0;
         }
-    
+
         private async void btnScanPointers_Click(object sender, RoutedEventArgs e)
         {
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
@@ -187,52 +221,85 @@ namespace P5S_ceviri
                 AppendToLog("Lütfen pattern girin.", true);
                 return;
             }
-            // Arama metnini normalize et
-            searchText = NormalizeString(searchText).Trim();
 
-            // UI ayarları
             btnScanPointers.IsEnabled = false;
             btnStopScan.IsEnabled = true;
-            progressScan.Visibility = Visibility.Visible;
-            progressScan.Value = 0;
-            lblScanStatus.Text = "Tarama başlatılıyor...";
 
-            // ListBox'ı temizle
-            lstAddresses.Items.Clear();
+            lblScanStatus.Text = "Tarama başlatılıyor...";
+            lstAddresses.Items.Clear(); // ListBox'ı temizle
 
             _scanCancellationTokenSource = new CancellationTokenSource();
 
             try
             {
+
                 var progress = new Progress<int>(value =>
                 {
-                    Dispatcher.Invoke(() => progressScan.Value = value);
+
+                    Dispatcher.Invoke(() =>
+                    {
+
+                        lblScanStatus.Text = $"Tarama devam ediyor... ({value}%)";
+                    });
                 });
+
 
                 _enhancedMemoryService.StatusChanged += OnScanStatusChanged;
                 _enhancedMemoryService.ProgressChanged += OnScanProgressChanged;
 
-                AppendToLog($"'{searchText}' pattern'i için pattern taraması başlatılıyor...");
+                AppendToLog("Pattern taraması başlatılıyor...");
 
-                // Pattern araması
+
                 List<IntPtr> addresses = await _enhancedMemoryService.FindPatternAddressesAsync(
                     pi.Process, searchText, _scanCancellationTokenSource.Token, progress);
 
-                if (addresses == null || addresses.Count == 0)
+                if (addresses == null || !addresses.Any())
                 {
-                    AppendToLog($"'{searchText}' pattern'i bulunamadı.", true);
+                    AppendToLog("Belirtilen pattern bulunamadı.");
                     return;
                 }
 
-                AppendToLog($"{addresses.Count} adres bulundu.");
+                AppendToLog($"{addresses.Count} adet adres bulundu.");
 
-                // Adresleri ListBox'a ekle
-                foreach (var address in addresses)
+
+                _lastFoundPaths.Clear(); // Önceki sonuçları temizle
+
+
+                int maxAddressesToScan = Math.Min(10, addresses.Count); //  ilk 10 adresi tara
+
+                for (int i = 0; i < maxAddressesToScan; i++)
                 {
-                    string addressString = $"0x{address.ToInt64():X}";
-                    lstAddresses.Items.Add(addressString);
-                    AppendToLog($"Bulunan adres: {addressString}");
+                    IntPtr targetAddress = addresses[i];
+                    AppendToLog($"Pointer taraması başlatılıyor: 0x{targetAddress.ToInt64():X} ({i + 1}/{maxAddressesToScan})");
+
+                    var scanner = new PointerScanner(pi.Process, _logger);
+
+                    // Pointer yollarını bulmak için tarama yap
+                    var pathsForAddress = await scanner.FindPointers(targetAddress, maxDepth: 3);
+
+                    _lastFoundPaths.AddRange(pathsForAddress);
+
+                    AppendToLog($" • {pathsForAddress.Count} pointer yolu bulundu.");
+
+                    // Bulunan yolları ListBox'a ekle 
+                    foreach (var path in pathsForAddress.Take(10)) // İlk 10'u göster
+                    {
+                        lstAddresses.Items.Add(new ListBoxItem { Content = path.ToString() });
+                    }
                 }
+
+                if (_lastFoundPaths.Any())
+                {
+                    btnTestPointer.IsEnabled = true;
+                    btnSavePointers.IsEnabled = true;
+                    AppendToLog("Pointer taraması tamamlandı. Pointer'ları test edebilir veya kaydedebilirsiniz.");
+                }
+                else
+                {
+                    AppendToLog("Hiçbir pointer yolu bulunamadı.");
+                }
+
+
             }
             catch (OperationCanceledException)
             {
@@ -241,25 +308,22 @@ namespace P5S_ceviri
             catch (Exception ex)
             {
                 AppendToLog($"Tarama sırasında hata: {ex.Message}", true);
+                _logger?.LogError("Pointer taraması sırasında hata oluştu.", ex);
             }
             finally
             {
+
                 _enhancedMemoryService.StatusChanged -= OnScanStatusChanged;
                 _enhancedMemoryService.ProgressChanged -= OnScanProgressChanged;
                 btnScanPointers.IsEnabled = true;
                 btnStopScan.IsEnabled = false;
-                //progressScan.Visibility.Collapsed = Visibility.Collapsed;
+
                 lblScanStatus.Text = "";
                 _scanCancellationTokenSource?.Dispose();
                 _scanCancellationTokenSource = null;
             }
         }
 
-        private string NormalizeString(string input)
-        {
-            string normalized = input.Normalize(NormalizationForm.FormKD);
-            return normalized;
-        }
         private void btnStopScan_Click(object sender, RoutedEventArgs e)
         {
             _scanCancellationTokenSource?.Cancel();
@@ -352,7 +416,7 @@ namespace P5S_ceviri
                         _lastFoundPaths = loadedPaths;
                         AppendToLog($"{loadedPaths.Count} adet pointer yolu yüklendi: {openDialog.FileName}");
 
-                        // Loaded pointer'ları göster
+                        // Loaded pointer'ları göstermek için
                         foreach (var path in loadedPaths.Take(10))
                         {
                             AppendToLog($"  • {path}");
@@ -375,7 +439,10 @@ namespace P5S_ceviri
 
         private void OnScanStatusChanged(string status)
         {
-            Dispatcher.Invoke(() => lblScanStatus.Text = status);
+            Dispatcher.Invoke(() =>
+            {
+                lblScanStatus.Text = status;
+            });
         }
 
         private void OnScanProgressChanged(int progress)
@@ -383,31 +450,7 @@ namespace P5S_ceviri
             Dispatcher.Invoke(() => progressScan.Value = progress);
         }
 
-        private void DisplayPointerResults(List<PointerValidationResult> results)
-        {
-            var validResults = results.Where(r => r.IsValid).OrderByDescending(r => r.Score).Take(15);
-            var invalidResults = results.Where(r => !r.IsValid).OrderByDescending(r => r.Score).Take(5);
 
-            AppendToLog("=== GEÇERLİ POINTER'LAR (En İyiden Kötüye) ===");
-            foreach (var result in validResults)
-            {
-                string preview = result.CurrentValue != null ?
-                    result.CurrentValue.Substring(0, Math.Min(50, result.CurrentValue.Length)) :
-                    "[Boş]";
-                AppendToLog($"[Skor: {result.Score}] {result.Path} -> \"{preview}...\"");
-            }
-
-            if (invalidResults.Any())
-            {
-                AppendToLog("=== GEÇERSİZ POINTER'LAR ===");
-                foreach (var result in invalidResults.Take(3))
-                {
-                    AppendToLog($"[Hata] {result.Path} -> {result.ErrorMessage}");
-                }
-            }
-
-            AppendToLog("İpucu: Yüksek skorlu pointer'lar daha güvenilirdir.");
-        }
         #endregion
 
         #region Existing Methods
@@ -469,13 +512,12 @@ namespace P5S_ceviri
 
         private async void ContinuousOcrTimer_Tick(object sender, EventArgs e)
         {
-            // Aynı anda birden fazla OCR tick'i çalışmasını engelle
+            // Aynı anda birden fazla OCR tick'i çalışmasını engellemek için
             if (_isOcrTickBusy) return;
             _isOcrTickBusy = true;
 
             try
             {
-                // OCR devre dışıysa veya kullanıcı durdurduysa
                 if (!_isContinuousOcrRunning)
                     return;
 
@@ -490,7 +532,7 @@ namespace P5S_ceviri
                 if (handle == IntPtr.Zero)
                     return;
 
-                // Ekran görüntüsü al (arka planda)
+                // Ekran görüntüsü alma
                 using (var screenshot = await Task.Run(() => _ocrService.CaptureWindow(handle)))
                 {
                     if (screenshot == null)
@@ -504,41 +546,43 @@ namespace P5S_ceviri
                         var cropRect = _selectedOcrRegion.Value;
                         using (var cropped = _ocrService.CropImage(screenshot, cropRect))
                         {
-                            // Clone ile yeni bir bitmap oluştur (Dispose güvenliği için)
+
                             imageToProcess = new Bitmap(cropped);
                         }
                     }
                     else
                     {
-                        // Tüm pencereyi kullan, güvenli kopya al
+
                         imageToProcess = new Bitmap(screenshot);
                     }
 
 
-                    string currentText = await _ocrService.GetTextAdaptiveAsync(imageToProcess, "eng");
-
-
-                    imageToProcess.Dispose();
-
-                    // Geçerli metin yoksa veya değişmediyse işlem yapma
-                    if (string.IsNullOrWhiteSpace(currentText) || currentText == _lastReadText)
-                        return;
-
-                    _lastReadText = currentText;
-
-                    // Çeviri isteği
-                    string translated = await _translationService.TranslateAsync(
-                        currentText,
-                        "tr",
-                        GetSelectedTranslationStrategy());
-
-
-                    Dispatcher.Invoke(() =>
+                    using (var filteredImage = _ocrService.IsolateTextByColor(imageToProcess))
                     {
-                        txtOriginal.Text = $"[OCR] {currentText}";
-                        txtTranslated.Text = translated;
-                        OnTranslatedTextChanged(translated);
-                    });
+                        string currentText = await _ocrService.GetTextAdaptiveAsync(filteredImage, "eng");
+
+                        imageToProcess.Dispose();
+
+
+                        if (string.IsNullOrWhiteSpace(currentText) || currentText == _lastReadText)
+                            return;
+
+                        _lastReadText = currentText;
+
+                        // Çeviri 
+                        string translated = await _translationService.TranslateAsync(
+                            currentText,
+                            "tr",
+                            GetSelectedTranslationStrategy());
+
+
+                        Dispatcher.Invoke(() =>
+                        {
+                            txtOriginal.Text = $"[OCR] {currentText}";
+                            txtTranslated.Text = translated;
+                            OnTranslatedTextChanged(translated);
+                        });
+                    }
                 }
             }
             catch (Exception ex)
@@ -547,10 +591,13 @@ namespace P5S_ceviri
             }
             finally
             {
-                
+
                 _isOcrTickBusy = false;
             }
         }
+
+
+
         private void btnRefresh_Click(object sender, RoutedEventArgs e) => LoadProcesses();
 
         private async void CmbProcesses_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -558,6 +605,10 @@ namespace P5S_ceviri
             if (cmbProcesses.SelectedItem is ProcessInfo pi)
             {
                 StopAllTranslations();
+                if (_translationService is AdvancedTranslationService advancedService)
+                {
+                    advancedService.ClearTranslationContext();
+                }
                 _appSettings.LastProcessName = pi.ProcessName;
                 _settingsManager.SaveSettings(_appSettings);
                 _dynamicTextAddress = IntPtr.Zero;
@@ -598,6 +649,8 @@ namespace P5S_ceviri
             if (_isContinuousOcrRunning) StopContinuousOcr();
             else StartContinuousOcr();
         }
+
+
 
         private void btnToggleOverlay_Click(object sender, RoutedEventArgs e)
         {
@@ -676,11 +729,14 @@ namespace P5S_ceviri
             UpdateUIState();
         }
 
+
+
         private void StopAllTranslations()
         {
             if (_isContinuousTranslationRunning) { _isContinuousTranslationRunning = false; _continuousTranslationTimer.Stop(); AppendToLog("Otomatik RAM çevirisi durduruldu."); }
             if (_manualTranslationTimer.IsEnabled) { _manualTranslationTimer.Stop(); _manualAddress = IntPtr.Zero; AppendToLog("Manuel RAM çevirisi durduruldu."); }
             if (_isContinuousOcrRunning) StopContinuousOcr();
+
             UpdateUIState();
         }
 
@@ -726,6 +782,8 @@ namespace P5S_ceviri
             if (_isContinuousOcrRunning) { btnContinuousOcr.Content = "Ekran Çevirisini Durdur"; btnContinuousOcr.IsEnabled = true; }
             else { btnContinuousOcr.Content = "Ekran Çevirisini Başlat"; btnContinuousOcr.IsEnabled = processSelected && !anyTranslationRunning; }
 
+
+
             if (!processSelected) { txtAddress.Text = "Lütfen bir uygulama seçin."; }
         }
 
@@ -748,7 +806,7 @@ namespace P5S_ceviri
                     return (null, 0, null);
                 }
 
-    
+
                 string basePart = parts[0].Trim();
 
 
@@ -766,14 +824,14 @@ namespace P5S_ceviri
                 string moduleName = match.Groups["module"].Value.Trim();
                 string offsetHex = match.Groups["offset"].Value;
 
-                // Baz adresi (hex) parse et
+
                 if (!long.TryParse(offsetHex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out long baseOffset))
                 {
                     _logger?.LogError($"ParsePointerPath: Baz adres geçersiz. Girdi: {offsetHex}");
                     return (null, 0, null);
                 }
 
-                // Kalan offset'leri parse et
+
                 var offsets = new List<int>();
                 for (int i = 1; i < parts.Length; i++)
                 {
@@ -834,20 +892,16 @@ namespace P5S_ceviri
         {
             try
             {
-                // Mevcut tema tercihini al
                 var currentTheme = ThemeManager.GetThemeFromString(_appSettings.Theme);
-
-                // ComboBox'ta doğru seçimi yap
                 foreach (ComboBoxItem item in cmbTheme.Items)
                 {
-                    if (item.Tag.ToString() == ThemeManager.GetStringFromTheme(currentTheme))
+                    if (item.Tag != null && item.Tag.ToString() == ThemeManager.GetStringFromTheme(currentTheme))
                     {
                         cmbTheme.SelectedItem = item;
                         break;
                     }
                 }
 
-                // Eğer hiçbiri seçili değilse, varsayılan olarak Light'ı seç
                 if (cmbTheme.SelectedItem == null)
                 {
                     cmbTheme.SelectedIndex = 0;
@@ -856,7 +910,10 @@ namespace P5S_ceviri
             catch (Exception ex)
             {
                 _logger?.LogError("Tema UI başlatılırken hata oluştu.", ex);
-                cmbTheme.SelectedIndex = 0;
+                if (cmbTheme != null && cmbTheme.Items.Count > 0)
+                {
+                    cmbTheme.SelectedIndex = 0;
+                }
             }
         }
         private void CmbTheme_SelectionChanged(object sender, SelectionChangedEventArgs e)

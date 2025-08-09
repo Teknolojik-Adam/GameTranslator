@@ -1,9 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Configuration;
-using System.Data;
-using System.Linq;
-using System.Threading.Tasks;
 using System.Windows;
 
 namespace P5S_ceviri
@@ -15,10 +10,10 @@ namespace P5S_ceviri
         {
             base.OnStartup(e);
 
-           
+
             InitializeTheme();
 
-         
+
             AppDomain.CurrentDomain.UnhandledException += (s, args) =>
             {
                 Exception ex = (Exception)args.ExceptionObject;
@@ -28,7 +23,7 @@ namespace P5S_ceviri
                               MessageBoxImage.Error);
             };
 
-            
+
             Current.DispatcherUnhandledException += (s, args) =>
             {
                 MessageBox.Show($"An error occurred: {args.Exception.Message}",

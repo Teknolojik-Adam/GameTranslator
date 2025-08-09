@@ -20,13 +20,9 @@ namespace P5S_ceviri
         [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
         #endregion
 
-        private int _lastOptimalThreshold = 128;
         private readonly ILogger _logger;
-
-
         private readonly Net _eastNet;
         private const string EastModelPath = "frozen_east_text_detection.pb";
-
 
         public OcrService(ILogger logger)
         {
@@ -42,14 +38,11 @@ namespace P5S_ceviri
                 _logger.LogError($"EAST modeli bulunamadı: {Path.GetFullPath(EastModelPath)}. Metin tespiti bu yöntemle çalışmayacak.");
                 _eastNet = null;
             }
-
         }
-
 
         public async Task<string> RecognizeTextInRegionsAsync(Bitmap image, string language = "eng", PageSegMode psm = PageSegMode.Auto)
         {
             if (image == null) return string.Empty;
-
 
             var regions = FindTextRegions(image);
 
@@ -69,57 +62,98 @@ namespace P5S_ceviri
         {
             using (var regionImage = CropImage(sourceImage, region))
             {
-
                 return await GetTextAdaptiveAsync(regionImage, language, psm);
             }
         }
 
         public async Task<string> GetTextAdaptiveAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto)
         {
-            if (image == null)
-                return string.Empty;
+            if (image == null) return string.Empty;
 
-            // İlk deneme: son kullanılan eşik değeriyle
-            string recognizedText = await Task.Run(() => GetTextWithPreprocessing(image, language, _lastOptimalThreshold, psm));
+            var adaptiveResult = await TryRecognizeWithStrategy(image, language, psm, Preprocess_AdaptiveThreshold);
+            _logger.LogInformation($"[Strateji 1: Adaptif] Sonuç: '{adaptiveResult.Text}', Güvenilirlik: {adaptiveResult.Confidence:P}");
 
-            // Metin yoksa en iyi eşik değerini ara
-            if (string.IsNullOrWhiteSpace(recognizedText) || recognizedText.Length < 3)
+            // Eğer sonuç yeterince iyiyse, hemen döndür.
+            if (adaptiveResult.Confidence > 0.70) // %70 güvenilirlik 
             {
-                int newThreshold = await Task.Run(() => FindOptimalThreshold(image));
-
-                if (newThreshold != -1 && newThreshold != _lastOptimalThreshold)
-                {
-                    _logger.LogInformation($"Yeni optimal OCR eşik değeri bulundu: {newThreshold}");
-                    _lastOptimalThreshold = newThreshold;
-
-                    recognizedText = await Task.Run(() => GetTextWithPreprocessing(image, language, newThreshold, psm));
-                }
+                return adaptiveResult.Text;
             }
 
-            return recognizedText;
+            // 2. Deneme: Derin analiz (mevcut çalışan yöntem)
+            var optimalResult = await TryRecognizeWithStrategy(image, language, psm, Preprocess_OptimalThreshold);
+            _logger.LogInformation($"[Strateji 2: Optimal] Sonuç: '{optimalResult.Text}', Güvenilirlik: {optimalResult.Confidence:P}");
+
+            // İki stratejiden en iyi sonucu seç ve döndür.
+            if (adaptiveResult.Confidence > optimalResult.Confidence)
+            {
+                _logger.LogInformation("Karar: Adaptif strateji sonucu daha güvenilir.");
+                return adaptiveResult.Text;
+            }
+            else
+            {
+                _logger.LogInformation("Karar: Optimal eşik stratejisi sonucu daha güvenilir.");
+                return optimalResult.Text;
+            }
         }
 
-        private string GetTextWithPreprocessing(Bitmap image, string language, int threshold, PageSegMode psm)
+        private async Task<(string Text, float Confidence)> TryRecognizeWithStrategy(Bitmap image, string language, PageSegMode psm, Func<Bitmap, Pix> preprocessStrategy)
         {
-            try
+            return await Task.Run(() =>
             {
-                using (var preprocessedImage = PreprocessImageForOcr(image, threshold))
-                using (var engine = new TesseractEngine(@"./tessdata", language, EngineMode.Default))
+                try
                 {
-                    engine.DefaultPageSegMode = psm;
-                    engine.SetVariable("user_defined_dpi", "300");
-                    using (var page = engine.Process(preprocessedImage))
+                    using (var preprocessedPix = preprocessStrategy(image))
+                    using (var engine = new TesseractEngine(@"./tessdata", language, EngineMode.Default))
                     {
-                        return page.GetText()?.Trim().Replace("\n", " ").Replace("  ", " ") ?? string.Empty;
+                        engine.DefaultPageSegMode = psm;
+                        engine.SetVariable("user_defined_dpi", "300");
+
+                        using (var page = engine.Process(preprocessedPix))
+                        {
+                            var text = page.GetText()?.Trim().Replace("\n", " ").Replace("  ", " ") ?? string.Empty;
+                            var confidence = page.GetMeanConfidence();
+                            return (text, confidence);
+                        }
                     }
                 }
-            }
-            catch (Exception ex)
+                catch (Exception ex)
+                {
+                    _logger.LogError($"OCR stratejisi {preprocessStrategy.Method.Name} başarısız oldu.", ex);
+                    return (string.Empty, 0f);
+                }
+            });
+        }
+
+        #region Preprocessing Strategies
+
+        private Pix Preprocess_AdaptiveThreshold(Bitmap image)
+        {
+            using (var mat = BitmapConverter.ToMat(image))
+            using (var gray = mat.CvtColor(ColorConversionCodes.BGR2GRAY))
+            using (var thresholded = new Mat())
             {
-                _logger.LogError($"OCR işlemi sırasında hata (Threshold: {threshold}, PSM: {psm})", ex);
-                return string.Empty;
+                Cv2.AdaptiveThreshold(gray, thresholded, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, 11, 2);
+                return PixConverter.ToPix(BitmapConverter.ToBitmap(thresholded));
             }
         }
+
+        private Pix Preprocess_OptimalThreshold(Bitmap image)
+        {
+            int optimalThreshold = FindOptimalThreshold(image);
+            if (optimalThreshold == -1) optimalThreshold = 128; 
+
+            using (var mat = BitmapConverter.ToMat(image))
+            using (var gray = mat.CvtColor(ColorConversionCodes.BGR2GRAY))
+            using (var blurred = new Mat())
+            using (var thresholded = new Mat())
+            {
+                Cv2.MedianBlur(gray, blurred, 3);
+                Cv2.Threshold(blurred, thresholded, optimalThreshold, 255, ThresholdTypes.Binary);
+                return PixConverter.ToPix(BitmapConverter.ToBitmap(thresholded));
+            }
+        }
+
+        #endregion
 
         public async Task<string> GetTextFromImage(Bitmap image, string language = "eng", bool invertColors = false)
         {
@@ -131,12 +165,11 @@ namespace P5S_ceviri
             if (_eastNet == null || sourceImage == null)
             {
                 if (_eastNet == null) _logger.LogWarning("EAST modeli yüklenmediği için metin tespiti atlanıyor.");
-                return new List<Rectangle>(); 
+                return new List<Rectangle>();
             }
 
             using (Mat src = BitmapConverter.ToMat(sourceImage))
             {
-
                 int newW = (int)(src.Width / 32.0) * 32;
                 int newH = (int)(src.Height / 32.0) * 32;
 
@@ -159,10 +192,7 @@ namespace P5S_ceviri
                     using (Mat scores = output[0])
                     using (Mat geometry = output[1])
                     {
-
                         var (boxes, confidences) = Decode(scores, geometry, 0.5f);
-
-
                         CvDnn.NMSBoxes(boxes, confidences, 0.5f, 0.4f, out int[] indices);
 
                         var finalRects = new List<Rectangle>();
@@ -171,37 +201,30 @@ namespace P5S_ceviri
                             RotatedRect box = boxes[i];
                             Point2f[] vertices = box.Points();
 
-                            // Orijinal görüntü boyutuna göre ölçekle
                             for (int j = 0; j < 4; j++)
                             {
                                 vertices[j].X = (int)(vertices[j].X * rW);
                                 vertices[j].Y = (int)(vertices[j].Y * rH);
                             }
 
-                            
                             var boundingBox = Cv2.BoundingRect(vertices);
 
-                            // Görüntü sınırları dışına taşmayı önlemek için
                             int x = Math.Max(0, boundingBox.X);
                             int y = Math.Max(0, boundingBox.Y);
                             int width = Math.Min(sourceImage.Width - x, boundingBox.Width);
                             int height = Math.Min(sourceImage.Height - y, boundingBox.Height);
 
-                            // Kenarlara biraz pay ekleyerek harflerin kesilmesini önlemek için
                             int padding = (int)(height * 0.1);
                             x = Math.Max(0, x - padding);
                             y = Math.Max(0, y - padding);
                             width = Math.Min(sourceImage.Width - x, width + 2 * padding);
                             height = Math.Min(sourceImage.Height - y, height + 2 * padding);
 
-
-                            if (width > 10 && height > 5) // Çok küçük kutuları filtrele
+                            if (width > 10 && height > 5)
                                 finalRects.Add(new Rectangle(x, y, width, height));
                         }
 
-                        // Kullanılan Mat nesnelerini serbest bırak
                         foreach (var mat in output) mat.Dispose();
-
                         return finalRects;
                     }
                 }
@@ -212,7 +235,6 @@ namespace P5S_ceviri
         {
             var boxes = new List<RotatedRect>();
             var confidences = new List<float>();
-
             int height = scores.Size(2);
             int width = scores.Size(3);
 
@@ -225,7 +247,6 @@ namespace P5S_ceviri
 
                     float offsetX = x * 4.0f;
                     float offsetY = y * 4.0f;
-
                     float angle = geometry.At<float>(0, 4, y, x);
                     float h = geometry.At<float>(0, 0, y, x) + geometry.At<float>(0, 2, y, x);
                     float w = geometry.At<float>(0, 1, y, x) + geometry.At<float>(0, 3, y, x);
@@ -236,12 +257,10 @@ namespace P5S_ceviri
                     );
 
                     var size = new Size2f(w, h);
-
                     boxes.Add(new RotatedRect(center, size, -angle * 180 / (float)Math.PI));
                     confidences.Add(score);
                 }
             }
-
             return (boxes, confidences);
         }
 
@@ -268,28 +287,6 @@ namespace P5S_ceviri
             }
         }
 
-
-        private Pix PreprocessImageForOcr(Bitmap image, int threshold)
-        {
-            using (var mat = BitmapConverter.ToMat(image))
-            {
-                // Görüntüyü gri tonlamaya çevir
-                using (var gray = new Mat())
-                {
-                    Cv2.CvtColor(mat, gray, ColorConversionCodes.BGR2GRAY);
-
-                    // Gürültüyü azaltmak için median blur uygula
-                    Cv2.MedianBlur(gray, gray, 3);
-
-                    // Eşikleme (thresholding) uygula
-                    Cv2.Threshold(gray, gray, threshold, 255, ThresholdTypes.Binary);
-
-                    // Tesseract'ın kullandığı Pix formatına dönüştür
-                    return PixConverter.ToPix(BitmapConverter.ToBitmap(gray));
-                }
-            }
-        }
-
         public Bitmap CaptureWindow(IntPtr hWnd)
         {
             if (hWnd == IntPtr.Zero) return null;
@@ -307,6 +304,40 @@ namespace P5S_ceviri
         }
 
         public Bitmap CropImage(Bitmap image, Rectangle region) => image.Clone(region, image.PixelFormat);
+
+        public Bitmap IsolateTextByColor(Bitmap sourceImage)
+        {
+            using (Mat src = BitmapConverter.ToMat(sourceImage))
+            using (Mat hsv = new Mat())
+            {
+                Cv2.CvtColor(src, hsv, ColorConversionCodes.BGR2HSV);
+
+                // Beyaz ve açık sarı tonları
+                Scalar lowerWhite = new Scalar(0, 0, 180);
+                Scalar upperWhite = new Scalar(255, 50, 255);
+
+                Scalar lowerYellow = new Scalar(20, 100, 100);
+                Scalar upperYellow = new Scalar(30, 255, 255);
+
+                using (Mat whiteMask = new Mat())
+                using (Mat yellowMask = new Mat())
+                using (Mat combinedMask = new Mat())
+                using (Mat result = new Mat())
+                {
+                    // Renk aralıklarına göre oluşturuyor
+                    Cv2.InRange(hsv, lowerWhite, upperWhite, whiteMask);
+                    Cv2.InRange(hsv, lowerYellow, upperYellow, yellowMask);
+
+                    // İki resmi birleştiriyor
+                    Cv2.BitwiseOr(whiteMask, yellowMask, combinedMask);
+
+                    // Orijinal görüntüden sadece maskelenen kısımları aliyoor
+                    Cv2.BitwiseAnd(src, src, result, combinedMask);
+
+                    return BitmapConverter.ToBitmap(result);
+                }
+            }
+        }
         #endregion
     }
 }

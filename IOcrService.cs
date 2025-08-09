@@ -16,5 +16,6 @@ namespace P5S_ceviri
         Bitmap CaptureWindow(IntPtr hWnd);
         Bitmap CropImage(Bitmap image, Rectangle region);
         List<Rectangle> FindTextRegions(Bitmap sourceImage);
+        Bitmap IsolateTextByColor(Bitmap sourceImage);
     }
 }

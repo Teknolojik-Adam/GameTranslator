@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Text;
 
 namespace P5S_ceviri
 {
@@ -13,8 +14,19 @@ namespace P5S_ceviri
         public string CurrentValue { get; set; }
         public string ExpectedValue { get; set; }
         public string ErrorMessage { get; set; }
-        public int Score { get; set; } 
+        public int Score { get; set; }
         public TimeSpan ResponseTime { get; set; }
+        public IntPtr ResolvedAddress { get; set; }
+    }
+
+
+    public class StabilitySample
+    {
+        public DateTime Timestamp { get; set; }
+        public IntPtr Address { get; set; }
+        public string Value { get; set; }
+        public bool IsSuccessful { get; set; }
+        public string ErrorMessage { get; set; }
     }
 
     public class PointerValidationService
@@ -24,13 +36,11 @@ namespace P5S_ceviri
 
         public PointerValidationService(IMemoryService memoryService, ILogger logger)
         {
-            _memoryService = memoryService;
-            _logger = logger;
+            _memoryService = memoryService ?? throw new ArgumentNullException(nameof(memoryService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-
-        public async Task<List<PointerValidationResult>> ValidatePointersAsync(Process process, 
-            List<PointerPath> paths, string expectedText = null)
+        public async Task<List<PointerValidationResult>> ValidatePointersAsync(Process process, List<PointerPath> paths, string expectedText = null)
         {
             var results = new List<PointerValidationResult>();
 
@@ -46,12 +56,10 @@ namespace P5S_ceviri
                 results.Add(result);
             }
 
-            // Sonuçları score'a göre sırala (en iyi önce)
             return results.OrderByDescending(r => r.Score).ToList();
         }
 
-        private async Task<PointerValidationResult> ValidateSinglePointerAsync(Process process, 
-            PointerPath path, string expectedText)
+        public async Task<PointerValidationResult> ValidateSinglePointerAsync(Process process, PointerPath path, string expectedText)
         {
             var result = new PointerValidationResult
             {
@@ -61,46 +69,40 @@ namespace P5S_ceviri
             };
 
             var stopwatch = Stopwatch.StartNew();
-
             try
             {
-                // PathInfo'ya çevir
-                var pathInfo = ConvertToPathInfo(path);
-                if (pathInfo == null)
+                var pathInfo = new PathInfo
                 {
-                    result.ErrorMessage = "Geçersiz pointer formatı";
-                    return result;
-                }
+                    BaseAddressModule = path.ModuleName,
+                    BaseAddressOffset = path.BaseOffset,
+                    PointerOffsets = path.Offsets
+                };
 
-                // Adresi resolve et
                 var resolvedAddress = _memoryService.ResolveAddressFromPath(process, pathInfo);
                 if (resolvedAddress == IntPtr.Zero)
                 {
-                    result.ErrorMessage = "Adres resolve edilemedi";
+                    result.ErrorMessage = "Adres çözümlenemedi";
                     return result;
                 }
 
-                // Metni oku
-                var currentValue = _memoryService.TryReadStringDeep(resolvedAddress);
-                result.CurrentValue = currentValue;
+                result.ResolvedAddress = resolvedAddress;
+                result.CurrentValue = _memoryService.TryReadStringDeep(resolvedAddress);
 
                 stopwatch.Stop();
                 result.ResponseTime = stopwatch.Elapsed;
 
-                // Doğrulama
-                if (string.IsNullOrEmpty(currentValue))
+                if (string.IsNullOrWhiteSpace(result.CurrentValue))
                 {
-                    result.ErrorMessage = "Boş veri okundu";
+                    result.ErrorMessage = "Boş veya geçersiz veri okundu";
                     result.Score = 0;
                 }
                 else if (!string.IsNullOrEmpty(expectedText))
                 {
-                    
                     result.ExpectedValue = expectedText;
-                    if (currentValue.Contains(expectedText) || expectedText.Contains(currentValue))
+                    if (result.CurrentValue.Contains(expectedText))
                     {
                         result.IsValid = true;
-                        result.Score = CalculateSimilarityScore(currentValue, expectedText);
+                        result.Score = 100;
                     }
                     else
                     {
@@ -110,215 +112,92 @@ namespace P5S_ceviri
                 }
                 else
                 {
-                    // Genel kalite kontrolü
-                    result.IsValid = IsValidGameText(currentValue);
-                    result.Score = CalculateQualityScore(currentValue, path);
+                    result.IsValid = true;
+                    result.Score = 50;
                 }
             }
             catch (Exception ex)
             {
-                result.ErrorMessage = $"Hata: {ex.Message}";
-                result.Score = 0;
                 stopwatch.Stop();
                 result.ResponseTime = stopwatch.Elapsed;
+                result.ErrorMessage = $"Doğrulama hatası: {ex.Message}";
+                _logger.LogError($"Pointer doğrulama hatası: {ex.Message}", ex);
             }
 
             return result;
         }
 
-        public async Task<PointerStabilityResult> TestPointerStabilityAsync(Process process, 
-            PointerPath path, int testDurationSeconds = 30, int sampleIntervalMs = 1000)
+        public async Task<PointerStabilityResult> TestPointerStabilityAsync(Process process, PointerPath path, int testDurationSeconds = 15, int sampleIntervalMs = 500)
         {
-            var result = new PointerStabilityResult
-            {
-                Path = path,
-                TestDuration = TimeSpan.FromSeconds(testDurationSeconds),
-                Samples = new List<StabilitySample>()
-            };
+            _logger.LogInformation($"Pointer kararlılık testi başlatıldı. Süre: {testDurationSeconds}s, Aralık: {sampleIntervalMs}ms");
 
-            var pathInfo = ConvertToPathInfo(path);
-            if (pathInfo == null)
-            {
-                result.ErrorMessage = "Geçersiz pointer formatı";
-                return result;
-            }
-
-            var startTime = DateTime.Now;
-            var endTime = startTime.AddSeconds(testDurationSeconds);
+            var samples = new List<StabilitySample>();
+            var endTime = DateTime.Now.AddSeconds(testDurationSeconds);
 
             while (DateTime.Now < endTime)
             {
+                var sample = new StabilitySample { Timestamp = DateTime.Now };
                 try
                 {
-                    var address = _memoryService.ResolveAddressFromPath(process, pathInfo);
-                    var value = address != IntPtr.Zero ? _memoryService.TryReadStringDeep(address) : null;
-                    
-                    result.Samples.Add(new StabilitySample
+                    var pathInfo = new PathInfo
                     {
-                        Timestamp = DateTime.Now,
-                        Address = address,
-                        Value = value,
-                        IsSuccessful = !string.IsNullOrEmpty(value)
-                    });
+                        BaseAddressModule = path.ModuleName,
+                        BaseAddressOffset = path.BaseOffset,
+                        PointerOffsets = path.Offsets
+                    };
 
-                    await Task.Delay(sampleIntervalMs);
+                    var address = _memoryService.ResolveAddressFromPath(process, pathInfo);
+                    sample.Address = address;
+
+                    if (address != IntPtr.Zero)
+                    {
+                        sample.Value = _memoryService.TryReadStringDeep(address);
+                        sample.IsSuccessful = !string.IsNullOrEmpty(sample.Value);
+                        if (!sample.IsSuccessful) sample.ErrorMessage = "Boş veri okundu";
+                    }
+                    else
+                    {
+                        sample.ErrorMessage = "Adres çözümlenemedi";
+                        sample.IsSuccessful = false;
+                    }
                 }
                 catch (Exception ex)
                 {
-                    result.Samples.Add(new StabilitySample
-                    {
-                        Timestamp = DateTime.Now,
-                        Address = IntPtr.Zero,
-                        Value = null,
-                        IsSuccessful = false,
-                        ErrorMessage = ex.Message
-                    });
+                    sample.ErrorMessage = ex.Message;
+                    sample.IsSuccessful = false;
                 }
+
+                samples.Add(sample);
+                await Task.Delay(sampleIntervalMs);
             }
 
-            // Stabilite skorunu hesapla
-            result.CalculateStabilityMetrics();
+            // Sonuçları analiz et
+            int successfulSamples = samples.Count(s => s.IsSuccessful);
+            double successRate = samples.Count > 0 ? (double)successfulSamples / samples.Count * 100 : 0;
+
+            var validSamples = samples.Where(s => s.IsSuccessful).ToList();
+            int uniqueAddresses = validSamples.Select(s => s.Address).Distinct().Count();
+            double addressConsistency = validSamples.Any() ? (uniqueAddresses == 1 ? 100.0 : 0.0) : 0.0;
+
+            int uniqueValues = validSamples.Select(s => s.Value).Distinct().Count();
+            double valueConsistency = validSamples.Any() ? 100.0 * (1.0 - ((double)(uniqueValues - 1) / validSamples.Count)) : 0.0;
+
+            double stabilityScore = (successRate * 0.5) + (addressConsistency * 0.3) + (valueConsistency * 0.2);
+            bool isStable = stabilityScore >= 80;
+
+            var result = new PointerStabilityResult
+            {
+                Path = path,
+                IsStable = isStable,
+                Message = $"Kararlılık: {successRate:F1}% ({successfulSamples}/{samples.Count} başarılı)",
+                LastKnownAddress = samples.LastOrDefault()?.Address ?? IntPtr.Zero,
+                SuccessRate = successRate,
+                AddressConsistency = addressConsistency,
+                ValueConsistency = valueConsistency,
+                StabilityScore = stabilityScore
+            };
+
             return result;
         }
-
-        private PathInfo ConvertToPathInfo(PointerPath path)
-        {
-            try
-            {
-                if (path.ModuleName == "[EXTERNAL]")
-                {
-                    
-                    return null; 
-                }
-
-                return new PathInfo
-                {
-                    BaseAddressModule = path.ModuleName,
-                    BaseAddressOffset = path.BaseOffset,
-                    PointerOffsets = path.Offsets
-                };
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private int CalculateSimilarityScore(string current, string expected)
-        {
-            if (string.IsNullOrEmpty(current) || string.IsNullOrEmpty(expected))
-                return 0;
-
-            if (current == expected)
-                return 100;
-
-            if (current.Contains(expected) || expected.Contains(current))
-                return 80;
-
-            
-            var distance = LevenshteinDistance(current, expected);
-            var maxLength = Math.Max(current.Length, expected.Length);
-            var similarity = (1.0 - (double)distance / maxLength) * 100;
-            
-            return Math.Max(0, (int)similarity);
-        }
-
-        private int CalculateQualityScore(string text, PointerPath path)
-        {
-            int score = 0;
-
-            // Metin kalitesi
-            if (IsValidGameText(text))
-                score += 30;
-
-            // Uzunluk kontrolü
-            if (text.Length >= 3 && text.Length <= 200)
-                score += 20;
-
-            score += Math.Max(0, 30 - (path.Offsets.Count * 5));
-
-            if (path.ModuleName != "[EXTERNAL]")
-                score += 20;
-
-            return Math.Min(100, score);
-        }
-
-        private bool IsValidGameText(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s) || s.Length < 2 || s.Length > 1000) 
-                return false;
-            
-            if (s.Contains('\uFFFD')) 
-                return false;
-                
-            // Yazdırılabilir karakter oranı
-            int printableCount = s.Count(c => !char.IsControl(c) || char.IsWhiteSpace(c));
-            return (double)printableCount / s.Length >= 0.8 && s.Any(char.IsLetterOrDigit);
-        }
-
-        private int LevenshteinDistance(string s1, string s2)
-        {
-            if (string.IsNullOrEmpty(s1)) return s2?.Length ?? 0;
-            if (string.IsNullOrEmpty(s2)) return s1.Length;
-
-            int[,] matrix = new int[s1.Length + 1, s2.Length + 1];
-
-            for (int i = 0; i <= s1.Length; i++)
-                matrix[i, 0] = i;
-            for (int j = 0; j <= s2.Length; j++)
-                matrix[0, j] = j;
-
-            for (int i = 1; i <= s1.Length; i++)
-            {
-                for (int j = 1; j <= s2.Length; j++)
-                {
-                    int cost = s1[i - 1] == s2[j - 1] ? 0 : 1;
-                    matrix[i, j] = Math.Min(
-                        Math.Min(matrix[i - 1, j] + 1, matrix[i, j - 1] + 1),
-                        matrix[i - 1, j - 1] + cost);
-                }
-            }
-
-            return matrix[s1.Length, s2.Length];
-        }
     }
-
-    public class PointerStabilityResult
-    {
-        public PointerPath Path { get; set; }
-        public TimeSpan TestDuration { get; set; }
-        public List<StabilitySample> Samples { get; set; } = new List<StabilitySample>();
-        public double SuccessRate { get; set; }
-        public double AddressConsistency { get; set; }
-        public double ValueConsistency { get; set; }
-        public int StabilityScore { get; set; }
-        public string ErrorMessage { get; set; }
-
-        public void CalculateStabilityMetrics()
-        {
-            if (!Samples.Any()) return;
-
-           
-            SuccessRate = (double)Samples.Count(s => s.IsSuccessful) / Samples.Count * 100;
-
-           
-            var addresses = Samples.Where(s => s.Address != IntPtr.Zero).Select(s => s.Address).Distinct();
-            AddressConsistency = addresses.Count() <= 1 ? 100 : 0;
-
-           
-            var values = Samples.Where(s => !string.IsNullOrEmpty(s.Value)).Select(s => s.Value).Distinct();
-            ValueConsistency = values.Count() <= 3 ? 100 : Math.Max(0, 100 - (values.Count() * 10));
-
-            StabilityScore = (int)((SuccessRate * 0.4) + (AddressConsistency * 0.3) + (ValueConsistency * 0.3));
-        }
-    }
-
-    public class StabilitySample
-    {
-        public DateTime Timestamp { get; set; }
-        public IntPtr Address { get; set; }
-        public string Value { get; set; }
-        public bool IsSuccessful { get; set; }
-        public string ErrorMessage { get; set; }
-    }
-} 
+}

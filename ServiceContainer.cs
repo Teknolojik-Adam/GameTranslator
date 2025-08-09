@@ -23,13 +23,8 @@ namespace P5S_ceviri
             services.AddSingleton<IGameRecipeService, GameRecipeService>();
             services.AddSingleton<ITranslationService, AdvancedTranslationService>();
 
-
-            services.AddSingleton<IOcrService>(sp =>
-            {
-
-                var logger = sp.GetRequiredService<ILogger>();
-                return new OcrService(logger);
-            });
+            // OCR servisi
+            services.AddSingleton<IOcrService, OcrService>();
 
             // HttpClient servisi
             services.AddSingleton<HttpClient>(sp =>

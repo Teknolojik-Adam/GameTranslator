@@ -20,52 +20,6 @@ namespace P5S_ceviri
         private const string RecipesFileName = "game_recipes.json";
         private Dictionary<string, PathInfo> _recipeCache;
 
-        public GameRecipeService(ILogger logger)
-        {
-            _logger = logger;
-            LoadRecipes();
-        }
-
-        private void LoadRecipes()
-        {
-            _recipeCache = new Dictionary<string, PathInfo>(StringComparer.OrdinalIgnoreCase);
-
-            if (!File.Exists(RecipesFileName))
-            {
-                _logger.LogWarning($"json dosyası bulunamadı: '{RecipesFileName}'. Örnek bir dosya oluşturuluyor.");
-                CreateSampleRecipeFile();
-                return;
-            }
-
-            try
-            {
-                string jsonString = File.ReadAllText(RecipesFileName);
-                var recipes = JsonSerializer.Deserialize<List<GameRecipe>>(jsonString);
-
-                if (recipes == null)
-                {
-                    _logger.LogWarning("json dosyası okunamadı veya boş.");
-                    return;
-                }
-
-                foreach (var recipe in recipes)
-                {
-                    if (!string.IsNullOrWhiteSpace(recipe.ProcessName) && recipe.PathInfo != null)
-                    {
-                        var processKey = recipe.ProcessName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-                            ? recipe.ProcessName.Substring(0, recipe.ProcessName.Length - 4)
-                            : recipe.ProcessName;
-
-                        _recipeCache[processKey] = recipe.PathInfo;
-                    }
-                }
-                _logger.LogInformation($"{_recipeCache.Count} adet oyun başarıyla yüklendi.");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"json dosyası okunurken hata oluştu: '{RecipesFileName}'", ex);
-            }
-        }
 
         public void SaveOrUpdateRecipe(GameRecipe newRecipe)
         {
@@ -98,25 +52,7 @@ namespace P5S_ceviri
             SaveRecipesToFile(recipes);
         }
 
-        private void CreateSampleRecipeFile()
-        {
-            var sampleRecipes = new List<GameRecipe>
-            {
-                new GameRecipe
-                {
-                    ProcessName = "",
-                    PathInfo = new PathInfo
-                    {
-                        BaseAddressModule = ".exe",
-                        BaseAddressOffset = 0x1A2B3C,
-                        PointerOffsets = new List<int> { 0x40, 0x1F8, 0x10 }
-                    }
-                }
-            };
-
-            SaveRecipesToFile(sampleRecipes, true);
-        }
-
+    
         private void SaveRecipesToFile(List<GameRecipe> recipes, bool isSampleFile = false)
         {
             try

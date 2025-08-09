@@ -39,7 +39,7 @@ namespace P5S_ceviri
                 return new Dictionary<string, string>();
             }
         }
-        // verileri önbelleği diske JSON formatında kaydetmek için.
+        // verileri JSON formatında kaydetmek için.
         public void SaveCache(Dictionary<string, string> cache)
         {
             try

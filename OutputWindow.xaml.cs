@@ -12,7 +12,7 @@ namespace P5S_ceviri
         private bool _isSelectionMode = false;
         private Point _startPoint;
 
-        // Ana pencereye seçilen bölgeyi bildirmek için event
+     
         public event Action<System.Drawing.Rectangle> RegionSelected;
 
         public OutputWindow(MainWindow mainWindow)

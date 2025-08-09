@@ -1,17 +1,68 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
-namespace P5S_ceviri
+namespace P5S_ceviri 
 {
     public class SettingsManager
     {
-        private readonly string _fileName = "settings.json";
         private readonly ILogger _logger;
+        // Ayarlar dosyasının tam yolu
+        private readonly string _settingsFilePath;
 
         public SettingsManager(ILogger logger)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            // Uygulama dizininde "appsettings.json" dosyası oluşturulur
+            _settingsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
+        }
+        public AppSettings LoadSettings()
+        {
+            try
+            {
+                if (File.Exists(_settingsFilePath))
+                {
+                    string json = File.ReadAllText(_settingsFilePath);
+                    if (string.IsNullOrWhiteSpace(json))
+                    {
+                        _logger.LogWarning($"Ayar dosyası boş: '{_settingsFilePath}'. Varsayılan ayarlar kullanılacak.");
+                        return new AppSettings();
+                    }
+
+                    // JSON'u AppSettings nesnesine deserialize et
+                    var options = new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true, // JSON'daki büyük/küçük harf farklılığını görmezden gel
+                        Converters = { new JsonStringEnumConverter() } 
+                        // WriteIndented = true // Okunabilirlik için
+                    };
+
+                    var settings = JsonSerializer.Deserialize<AppSettings>(json, options);
+
+                    if (settings != null)
+                    {
+                        _logger.LogInformation($"Ayarlar '{_settingsFilePath}' dosyasından yüklendi.");
+
+                        return settings;
+                    }
+                    else
+                    {
+                        _logger.LogWarning($"Ayarlar dosyası deserialize edilemedi: '{_settingsFilePath}'. Varsayılan ayarlar kullanılacak.");
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation($"Ayar dosyası bulunamadı: '{_settingsFilePath}'. Varsayılan ayarlar kullanılacak.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Ayarlar yüklenirken hata oluştu: '{_settingsFilePath}'. Hata: {ex.Message}", ex);
+            }
+
+            // Varsayılan ayarlar nesnesi döndürülür
+            return new AppSettings();
         }
 
         public void SaveSettings(AppSettings settings)
@@ -21,43 +72,30 @@ namespace P5S_ceviri
                 _logger.LogWarning("Ayarlar nesnesi null olduğu için kaydetme işlemi iptal edildi.");
                 return;
             }
+
             try
             {
-                var options = new JsonSerializerOptions { WriteIndented = true };
+
+                // JSON seçeneklerini ayarla (okunabilirlik için girintileme)
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Converters = { new JsonStringEnumConverter() } // Enum desteği (gerekirse)
+                };
+
+                // Ayarları JSON string'ine serialize et
                 string jsonString = JsonSerializer.Serialize(settings, options);
-                File.WriteAllText(_fileName, jsonString);
-                _logger.LogInformation($"Ayarlar '{_fileName}' dosyasına kaydedildi.");
+
+                // JSON string'ini dosyaya yaz
+                File.WriteAllText(_settingsFilePath, jsonString);
+
+                _logger.LogInformation($"Ayarlar '{_settingsFilePath}' dosyasına kaydedildi.");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Ayarlar kaydedilemedi: '{_fileName}'", ex);
+                _logger.LogError($"Ayarlar kaydedilemedi: '{_settingsFilePath}'. Hata: {ex.Message}", ex);
             }
         }
 
-        public AppSettings LoadSettings()
-        {
-            try
-            {
-                if (!File.Exists(_fileName))
-                {
-                    _logger.LogInformation($"Ayar dosyası bulunamadı: '{_fileName}'. Varsayılan ayarlar kullanılacak.");
-                    return new AppSettings();
-                }
-                string jsonString = File.ReadAllText(_fileName);
-                if (string.IsNullOrWhiteSpace(jsonString))
-                {
-                    _logger.LogWarning($"Ayar dosyası boş: '{_fileName}'. Varsayılan ayarlar kullanılacak.");
-                    return new AppSettings();
-                }
-                var settings = JsonSerializer.Deserialize<AppSettings>(jsonString);
-                _logger.LogInformation($"Ayarlar '{_fileName}' dosyasından yüklendi.");
-                return settings ?? new AppSettings();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Ayarlar yüklenemedi: '{_fileName}'", ex);
-                return new AppSettings();
-            }
-        }
     }
 }
