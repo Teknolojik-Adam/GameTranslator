@@ -12,6 +12,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
+using System.ComponentModel;
 
 namespace P5S_ceviri
 {
@@ -64,7 +65,7 @@ namespace P5S_ceviri
             InitializeComponent();
             try
             {
-
+                // Initialize services
                 ServiceContainer.Initialize();
                 _processService = ServiceContainer.GetService<IProcessService>();
                 _memoryService = ServiceContainer.GetService<IMemoryService>();
@@ -72,12 +73,17 @@ namespace P5S_ceviri
                 _logger = ServiceContainer.GetService<ILogger>();
                 _ocrService = ServiceContainer.GetService<IOcrService>();
                 _gameRecipeService = ServiceContainer.GetService<IGameRecipeService>();
-                _settingsManager = new SettingsManager(_logger);
-                _appSettings = _settingsManager.LoadSettings();
+                _settingsManager = ServiceContainer.GetService<SettingsManager>();
+                _appSettings = ServiceContainer.GetService<AppSettings>();
                 _enhancedMemoryService = new EnhancedMemoryService(_logger);
                 _pointerValidationService = new PointerValidationService(_memoryService, _logger);
 
                 InitializeTranslationServices();
+                InitializeLanguageControls();
+
+                HotkeySettingsPanel.DataContext = _appSettings;
+                _appSettings.PropertyChanged += AppSettings_PropertyChanged;
+
 
                 _manualTranslationTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
                 _manualTranslationTimer.Tick += ManualTranslationTimer_Tick;
@@ -136,7 +142,7 @@ namespace P5S_ceviri
                     return;
                 }
 
-                _hotkeyManager = new HotkeyManager(hwndSource);
+                _hotkeyManager = new HotkeyManager(hwndSource, _logger);
 
                 // Kısayolları kaydet
                 RegisterHotkeys();
@@ -157,14 +163,29 @@ namespace P5S_ceviri
 
         private void RegisterHotkeys()
         {
-            // OCR başlatma/durdurma kısayolu
-            _ocrHotkeyId = _hotkeyManager.RegisterHotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.O, ToggleOcr);
+            if (_appSettings.ToggleOcrHotkey != null)
+                _ocrHotkeyId = _hotkeyManager.RegisterHotkey(_appSettings.ToggleOcrHotkey.Modifiers, _appSettings.ToggleOcrHotkey.Key, ToggleOcr);
 
-            // Çeviri penceresini açma/kapama kısayolu
-            _translateWindowHotkeyId = _hotkeyManager.RegisterHotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.T, ToggleTranslateWindow);
+            if (_appSettings.ToggleTranslateWindowHotkey != null)
+                _translateWindowHotkeyId = _hotkeyManager.RegisterHotkey(_appSettings.ToggleTranslateWindowHotkey.Modifiers, _appSettings.ToggleTranslateWindowHotkey.Key, ToggleTranslateWindow);
 
-            // Çeviri servisleri arasında geçiş kısayolu
-            _switchTranslationServiceHotkeyId = _hotkeyManager.RegisterHotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.S, SwitchTranslationService); // Yeni kısayol
+            if (_appSettings.SwitchTranslationServiceHotkey != null)
+                _switchTranslationServiceHotkeyId = _hotkeyManager.RegisterHotkey(_appSettings.SwitchTranslationServiceHotkey.Modifiers, _appSettings.SwitchTranslationServiceHotkey.Key, SwitchTranslationService);
+        }
+
+        private void AppSettings_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName.EndsWith("Hotkey"))
+            {
+                UpdateHotkeys();
+                _settingsManager.SaveSettings(_appSettings);
+            }
+        }
+
+        private void UpdateHotkeys()
+        {
+            UnregisterHotkeys();
+            RegisterHotkeys();
         }
 
         private void UnregisterHotkeys()
@@ -454,12 +475,46 @@ namespace P5S_ceviri
         #endregion
 
         #region Existing Methods
+
+        private void InitializeLanguageControls()
+        {
+            try
+            {
+                // Dilleri ComboBox'lara doldur
+                var ocrLanguages = new List<string> { "eng", "jpn", "chi_sim", "kor", "rus" };
+                cmbOcrLanguage.ItemsSource = ocrLanguages;
+                var targetLanguages = new List<string> { "tr", "en", "de", "fr", "es" };
+                cmbTargetLanguage.ItemsSource = targetLanguages;
+
+                // Ayarlardan seçili dilleri yükle
+                cmbOcrLanguage.SelectedItem = _appSettings.OcrLanguage;
+                cmbTargetLanguage.SelectedItem = _appSettings.TargetLanguage;
+                chkEnableColorFilter.IsChecked = _appSettings.EnableOcrColorFilter;
+
+                // Olay dinleyicilerini ekle
+                cmbOcrLanguage.SelectionChanged += CmbOcrLanguage_SelectionChanged;
+                cmbTargetLanguage.SelectionChanged += CmbTargetLanguage_SelectionChanged;
+                chkEnableColorFilter.Click += ChkEnableColorFilter_Click;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Dil kontrolleri başlatılırken hata oluştu.", ex);
+            }
+        }
+
         private void InitializeTranslationServices()
         {
-            if (_translationService is AdvancedTranslationService advancedService)
+            try
             {
-                cmbTranslationService.ItemsSource = advancedService.AvailableStrategies;
-                cmbTranslationService.SelectedIndex = 0;
+                if (_translationService is AdvancedTranslationService advancedService)
+                {
+                    cmbTranslationService.ItemsSource = advancedService.AvailableStrategies;
+                    cmbTranslationService.SelectedIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Çeviri servisleri başlatılırken hata oluştu.", ex);
             }
         }
 
@@ -480,7 +535,7 @@ namespace P5S_ceviri
                 if (!string.IsNullOrEmpty(currentText) && currentText != _lastReadText)
                 {
                     _lastReadText = currentText;
-                    string translated = await _translationService.TranslateAsync(currentText, "tr", GetSelectedTranslationStrategy());
+                    string translated = await _translationService.TranslateAsync(currentText, _appSettings.TargetLanguage, GetSelectedTranslationStrategy());
                     Dispatcher.Invoke(() => { txtOriginal.Text = $"[RAM] {currentText}"; txtTranslated.Text = translated; OnTranslatedTextChanged(translated); });
                 }
             }
@@ -500,7 +555,7 @@ namespace P5S_ceviri
                 if (!string.IsNullOrWhiteSpace(currentText) && currentText != _lastManualText)
                 {
                     _lastManualText = currentText;
-                    string translated = await _translationService.TranslateAsync(currentText, "tr", GetSelectedTranslationStrategy());
+                    string translated = await _translationService.TranslateAsync(currentText, _appSettings.TargetLanguage, GetSelectedTranslationStrategy());
                     Dispatcher.Invoke(() => { txtOriginal.Text = $"[Manuel] {currentText}"; txtTranslated.Text = translated; OnTranslatedTextChanged(translated); });
                 }
             }
@@ -557,11 +612,16 @@ namespace P5S_ceviri
                     }
 
 
-                    using (var filteredImage = _ocrService.IsolateTextByColor(imageToProcess))
+                    Bitmap imageForOcr = imageToProcess;
+                    if (_appSettings.EnableOcrColorFilter)
                     {
-                        string currentText = await _ocrService.GetTextAdaptiveAsync(filteredImage, "eng");
+                        imageForOcr = _ocrService.IsolateTextByColor(imageToProcess);
+                        imageToProcess.Dispose(); // Dispose original if we created a new filtered one
+                    }
 
-                        imageToProcess.Dispose();
+                    using (imageForOcr)
+                    {
+                        string currentText = await _ocrService.GetTextAdaptiveAsync(imageForOcr, _appSettings.OcrLanguage);
 
 
                         if (string.IsNullOrWhiteSpace(currentText) || currentText == _lastReadText)
@@ -572,7 +632,7 @@ namespace P5S_ceviri
                         // Çeviri 
                         string translated = await _translationService.TranslateAsync(
                             currentText,
-                            "tr",
+                            _appSettings.TargetLanguage,
                             GetSelectedTranslationStrategy());
 
 
@@ -774,6 +834,9 @@ namespace P5S_ceviri
             bool anyTranslationRunning = _isContinuousTranslationRunning || _manualTranslationTimer.IsEnabled || _isContinuousOcrRunning;
             cmbProcesses.IsEnabled = !anyTranslationRunning;
             cmbTranslationService.IsEnabled = !anyTranslationRunning;
+            cmbTargetLanguage.IsEnabled = !anyTranslationRunning;
+            cmbOcrLanguage.IsEnabled = !anyTranslationRunning;
+            chkEnableColorFilter.IsEnabled = !anyTranslationRunning;
 
             if (_isContinuousTranslationRunning || _manualTranslationTimer.IsEnabled) { btnTranslate.Content = "RAM Çevirisini Durdur"; btnTranslate.IsEnabled = true; }
             else if (_isSetupMode && processSelected) { btnTranslate.Content = "Yeni Çeviri Yolu Kur..."; btnTranslate.IsEnabled = !anyTranslationRunning; }
@@ -864,14 +927,21 @@ namespace P5S_ceviri
         }
         private void LoadProcesses()
         {
-            AppendToLog("Çalışan işlemler listeleniyor...");
-            var selectedBefore = cmbProcesses.SelectedItem as ProcessInfo;
-            _processService.RefreshProcesses();
-            var processes = _processService.GetProcesses().Where(p => p.MainWindowHandle != IntPtr.Zero && !string.IsNullOrEmpty(p.MainWindowTitle)).Select(p => new ProcessInfo(p)).OrderBy(p => p.ProcessName).ToList();
-            cmbProcesses.ItemsSource = processes;
-            var processToSelect = processes.FirstOrDefault(p => selectedBefore != null && p.Process.Id == selectedBefore.Process.Id) ?? processes.FirstOrDefault(p => !string.IsNullOrEmpty(_appSettings.LastProcessName) && p.ProcessName == _appSettings.LastProcessName);
-            if (processToSelect != null) { cmbProcesses.SelectedItem = processToSelect; }
-            AppendToLog($"{processes.Count} adet pencereli uygulama bulundu.");
+            try
+            {
+                AppendToLog("Çalışan işlemler listeleniyor...");
+                var selectedBefore = cmbProcesses.SelectedItem as ProcessInfo;
+                _processService.RefreshProcesses();
+                var processes = _processService.GetProcesses().Where(p => p.MainWindowHandle != IntPtr.Zero && !string.IsNullOrEmpty(p.MainWindowTitle)).Select(p => new ProcessInfo(p)).OrderBy(p => p.ProcessName).ToList();
+                cmbProcesses.ItemsSource = processes;
+                var processToSelect = processes.FirstOrDefault(p => selectedBefore != null && p.Process.Id == selectedBefore.Process.Id) ?? processes.FirstOrDefault(p => !string.IsNullOrEmpty(_appSettings.LastProcessName) && p.ProcessName == _appSettings.LastProcessName);
+                if (processToSelect != null) { cmbProcesses.SelectedItem = processToSelect; }
+                AppendToLog($"{processes.Count} adet pencereli uygulama bulundu.");
+            }
+            catch (Exception ex)
+            {
+                AppendToLog($"İşlem listesi yüklenirken hata: {ex.Message}", true);
+            }
         }
 
         private void AppendToLog(string message, bool isError = false)
@@ -942,6 +1012,54 @@ namespace P5S_ceviri
                 AppendToLog("Tema değiştirme sırasında hata oluştu.", true);
             }
         }
+
+        private void CmbOcrEngine_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            try
+            {
+                if (cmbOcrEngine.SelectedItem is ComboBoxItem selectedItem)
+                {
+                    string engineName = selectedItem.Content.ToString();
+                    if (engineName == "Windows OCR")
+                        _appSettings.OcrEngine = OcrEngineType.WindowsOcr;
+                    else if (engineName == "Tesseract OCR")
+                        _appSettings.OcrEngine = OcrEngineType.Tesseract;
+                    
+                    _settingsManager.SaveSettings(_appSettings);
+                    AppendToLog($"OCR motoru değiştirildi: {engineName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("OCR motoru değiştirme sırasında hata oluştu.", ex);
+                AppendToLog("OCR motoru değiştirme sırasında hata oluştu.", true);
+            }
+        }
+
+        private void CmbOcrLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (cmbOcrLanguage.SelectedItem is string selectedLang)
+            {
+                _appSettings.OcrLanguage = selectedLang;
+                _settingsManager.SaveSettings(_appSettings);
+            }
+        }
+
+        private void CmbTargetLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (cmbTargetLanguage.SelectedItem is string selectedLang)
+            {
+                _appSettings.TargetLanguage = selectedLang;
+                _settingsManager.SaveSettings(_appSettings);
+            }
+        }
+
+                private void ChkEnableColorFilter_Click(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableOcrColorFilter = chkEnableColorFilter.IsChecked ?? true;
+            _settingsManager.SaveSettings(_appSettings);
+        }
+
         #endregion
         #endregion
     }

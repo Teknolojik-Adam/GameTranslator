@@ -199,6 +199,18 @@
             <ComboBox x:Name="cmbTranslationService" Margin="5,0,5,5" Padding="5"
                       Style="{StaticResource ThemedComboBox}"
                       DisplayMemberPath="Name" SelectedValuePath="Type"/>
+
+            <Label Content="OCR Dili:" Style="{StaticResource ThemedLabel}" Margin="5,10,5,0"/>
+            <ComboBox x:Name="cmbOcrLanguage" Margin="5,0,5,5" Padding="5"
+                      Style="{StaticResource ThemedComboBox}"/>
+
+            <Label Content="Hedef Dil:" Style="{StaticResource ThemedLabel}" Margin="5,10,5,0"/>
+            <ComboBox x:Name="cmbTargetLanguage" Margin="5,0,5,5" Padding="5"
+                      Style="{StaticResource ThemedComboBox}"/>
+
+            <CheckBox x:Name="chkEnableColorFilter" Content="OCR Renk Filtresi Kullan" 
+                      Margin="5,10,5,5" VerticalAlignment="Center"/>
+
         </StackPanel>
 
 
@@ -212,14 +224,30 @@
                     <Button Name="btnContinuousOcr" Content="Ekran Çevirisini Başlat" 
                             Margin="0,10,0,0" Style="{StaticResource ThemedButton}"
                             Click="btnContinuousOcr_Click"/>
+
+                    <Separator Margin="0,10" />
+                    <TextBlock Text="OCR Motoru:" Margin="0,5,0,5" />
+                    <ComboBox Name="cmbOcrEngine"
+                              Style="{StaticResource ThemedComboBox}"
+                              SelectionChanged="CmbOcrEngine_SelectionChanged">
+                        <ComboBoxItem Content="Windows OCR" Tag="Windows"/>
+                        <ComboBoxItem Content="Tesseract OCR" Tag="Tesseract"/>
+                    </ComboBox>
+                    <TextBlock Text="Bu ayarın geçerli olması için uygulamanın yeniden başlatılması gerekir."
+           TextWrapping="Wrap"
+           FontSize="10"
+           FontStyle="Italic"
+           Foreground="{StaticResource SecondaryTextBrush}"
+           Margin="0,5,0,0"/>
+
                 </StackPanel>
             </GroupBox>
 
             <GroupBox Header="Görsel Ayarlar" Style="{StaticResource ThemedGroupBox}" Margin="0,5,0,0">
                 <StackPanel Margin="5">
                     <Button x:Name="btnToggleOverlay" Content="Çeviri Penceresini Göster/Gizle" 
-                            Style="{StaticResource ThemedButton}"
-                            Click="btnToggleOverlay_Click"/>
+                        Style="{StaticResource ThemedButton}"
+                        Click="btnToggleOverlay_Click"/>
                 </StackPanel>
             </GroupBox>
 
@@ -283,7 +311,25 @@
             </GroupBox>
         </StackPanel>
 
-        <GroupBox Header="Log" Grid.Row="4" Grid.ColumnSpan="2" 
+        <GroupBox Header="Kısayol Ayarları" Grid.Row="3" Grid.Column="0" 
+                  Style="{StaticResource ThemedGroupBox}" Margin="0,522,10,24" Grid.RowSpan="2">
+            <StackPanel x:Name="HotkeySettingsPanel" Margin="5">
+                <StackPanel Orientation="Horizontal" Margin="0,5">
+                    <Label Content="OCR Kısayolu:" Style="{StaticResource ThemedLabel}" Width="100"/>
+                    <TextBox x:Name="hotkeyOcr" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+O"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,5">
+                    <Label Content="Çeviri Penceresi:" Style="{StaticResource ThemedLabel}" Width="100"/>
+                    <TextBox x:Name="hotkeyTranslateWindow" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+T"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,5">
+                    <Label Content="Servis Değiştir:" Style="{StaticResource ThemedLabel}" Width="100"/>
+                    <TextBox x:Name="hotkeySwitchService" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+S"/>
+                </StackPanel>
+            </StackPanel>
+        </GroupBox>
+
+        <GroupBox Header="Log" Grid.Row="4" Grid.Column="1" 
                   Style="{StaticResource ThemedGroupBox}" Margin="5,0,5,5">
             <ListBox Name="txtOutput" Style="{StaticResource ThemedListBox}"/>
         </GroupBox>

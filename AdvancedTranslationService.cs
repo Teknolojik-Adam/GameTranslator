@@ -61,40 +61,6 @@ namespace P5S_ceviri
         }
     }
 
-    // Google çeviri stratejisi
-    public class GoogleContextualTranslationStrategy : ITranslationStrategy
-    {
-        public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)
-        {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-
-            try
-            {
-                var url = $"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={targetLanguage}&dt=t&q={HttpUtility.UrlEncode(text)}";
-                string responseJson = await client.GetStringAsync(url);
-
-                using (JsonDocument doc = JsonDocument.Parse(responseJson))
-                {
-                    var sb = new StringBuilder();
-                    var translations = doc.RootElement[0].EnumerateArray();
-                    foreach (var translation in translations)
-                    {
-                        if (translation.GetArrayLength() > 0 && translation[0].ValueKind == JsonValueKind.String)
-                        {
-                            sb.Append(translation[0].GetString());
-                        }
-                    }
-                    return sb.ToString().TrimEnd('\n');
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError($"Google bağlamsal çeviri sırasında hata: {ex.Message}", ex);
-                return null;
-            }
-        }
-    }
-
     // Yer tutucu 
     public static class PlaceholderProtector
     {
@@ -242,13 +208,55 @@ namespace P5S_ceviri
 
     public interface ITranslationStrategy
     {
+        string Name { get; }
         Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger);
     }
 
     #region Web Kazıma Stratejileri
 
+    public class GoogleTranslationStrategy : ITranslationStrategy
+    {
+        public string Name { get; }
+        public bool IsContextual { get; }
+
+        public GoogleTranslationStrategy(bool isContextual)
+        {
+            IsContextual = isContextual;
+            Name = isContextual ? "Google (Akıllı Çeviri)" : "Google";
+        }
+
+        public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)
+        {
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+            try
+            {
+                var url = $"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={targetLanguage}&dt=t&q={HttpUtility.UrlEncode(text)}";
+                string responseJson = await client.GetStringAsync(url);
+                using (JsonDocument doc = JsonDocument.Parse(responseJson))
+                {
+                    var sb = new StringBuilder();
+                    var translations = doc.RootElement[0].EnumerateArray();
+                    foreach (var translation in translations)
+                    {
+                        if (translation.GetArrayLength() > 0 && translation[0].ValueKind == JsonValueKind.String)
+                        {
+                            sb.Append(translation[0].GetString());
+                        }
+                    }
+                    return sb.ToString().TrimEnd('\n');
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError($"{Name} çevirisi sırasında hata: {ex.Message}", ex);
+                return null;
+            }
+        }
+    }
+
     public class DeepLWebScrapingStrategy : ITranslationStrategy
     {
+        public string Name => "DeepL";
         public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)
         {
             if (string.IsNullOrEmpty(text)) return string.Empty;
@@ -262,12 +270,13 @@ namespace P5S_ceviri
                 var responseJson = await response.Content.ReadAsStringAsync();
                 using (var doc = JsonDocument.Parse(responseJson)) { return doc.RootElement.GetProperty("result").GetProperty("translations")[0].GetProperty("beams")[0].GetProperty("postprocessed_sentence").GetString(); }
             }
-            catch (Exception ex) { logger.LogError("DeepL web kazıma sırasında hata.", ex); return null; }
+            catch (Exception ex) { logger.LogError($"{Name} web kazıma sırasında hata.", ex); return null; }
         }
     }
 
     public class YandexWebScrapingStrategy : ITranslationStrategy
     {
+        public string Name => "Yandex";
         public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)
         {
             if (string.IsNullOrEmpty(text)) return string.Empty;
@@ -291,36 +300,16 @@ namespace P5S_ceviri
                     return HttpUtility.HtmlDecode(translationNode.InnerText);
                 }
 
-                logger.LogWarning("Yandex sayfasında çeviri metni bulunamadı. (Yapı değişmiş olabilir)");
+                logger.LogWarning($"{Name} sayfasında çeviri metni bulunamadı. (Yapı değişmiş olabilir)");
                 return null;
             }
-            catch (Exception ex) { logger.LogError("Yandex web kazıma sırasında hata.", ex); return null; }
-        }
-    }
-
-    public class GoogleWebTranslationStrategy : ITranslationStrategy
-    {
-        public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)
-        {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            var url = $"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={targetLanguage}&dt=t&q={HttpUtility.UrlEncode(text)}";
-            try
-            {
-                string responseJson = await client.GetStringAsync(url);
-                using (JsonDocument doc = JsonDocument.Parse(responseJson))
-                {
-                    var sb = new StringBuilder();
-                    var translations = doc.RootElement[0].EnumerateArray();
-                    foreach (var translation in translations) { if (translation.GetArrayLength() > 0 && translation[0].ValueKind == JsonValueKind.String) { sb.Append(translation[0].GetString()); } }
-                    return sb.ToString().TrimEnd('\n');
-                }
-            }
-            catch (Exception ex) { logger.LogError($"Google isteği sırasında hata: {ex.Message}", ex); return null; }
+            catch (Exception ex) { logger.LogError($"{Name} web kazıma sırasında hata.", ex); return null; }
         }
     }
 
     public class BingWebTranslationStrategy : ITranslationStrategy
     {
+        public string Name => "Bing";
         public async Task<string> Translate(string text, string targetLanguage, HttpClient client, ILogger logger)
         {
             if (string.IsNullOrEmpty(text)) return string.Empty;
@@ -339,10 +328,10 @@ namespace P5S_ceviri
                     return HttpUtility.HtmlDecode(translationNode.InnerText);
                 }
 
-                logger.LogWarning("Bing sayfasında çeviri metni bulunamadı. (ID 'tta_output_ta' değişmiş olabilir)");
+                logger.LogWarning($"{Name} sayfasında çeviri metni bulunamadı. (ID 'tta_output_ta' değişmiş olabilir)");
                 return null;
             }
-            catch (Exception ex) { logger.LogError($"Bing isteği sırasında hata: {ex.Message}", ex); return null; }
+            catch (Exception ex) { logger.LogError($"{Name} isteği sırasında hata: {ex.Message}", ex); return null; }
         }
     }
 
@@ -383,8 +372,8 @@ namespace P5S_ceviri
 
             _strategies = new List<ITranslationStrategy>
             {
-                new GoogleContextualTranslationStrategy(),
-                new GoogleWebTranslationStrategy(),
+            new GoogleTranslationStrategy(isContextual: true),
+            new GoogleTranslationStrategy(isContextual: false),
                 new DeepLWebScrapingStrategy(),
                 new BingWebTranslationStrategy(),
                 new YandexWebScrapingStrategy()
@@ -392,27 +381,22 @@ namespace P5S_ceviri
 
             AvailableStrategies = _strategies.Select(s => new StrategyInfo
             {
-                Name = GetStrategyName(s),
+                Name = s.Name,
                 Type = s.GetType()
             }).ToList();
         }
 
-        private string GetStrategyName(ITranslationStrategy s)
-        {
-            if (s is GoogleContextualTranslationStrategy) return "Google (Akıllı Çeviri)";
-            return s.GetType().Name.Replace("Strategy", "").Replace("WebScraping", "").Replace("WebTranslation", "");
-        }
-
-        public async Task<string> TranslateAsync(string text, string targetLanguage = "tr", Type strategyType = null)
+        public async Task<string> TranslateAsync(string text, string targetLanguage, Type strategyType = null)
         {
             if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            if (string.IsNullOrWhiteSpace(targetLanguage)) targetLanguage = "tr"; // Fallback
 
             string protectedText = PlaceholderProtector.Protect(text, out Dictionary<string, string> placeholders);
             string textToProcess = protectedText;
 
             var sentences = SentenceProcessor.SplitIntoSentences(textToProcess);
             var translatedSentences = new List<string>();
-            string normalizedTarget = (targetLanguage ?? "tr").Trim().ToLowerInvariant();
+            string normalizedTarget = targetLanguage.Trim().ToLowerInvariant();
 
             foreach (string sentence in sentences)
             {
@@ -428,7 +412,7 @@ namespace P5S_ceviri
                 var selectedStrategy = _strategies.FirstOrDefault(s => s.GetType() == strategyType) ?? _strategies.First();
                 string textToSend = sentence;
 
-                if (selectedStrategy is GoogleContextualTranslationStrategy)
+                if (selectedStrategy is GoogleTranslationStrategy gts && gts.IsContextual)
                 {
                     textToSend = _contextManager.GetContextualPrompt(sentence);
                 }
@@ -437,7 +421,7 @@ namespace P5S_ceviri
 
                 if (!string.IsNullOrWhiteSpace(translatedSentence))
                 {
-                    if (selectedStrategy is GoogleContextualTranslationStrategy && _contextManager.GetContextualPrompt("").Length > 0)
+                    if (selectedStrategy is GoogleTranslationStrategy gts2 && gts2.IsContextual && _contextManager.GetContextualPrompt("").Length > 0)
                     {
                         int lastDot = translatedSentence.LastIndexOf(". ");
                         if (lastDot > -1 && translatedSentence.Length > lastDot + 2)
@@ -481,7 +465,7 @@ namespace P5S_ceviri
                     if (!string.IsNullOrWhiteSpace(result))
                     {
                         RecordStrategySuccess(strategy.GetType());
-                        _logger.LogInformation($"Metin başarıyla '{GetStrategyName(strategy)}' ile çevrildi.");
+                        _logger.LogInformation($"Metin başarıyla '{strategy.Name}' ile çevrildi.");
                         return result;
                     }
                     else
@@ -492,7 +476,7 @@ namespace P5S_ceviri
                 catch (Exception ex)
                 {
                     RecordStrategyFailure(strategy.GetType());
-                    _logger.LogWarning($"{GetStrategyName(strategy)} servisi hata verdi: {ex.Message}");
+                    _logger.LogWarning($"{strategy.Name} servisi hata verdi: {ex.Message}");
                 }
             }
 
@@ -515,7 +499,7 @@ namespace P5S_ceviri
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning($"{GetStrategyName(strategy)} denemesi hata verdi: {ex.Message}");
+                    _logger.LogWarning($"{strategy.Name} denemesi hata verdi: {ex.Message}");
                 }
 
                 if (string.IsNullOrWhiteSpace(result) && attempt < maxAttempts)

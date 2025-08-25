@@ -14,14 +14,16 @@ namespace P5S_ceviri
         [DllImport("user32.dll")]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-        private HwndSource _hwndSource;
+        private readonly HwndSource _hwndSource;
+        private readonly ILogger _logger;
         private const int WM_HOTKEY = 0x0312;
-        private Dictionary<int, Action> _hotkeyActions = new Dictionary<int, Action>();
+        private readonly Dictionary<int, Action> _hotkeyActions = new Dictionary<int, Action>();
         private int _nextHotkeyId = 1;
 
-        public HotkeyManager(HwndSource hwndSource)
+        public HotkeyManager(HwndSource hwndSource, ILogger logger)
         {
-            _hwndSource = hwndSource;
+            _hwndSource = hwndSource ?? throw new ArgumentNullException(nameof(hwndSource));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _hwndSource.AddHook(WndProc);
         }
 
@@ -33,18 +35,18 @@ namespace P5S_ceviri
 
             if (!RegisterHotKey(_hwndSource.Handle, hotkeyId, m, k))
             {
-                // Kısayol kaydedilemedi
+                int errorCode = Marshal.GetLastWin32Error();
+                _logger.LogError($"Kısayol kaydedilemedi: {modifiers} + {key}. Hata Kodu: {errorCode}");
                 return 0;
             }
 
             _hotkeyActions[hotkeyId] = action;
-            return hotkeyId; // Başarılıysa hotkey ID'si döndürülür
+            return hotkeyId;
         }
 
         public void UnregisterHotkey(int hotkeyId)
         {
-            if (hotkeyId == 0) return; // Geçersiz hotkey ID'si
-
+            if (hotkeyId == 0) return;
             UnregisterHotKey(_hwndSource.Handle, hotkeyId);
             _hotkeyActions.Remove(hotkeyId);
         }
@@ -54,9 +56,9 @@ namespace P5S_ceviri
             if (msg == WM_HOTKEY)
             {
                 int hotkeyId = wParam.ToInt32();
-                if (_hotkeyActions.ContainsKey(hotkeyId))
+                if (_hotkeyActions.TryGetValue(hotkeyId, out var action))
                 {
-                    _hotkeyActions[hotkeyId].Invoke();
+                    action.Invoke();
                     handled = true;
                 }
             }

@@ -114,9 +114,21 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="Hotkey.cs" />
+    <Compile Include="HotkeyInputControl.xaml.cs">
+      <DependentUpon>HotkeyInputControl.xaml</DependentUpon>
+    </Compile>
     <Compile Include="HotkeyManager.cs" />
+    <Compile Include="IOcrEngine.cs" />
     <Compile Include="PointerScanner.cs" />
+    <Compile Include="TesseractOcrEngine.cs" />
     <Compile Include="TranslationCacheManager.cs" />
+    <Compile Include="WindowsOcrEngine.cs" />
+    <Compile Include="WindowsOcrService.cs" />
+    <Page Include="HotkeyInputControl.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="InputDialog.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>

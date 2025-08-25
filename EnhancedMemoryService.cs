@@ -1,18 +1,18 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace P5S_ceviri 
+namespace P5S_ceviri
 {
-  
-    public class EnhancedMemoryService : MemoryService 
+    public class EnhancedMemoryService : MemoryService
     {
         public event Action<string> StatusChanged;
-        public event Action<int> ProgressChanged; 
+        public event Action<int> ProgressChanged;
 
         public EnhancedMemoryService(ILogger logger) : base(logger)
         {
@@ -28,7 +28,6 @@ namespace P5S_ceviri
             ProgressChanged?.Invoke(progress);
         }
 
-        // txt dosyasından alınan ve düzeltilen FindPatternAddressesAsync metodu
         public async Task<List<IntPtr>> FindPatternAddressesAsync(Process process, string pattern, CancellationToken ct, IProgress<int> progress = null)
         {
             if (process == null || string.IsNullOrWhiteSpace(pattern)) return new List<IntPtr>();
@@ -37,12 +36,13 @@ namespace P5S_ceviri
             {
                 ReportStatus("Pattern ayrıştırılıyor...");
                 var parsedPattern = ParsePattern(pattern);
-                if (parsedPattern.bytes == null || parsedPattern.bytes.Length == 0)
+                if (parsedPattern == null)
                 {
                     ReportStatus("Geçersiz pattern!");
                     _logger.LogError($"Geçersiz pattern formatı: {pattern}");
                     return new List<IntPtr>();
                 }
+                var (patternBytes, patternMask) = parsedPattern.Value;
 
                 var module = process.MainModule;
                 if (module == null)
@@ -52,38 +52,54 @@ namespace P5S_ceviri
                     return new List<IntPtr>();
                 }
 
-                var memory = new byte[module.ModuleMemorySize];
-                ReportStatus("Bellek okunuyor...");
-                if (!ReadProcessMemory(process.Handle, module.BaseAddress, memory, memory.Length, out _))
+                ReportStatus("Bellek bölgeleri taranıyor...");
+                var results = new ConcurrentBag<IntPtr>();
+                long moduleEnd = module.BaseAddress.ToInt64() + module.ModuleMemorySize;
+                long totalBytesToScan = module.ModuleMemorySize;
+                long totalBytesScanned = 0;
+                int chunkSize = 4 * 1024 * 1024; // 4 MB
+
+                var chunks = new List<(long address, int size)>();
+                for (long currentBase = module.BaseAddress.ToInt64(); currentBase < moduleEnd; currentBase += chunkSize)
                 {
-                    int errorCode = Marshal.GetLastWin32Error();
-                    ReportStatus("Bellek okuma hatası!");
-                    _logger.LogError($"Bellek okuma hatası! Hata kodu: {errorCode}");
-                    return new List<IntPtr>();
+                    chunks.Add((currentBase, chunkSize));
                 }
 
-                ReportStatus("Tarama başlatıldı...");
-                var results = new List<IntPtr>();
-                int total = memory.Length - parsedPattern.bytes.Length;
-
-                return await Task.Run(() =>
+                await Task.Run(() =>
                 {
-                    for (int i = 0; i <= total; i++)
+                    Parallel.ForEach(chunks, new ParallelOptions { CancellationToken = ct }, (chunk, loopState) =>
                     {
-                        ct.ThrowIfCancellationRequested();
-                        if (MatchesWithMask(memory, i, parsedPattern.bytes, parsedPattern.masks))
-                            results.Add(IntPtr.Add(module.BaseAddress, i));
+                        var buffer = new byte[chunk.size + patternBytes.Length];
+                        if (!ReadProcessMemory(process.Handle, (IntPtr)chunk.address, buffer, buffer.Length, out _))
+                        {
+                            // Bu bölge okunamadı, atla.
+                            return;
+                        }
 
-                        if (progress != null && i % 100000 == 0)
-                            progress.Report((int)((double)i / total * 100));
+                        for (int i = 0; i < chunk.size; i++)
+                        {
+                            if (ct.IsCancellationRequested)
+                            {
+                                loopState.Stop();
+                                return;
+                            }
 
-                        if (i % 500000 == 0) // UI'yi çok sık güncellememek için
-                            ReportProgress((int)((double)i / total * 100));
-                    }
-                    ReportStatus($"Tarama tamamlandı. {results.Count} adet sonuç bulundu.");
-                    _logger.LogInformation($"Pattern taraması tamamlandı. {results.Count} adet sonuç bulundu.");
-                    return results;
+                            if (MatchesWithMask(buffer, i, patternBytes, patternMask))
+                            {
+                                results.Add(new IntPtr(chunk.address + i));
+                            }
+                        }
+
+                        long scanned = Interlocked.Add(ref totalBytesScanned, chunk.size);
+                        ReportProgress((int)((double)scanned / totalBytesToScan * 100));
+                    });
                 }, ct);
+
+                ct.ThrowIfCancellationRequested();
+
+                ReportStatus($"Tarama tamamlandı. {results.Count} adet sonuç bulundu.");
+                _logger.LogInformation($"Pattern taraması tamamlandı. {results.Count} adet sonuç bulundu.");
+                return results.ToList();
             }
             catch (OperationCanceledException)
             {
@@ -99,9 +115,9 @@ namespace P5S_ceviri
             }
         }
 
-        private (byte[] bytes, bool[] masks) ParsePattern(string pattern)
+        private (byte[] bytes, bool[] masks)? ParsePattern(string pattern)
         {
-            var parts = pattern.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            var parts = pattern.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             var bytes = new List<byte>();
             var masks = new List<bool>();
 
@@ -112,7 +128,7 @@ namespace P5S_ceviri
                     bytes.Add(0);
                     masks.Add(false);
                 }
-                else if (byte.TryParse(p, System.Globalization.NumberStyles.HexNumber, null, out byte b))
+                else if (byte.TryParse(p, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte b))
                 {
                     bytes.Add(b);
                     masks.Add(true);
@@ -120,9 +136,7 @@ namespace P5S_ceviri
                 else
                 {
                     _logger.LogError($"Geçersiz pattern parçası: {p}");
-                   
-                    bytes.Add(0); // Varsayılan olarak 0 ekleyip maskesiz yapabiliriz
-                    masks.Add(false);
+                    return null; // Geçersiz pattern'de taramayı durdur.
                 }
             }
             return (bytes.ToArray(), masks.ToArray());
@@ -130,6 +144,8 @@ namespace P5S_ceviri
 
         private bool MatchesWithMask(byte[] buffer, int offset, byte[] pattern, bool[] masks)
         {
+            if (offset + pattern.Length > buffer.Length) return false;
+
             for (int i = 0; i < pattern.Length; i++)
             {
                 if (masks[i] && buffer[offset + i] != pattern[i])

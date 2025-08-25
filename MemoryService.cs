@@ -1,13 +1,15 @@
-﻿using System;
+﻿using P5S_ceviri;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Windows.Input;
+using System.Windows.Interop;
 
-namespace P5S_ceviri 
+namespace P5S_ceviri
 {
-   
     public class MemoryService : IMemoryService
     {
         #region Windows API Imports (P/Invoke)
@@ -31,25 +33,99 @@ namespace P5S_ceviri
         #endregion
 
         protected readonly ILogger _logger;
+        protected readonly AppSettings _appSettings;
         private IntPtr _processHandle = IntPtr.Zero;
-
+        private ILogger logger;
         private const uint PROCESS_VM_READ = 0x0010;
         private const uint PROCESS_QUERY_INFORMATION = 0x0400;
 
+        public MemoryService(ILogger logger, AppSettings appSettings)
+        {
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
+        }
 
         public MemoryService(ILogger logger)
         {
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            this.logger = logger;
         }
-        public string TryReadStringDeep(IntPtr address, int maxDepth = 4, int length = 256)
+
+        public string TryReadStringDeep(IntPtr address)
         {
-            return ReadStringRecursive(address, maxDepth, length, 0, new HashSet<long>());
+            var queue = new Queue<(IntPtr address, int depth)>();
+            queue.Enqueue((address, 0));
+            var visited = new HashSet<long>();
+
+            while (queue.Any())
+            {
+                var (currentAddress, currentDepth) = queue.Dequeue();
+
+                if (currentAddress == IntPtr.Zero || currentDepth > _appSettings.PointerSearchMaxDepth || !visited.Add(currentAddress.ToInt64()))
+                {
+                    continue;
+                }
+
+                var buffer = ReadBytes(currentAddress, _appSettings.StringReadLength);
+                if (buffer.Length == 0)
+                {
+                    continue;
+                }
+
+                var (found, text) = ParseBufferAsString(buffer);
+                if (found)
+                {
+                    return text;
+                }
+
+                if (buffer.Length >= IntPtr.Size)
+                {
+                    try
+                    {
+                        long pointerValue = IntPtr.Size == 8 ? BitConverter.ToInt64(buffer, 0) : BitConverter.ToInt32(buffer, 0);
+                        if (pointerValue > 0x10000 && pointerValue < 0x7FFFFFFFFFFF)
+                        {
+                            queue.Enqueue((new IntPtr(pointerValue), currentDepth + 1));
+                        }
+                    }
+                    catch
+                    {
+                        // This is intentional. If the buffer is not a valid pointer,
+                        // BitConverter will throw an exception. We catch it and
+                        // simply continue the loop to the next item in the queue.
+                    }
+                }
+            }
+            return null;
         }
+
+        private (bool, string) ParseBufferAsString(byte[] buffer)
+        {
+            int nullIndex = Array.IndexOf(buffer, (byte)0);
+            if (nullIndex >= 0)
+            {
+                var segment = new ArraySegment<byte>(buffer, 0, nullIndex);
+                buffer = segment.ToArray();
+            }
+
+            foreach (var encodingName in new[] { "Unicode", "UTF-8", "ASCII" })
+            {
+                try
+                {
+                    Encoding encoding = Encoding.GetEncoding(encodingName);
+                    string result = encoding.GetString(buffer).Trim('\0');
+                    if (IsValidGameText(result))
+                    {
+                        return (true, result);
+                    }
+                }
+                catch { continue; }
+            }
+            return (false, null);
+        }
+
         public bool AttachToProcess(int processId)
         {
-            // Önceki bağlantıyı kapat
             Dispose();
-
             _processHandle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, processId);
             if (_processHandle != IntPtr.Zero)
             {
@@ -70,9 +146,7 @@ namespace P5S_ceviri
             {
                 return new byte[0];
             }
-
             byte[] buffer = new byte[length];
-           
             if (ReadProcessMemory(_processHandle, address, buffer, length, out int bytesRead) && bytesRead == length)
             {
                 return buffer;
@@ -81,93 +155,21 @@ namespace P5S_ceviri
             {
                 int errorCode = Marshal.GetLastWin32Error();
                 _logger?.LogWarning($"Bellek okuma başarısız: Adres 0x{address.ToInt64():X}, Uzunluk {length}, Okunan Byte {bytesRead}, Hata Kodu: {errorCode}");
-                return new byte[0]; 
+                return new byte[0];
             }
         }
-        private string ReadStringRecursive(IntPtr address, int maxDepth, int length, int currentDepth, HashSet<long> visited)
-        {
-            if (currentDepth > maxDepth || address == IntPtr.Zero)
-            {
-                return null;
-            }
 
-            long addressValue = address.ToInt64();
-            if (!visited.Add(addressValue))
-            {
-                return null;
-            }
-
-            var buffer = ReadBytes(address, length);
-            if (buffer.Length == 0)
-            {
-                return null;
-            }
-
-            int nullIndex = Array.IndexOf(buffer, (byte)0);
-            if (nullIndex >= 0)
-            {
-                buffer = new ArraySegment<byte>(buffer, 0, nullIndex).Array ?? new byte[0];
-            }
-
-            foreach (var encodingName in new[] { "Unicode", "UTF-8", "ASCII" })
-            {
-                try
-                {
-                    Encoding encoding = Encoding.GetEncoding(encodingName);
-                    string result = encoding.GetString(buffer).Trim('\0');
-                    if (IsValidGameText(result))
-                    {
-                        return result;
-                    }
-                }
-                catch
-                {
-                    continue;
-                }
-            }
-
-            if (buffer.Length >= IntPtr.Size)
-            {
-                try
-                {
-                    long pointerValue = IntPtr.Size == 8 ? BitConverter.ToInt64(buffer, 0) : BitConverter.ToInt32(buffer, 0);
-                    if (pointerValue > 0x10000 && pointerValue < 0x7FFFFFFFFFFF)
-                    {
-                        string deeperResult = ReadStringRecursive(new IntPtr(pointerValue), maxDepth, length, currentDepth + 1, visited);
-                        if (!string.IsNullOrEmpty(deeperResult))
-                        {
-                            return deeperResult;
-                        }
-                    }
-                }
-                catch
-                {
-                  
-                }
-            }
-
-            return null;
-        }
-
-       
         private bool IsValidGameText(string s)
         {
             if (string.IsNullOrWhiteSpace(s) || s.Length < 2 || s.Length > 1000)
                 return false;
-
-            if (s.Contains('\uFFFD')) 
+            if (s.Contains('\uFFFD'))
                 return false;
-
-            // Yazdırılabilir karakter oranı
             int printableOrWhitespaceCount = s.Count(c => !char.IsControl(c) || char.IsWhiteSpace(c));
             double printableRatio = (double)printableOrWhitespaceCount / s.Length;
-
-            // En az %80'i yazdırılabilir/boşluk karakteri olmalı ve en az 1 harf veya rakam içermeli
             return printableRatio >= 0.8 && s.Any(char.IsLetterOrDigit);
         }
 
-
-        // txt dosyasından alınan ResolveAddressFromPath metodu
         public IntPtr ResolveAddressFromPath(Process process, PathInfo path)
         {
             if (path == null || process == null) return IntPtr.Zero;
@@ -179,10 +181,8 @@ namespace P5S_ceviri
                     _logger?.LogWarning($"Modül eşleşmedi: Beklenen '{path.BaseAddressModule}', Bulunan '{mainModule?.ModuleName}'");
                     return IntPtr.Zero;
                 }
-
                 IntPtr currentAddress = IntPtr.Add(mainModule.BaseAddress, (int)path.BaseAddressOffset);
                 _logger?.LogInformation($"Başlangıç adresi: 0x{currentAddress.ToInt64():X} ({mainModule.ModuleName} + 0x{path.BaseAddressOffset:X})");
-
                 foreach (var offset in path.PointerOffsets)
                 {
                     var pointerBytes = ReadBytes(currentAddress, IntPtr.Size);
@@ -191,7 +191,6 @@ namespace P5S_ceviri
                         _logger?.LogWarning($"Pointer okuma başarısız: 0x{currentAddress.ToInt64():X}");
                         return IntPtr.Zero;
                     }
-
                     long pointerValue = IntPtr.Size == 8 ? BitConverter.ToInt64(pointerBytes, 0) : BitConverter.ToInt32(pointerBytes, 0);
                     currentAddress = new IntPtr(pointerValue);
                     if (currentAddress == IntPtr.Zero)
@@ -199,7 +198,6 @@ namespace P5S_ceviri
                         _logger?.LogWarning("Pointer değeri sıfır.");
                         return IntPtr.Zero;
                     }
-
                     currentAddress = IntPtr.Add(currentAddress, offset);
                     _logger?.LogInformation($" -> Offset 0x{offset:X} uygulandı. Yeni adres: 0x{currentAddress.ToInt64():X}");
                 }
