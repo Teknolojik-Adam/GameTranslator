@@ -17,7 +17,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"FATAL: Logger initialization failed during log rotation. Error: {ex.Message}");
+                Console.WriteLine($"FATAL: Günlük döndürme sırasında günlük kaydı başlatılamadı. Hata: {ex.Message}");
             }
         }
 
@@ -61,7 +61,7 @@ namespace P5S_ceviri
             catch (Exception ex)
             {
                 // Loglama sırasında hata olursa bunu sadece konsola yazmayı dene
-                Console.WriteLine($"FATAL: Logger failed. Could not write to log file. Error: {ex.Message}");
+                Console.WriteLine($"FATAL: Günlük döndürme sırasında günlük kaydı başlatılamadı. Hata: {ex.Message}");
             }
         }
 

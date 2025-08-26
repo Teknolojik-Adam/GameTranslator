@@ -13,7 +13,7 @@ namespace P5S_ceviri
         public TranslationCacheManager(ILogger logger)
         {
             _logger = logger;
-            //dosya yolu: .../GameTranslator/bin/Debug/translation_cache.json
+          
             _cacheFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "translation_cache.json");
         }
 

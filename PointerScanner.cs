@@ -28,7 +28,7 @@ namespace P5S_ceviri
         public PointerScanner(Process process, ILogger logger = null)
         {
             _process = process ?? throw new ArgumentNullException(nameof(process));
-            _mainModule = process.MainModule ?? throw new ArgumentException("Process must have a main module.", nameof(process));
+            _mainModule = process.MainModule ?? throw new ArgumentException("Sürecin bir ana modülü olmalıdır.", nameof(process));
             _logger = logger;
         }
 
@@ -120,7 +120,7 @@ namespace P5S_ceviri
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogWarning($"Memory processing error at index 0x{i:X}: {ex.Message}");
+                    _logger?.LogWarning($"Dizinde bellek işleme hatası 0x{i:X}: {ex.Message}");
                 }
             }
         }

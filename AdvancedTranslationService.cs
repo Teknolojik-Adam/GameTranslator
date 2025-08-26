@@ -61,7 +61,7 @@ namespace P5S_ceviri
         }
     }
 
-    // Yer tutucu 
+   
     public static class PlaceholderProtector
     {
         public static string Protect(string text, out Dictionary<string, string> placeholders)
@@ -131,7 +131,7 @@ namespace P5S_ceviri
     public class SentenceProcessor
     {
         private static readonly string[] SentenceEndings = { ".", "!", "?", "。", "！", "？" };
-        private const int MaxSentenceLength = 500; // Çok uzun cümleleri böl
+        private const int MaxSentenceLength = 500; 
 
         public static List<string> SplitIntoSentences(string text)
         {

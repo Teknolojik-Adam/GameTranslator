@@ -26,7 +26,7 @@ namespace P5S_ceviri
                 _ocrEngine = OcrEngine.TryCreateFromUserProfileLanguages();
                 if (_ocrEngine == null)
                 {
-                    _logger.LogWarning("Windows OCR Engine could not be initialized with user profile languages. Falling back to English.");
+                    _logger.LogWarning("Windows OCR Altyapısı kullanıcı profili dilleriyle başlatılamadı. İngilizceye geri dönmek.");
                     var lang = new Language("en-US");
                     if (OcrEngine.IsLanguageSupported(lang))
                     {
@@ -36,16 +36,16 @@ namespace P5S_ceviri
 
                 if (_ocrEngine != null)
                 {
-                    _logger.LogInformation($"Windows OCR Engine initialized for language: {_ocrEngine.RecognizerLanguage.DisplayName}");
+                    _logger.LogInformation($"Dil için başlatılan Windows OCR Motoru: {_ocrEngine.RecognizerLanguage.DisplayName}");
                 }
                 else
                 {
-                    _logger.LogError("Windows OCR Engine could not be initialized. Please ensure a supported language pack is installed in Windows and set as a display language.");
+                    _logger.LogError("Windows OCR Altyapısı başlatılamadı. Lütfen Windows'ta desteklenen bir dil paketinin yüklü olduğundan ve görüntüleme dili olarak ayarlandığından emin olun.");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError("Failed to initialize Windows OCR Engine. This may happen on Windows versions without the necessary components.", ex);
+                _logger.LogError("Windows OCR Altyapısı başlatılamadı. Bu, gerekli bileşenler olmadan Windows sürümlerinde olabilir.", ex);
                 _ocrEngine = null;
             }
         }
@@ -59,7 +59,7 @@ namespace P5S_ceviri
                 SoftwareBitmap softwareBitmap = await CreateSoftwareBitmapFromBitmap(image);
                 if (softwareBitmap == null)
                 {
-                    _logger.LogWarning("SoftwareBitmap could not be created from the source image.");
+                    _logger.LogWarning("SoftwareBitmap kaynak görüntüden oluşturulamadıSoftwareBitmap kaynak görüntüden oluşturulamadı.");
                     return string.Empty;
                 }
 
@@ -68,7 +68,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError("An error occurred during Windows OCR recognition.", ex);
+                _logger.LogError("Windows OCR tanıma sırasında bir hata oluştu.", ex);
                 return string.Empty;
             }
         }
@@ -108,7 +108,7 @@ namespace P5S_ceviri
             using (var gfx = Graphics.FromImage(bmp))
             {
                 IntPtr hdc = gfx.GetHdc();
-                PrintWindow(hWnd, hdc, 2); // PW_RENDERFULLCONTENT
+                PrintWindow(hWnd, hdc, 2); 
                 gfx.ReleaseHdc(hdc);
             }
             return bmp;

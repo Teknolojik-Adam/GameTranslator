@@ -12,7 +12,7 @@ namespace P5S_ceviri
 
     public class AppSettings : INotifyPropertyChanged
     {
-        // OCR Engine
+       
         private OcrEngineType _ocrEngine = OcrEngineType.Tesseract;
         public OcrEngineType OcrEngine
         {
@@ -20,7 +20,7 @@ namespace P5S_ceviri
             set { if (_ocrEngine != value) { _ocrEngine = value; OnPropertyChanged(); } }
         }
 
-        // Last selected process
+        
         private string _lastProcessName = "";
         public string LastProcessName
         {
@@ -28,7 +28,7 @@ namespace P5S_ceviri
             set { if (_lastProcessName != value) { _lastProcessName = value; OnPropertyChanged(); } }
         }
 
-        // Theme
+      
         private string _theme = "Light";
         public string Theme
         {
@@ -36,7 +36,7 @@ namespace P5S_ceviri
             set { if (_theme != value) { _theme = value; OnPropertyChanged(); } }
         }
 
-        // Target Language
+        
         private string _targetLanguage = "tr";
         public string TargetLanguage
         {

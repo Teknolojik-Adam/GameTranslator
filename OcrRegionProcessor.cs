@@ -8,10 +8,7 @@ using OpenCvSharp.Extensions;
 
 namespace P5S_ceviri
 {
-    /// <summary>
-    /// Görüntüler arasındaki değişen metin bölgelerini tespit eder, işler ve çevirir.
-    /// Bitişik bölgeleri birleştirerek performansı ve doğruluğu artırır.
-    /// </summary>
+
     public class OcrRegionProcessor : IDisposable
     {
         private readonly IOcrService _ocrService;
@@ -23,15 +20,7 @@ namespace P5S_ceviri
         private Bitmap _previousImage;
         private bool _disposed = false;
 
-        /// <summary>
-        /// OcrRegionProcessor sınıfının yeni bir örneğini başlatır.
-        /// </summary>
-        /// <param name="ocrService">OCR işlemleri için kullanılacak servis.</param>
-        /// <param name="translationService">Çeviri işlemleri için kullanılacak servis.</param>
-        /// <param name="ocrLanguage">OCR için kaynak dil.</param>
-        /// <param name="targetLanguage">Çeviri için hedef dil.</param>
-        /// <param name="changeThreshold">Bir bölgenin değişmiş sayılması için gereken piksel farkı oranı.</param>
-        /// <param name="mergeTolerance">Bitişik bölgelerin birleştirilmesi için piksel cinsinden tolerans.</param>
+   
         public OcrRegionProcessor(IOcrService ocrService, ITranslationService translationService, string ocrLanguage, string targetLanguage, double changeThreshold = 0.01, int mergeTolerance = 15)
         {
             _ocrService = ocrService ?? throw new ArgumentNullException(nameof(ocrService));
@@ -42,10 +31,7 @@ namespace P5S_ceviri
             _mergeTolerance = mergeTolerance;
         }
 
-        /// <summary>
-        /// Mevcut görüntüyü önceki görüntüyle karşılaştırır, değişen ve birleştirilmiş metin bölgelerini işler.
-        /// </summary>
-        /// <param name="currentImage">İşlenecek mevcut görüntü.</param>
+
         public async Task ProcessChangedRegionsAsync(Bitmap currentImage)
         {
             if (currentImage == null) return;
@@ -84,10 +70,6 @@ namespace P5S_ceviri
             _previousImage = new Bitmap(currentImage);
         }
 
-        /// <summary>
-        /// Verilen dikdörtgen listesindeki bitişik veya örtüşen bölgeleri birleştirir.
-        /// Birleştirme, bölgeler arasındaki mesafe `mergeTolerance` değerinden azsa gerçekleşir.
-        /// </summary>
         private List<Rectangle> MergeAdjacentRegions(List<Rectangle> regions, int mergeTolerance)
         {
             if (regions.Count <= 1)

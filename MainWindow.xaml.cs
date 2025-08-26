@@ -131,14 +131,14 @@ namespace P5S_ceviri
                 var presentationSource = PresentationSource.FromVisual(this);
                 if (presentationSource == null)
                 {
-                    _logger?.LogError("PresentationSource.FromVisual returned null");
+                    _logger?.LogError("PresentationSource.FromVisual null döndürdü");
                     return;
                 }
 
                 var hwndSource = presentationSource as HwndSource;
                 if (hwndSource == null)
                 {
-                    _logger?.LogError("Failed to cast PresentationSource to HwndSource");
+                    _logger?.LogError("PresentationSource'u HwndSource'a atama başarısız oldu");
                     return;
                 }
 
@@ -149,7 +149,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger?.LogError("HotkeyManager initialization failed", ex);
+                _logger?.LogError("HotkeyManager başlatılamadı", ex);
             }
         }
 
@@ -201,7 +201,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger?.LogError("Failed to unregister hotkeys", ex);
+                _logger?.LogError("Kısayol tuşlarının kaydı kaldırılamadı", ex);
             }
         }
 

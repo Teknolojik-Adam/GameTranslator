@@ -14,26 +14,26 @@ namespace P5S_ceviri
 
             var services = new ServiceCollection();
 
-            // Core services
+            
             services.AddSingleton<ILogger, ConsoleLogger>();
             services.AddSingleton<AppSettings>();
             services.AddSingleton<SettingsManager>();
 
-            // Process and memory services
+            
             services.AddSingleton<IProcessService, ProcessService>();
             services.AddSingleton<IMemoryService, MemoryService>();
             services.AddSingleton<IGameRecipeService, GameRecipeService>();
             services.AddSingleton<ITranslationService, AdvancedTranslationService>();
 
-            // OCR engines
+            
             services.AddSingleton<IOcrEngine, WindowsOcrEngine>();
             services.AddSingleton<IOcrEngine, TesseractOcrEngine>();
 
-            // OCR service
+            
             services.AddSingleton<IOcrService>(sp =>
                 new OcrService(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
 
-            // HttpClient service
+           
             services.AddSingleton<HttpClient>(sp =>
             {
                 var client = new HttpClient();

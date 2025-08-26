@@ -12,7 +12,7 @@ namespace P5S_ceviri
         public WindowsOcrEngine(ILogger logger)
         {
             _logger = logger;
-            _logger.LogWarning("WindowsOcrEngine is not fully implemented and will not produce results.");
+            _logger.LogWarning("WindowsOcrEngine tam olarak uygulanmamıştır ve sonuç üretmez.");
         }
 
         public Task<string> RecognizeTextAsync(Bitmap image, string language)

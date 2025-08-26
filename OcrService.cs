@@ -41,11 +41,11 @@ namespace P5S_ceviri
             if (File.Exists(EastModelPath))
             {
                 _eastNet = CvDnn.ReadNet(EastModelPath);
-                _logger.LogInformation("EAST text detection model loaded successfully.");
+                _logger.LogInformation("EAST DOÐU metin algýlama modeli baþarýyla yüklendi.");
             }
             else
             {
-                _logger.LogError($"EAST model not found: {Path.GetFullPath(EastModelPath)}. Text detection will not work.");
+                _logger.LogError($"EAST model bulunamadi: {Path.GetFullPath(EastModelPath)}. Metin algýlýyamýyor.");
                 _eastNet = null;
             }
         }
@@ -64,7 +64,7 @@ namespace P5S_ceviri
                 return await engine.RecognizeTextAsync(image, language);
             }
 
-            _logger.LogError($"Selected OCR engine '{_appSettings.OcrEngine}' not found.");
+            _logger.LogError($"seçilen OCR engine '{_appSettings.OcrEngine}' bulunamdý.");
             return string.Empty;
         }
 
@@ -75,7 +75,7 @@ namespace P5S_ceviri
             var regions = FindTextRegions(image);
             if (!regions.Any())
             {
-                _logger.LogWarning("No text regions detected in image. Scanning full image.");
+                _logger.LogWarning("Görüntüde metin bölgesi algýlanmadý. Tam görüntü taranýyor.");
                 return await GetTextAdaptiveAsync(image, language, psm);
             }
 
@@ -99,7 +99,7 @@ namespace P5S_ceviri
         {
             if (_eastNet == null || sourceImage == null)
             {
-                if (_eastNet == null) _logger.LogWarning("EAST model not loaded, text detection skipped.");
+                if (_eastNet == null) _logger.LogWarning("EAST Model yüklenmedi, metin algýlama atlandý.");
                 return new List<Rectangle>();
             }
 
@@ -110,7 +110,7 @@ namespace P5S_ceviri
 
                 if (newW <= 0 || newH <= 0)
                 {
-                    _logger.LogWarning($"Image size ({src.Width}x{src.Height}) is too small for EAST model.");
+                    _logger.LogWarning($"resim boyutu ({src.Width}x{src.Height}) east modeli için çok küçük.");
                     return new List<Rectangle>();
                 }
 

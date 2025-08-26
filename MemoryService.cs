@@ -89,9 +89,7 @@ namespace P5S_ceviri
                     }
                     catch
                     {
-                        // This is intentional. If the buffer is not a valid pointer,
-                        // BitConverter will throw an exception. We catch it and
-                        // simply continue the loop to the next item in the queue.
+                       
                     }
                 }
             }

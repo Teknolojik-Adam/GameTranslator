@@ -8,7 +8,7 @@ namespace P5S_ceviri
     public class SettingsManager
     {
         private readonly ILogger _logger;
-        // Ayarlar dosyasının tam yolu
+     
         private readonly string _settingsFilePath;
 
         public SettingsManager(ILogger logger)
@@ -33,9 +33,9 @@ namespace P5S_ceviri
                     // JSON'u AppSettings nesnesine deserialize et
                     var options = new JsonSerializerOptions
                     {
-                        PropertyNameCaseInsensitive = true, // JSON'daki büyük/küçük harf farklılığını görmezden gel
+                        PropertyNameCaseInsensitive = true, 
                         Converters = { new JsonStringEnumConverter() } 
-                        // WriteIndented = true // Okunabilirlik için
+                        
                     };
 
                     var settings = JsonSerializer.Deserialize<AppSettings>(json, options);
@@ -61,7 +61,7 @@ namespace P5S_ceviri
                 _logger.LogError($"Ayarlar yüklenirken hata oluştu: '{_settingsFilePath}'. Hata: {ex.Message}", ex);
             }
 
-            // Varsayılan ayarlar nesnesi döndürülür
+           
             return new AppSettings();
         }
 
@@ -80,7 +80,7 @@ namespace P5S_ceviri
                 var options = new JsonSerializerOptions
                 {
                     WriteIndented = true,
-                    Converters = { new JsonStringEnumConverter() } // Enum desteği (gerekirse)
+                    Converters = { new JsonStringEnumConverter() } 
                 };
 
                 // Ayarları JSON string'ine serialize et

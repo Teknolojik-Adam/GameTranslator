@@ -72,7 +72,7 @@ namespace P5S_ceviri
                         var buffer = new byte[chunk.size + patternBytes.Length];
                         if (!ReadProcessMemory(process.Handle, (IntPtr)chunk.address, buffer, buffer.Length, out _))
                         {
-                            // Bu bölge okunamadı, atla.
+                           
                             return;
                         }
 

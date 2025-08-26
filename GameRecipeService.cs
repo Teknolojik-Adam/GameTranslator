@@ -33,7 +33,7 @@ namespace P5S_ceviri
             {
                 if (!File.Exists(RecipesFileName))
                 {
-                    _logger.LogInformation($"Recipe file '{RecipesFileName}' not found. Cache will be empty.");
+                    _logger.LogInformation($" '{RecipesFileName}' dosya bulunamadı. Önbellek boş olacak..");
                     return;
                 }
 
@@ -56,11 +56,11 @@ namespace P5S_ceviri
                         _recipeCache.Add(processKey, recipe.PathInfo);
                     }
                 }
-                _logger.LogInformation($"{_recipeCache.Count} game recipes loaded into cache.");
+                _logger.LogInformation($"{_recipeCache.Count} oyun önbelleğe yüklendi.");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error loading recipe file: {RecipesFileName}", ex);
+                _logger.LogError($" dosyası yüklenemiyor: {RecipesFileName}", ex);
             }
         }
 
@@ -68,7 +68,7 @@ namespace P5S_ceviri
         {
             if (newRecipe == null || string.IsNullOrWhiteSpace(newRecipe.ProcessName))
             {
-                _logger.LogWarning("Attempted to save an invalid recipe.");
+                _logger.LogWarning("Geçersiz bir dosya kaydetmeye çalıştın.");
                 return;
             }
 
@@ -79,12 +79,12 @@ namespace P5S_ceviri
             if (existingRecipe != null)
             {
                 existingRecipe.PathInfo = newRecipe.PathInfo;
-                _logger.LogInformation($"Updated recipe for '{newRecipe.ProcessName}'.");
+                _logger.LogInformation($"Güncellenmiş  '{newRecipe.ProcessName}'.");
             }
             else
             {
                 recipes.Add(newRecipe);
-                _logger.LogInformation($"Added new recipe for '{newRecipe.ProcessName}'.");
+                _logger.LogInformation($"eklendi '{newRecipe.ProcessName}'.");
             }
 
             var processKey = newRecipe.ProcessName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
@@ -102,11 +102,11 @@ namespace P5S_ceviri
                 var options = new JsonSerializerOptions { WriteIndented = true };
                 string jsonString = JsonSerializer.Serialize(recipes, options);
                 File.WriteAllText(RecipesFileName, jsonString);
-                _logger.LogInformation($"Recipes saved to '{RecipesFileName}' successfully.");
+                _logger.LogInformation($"Recipes saved to '{RecipesFileName}' Başarili.");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to save recipes file.", ex);
+                _logger.LogError($"dosya kaydedilemedi", ex);
             }
         }
 
@@ -116,11 +116,11 @@ namespace P5S_ceviri
 
             if (_recipeCache.TryGetValue(process.ProcessName, out var pathInfo))
             {
-                _logger.LogInformation($"Recipe found in cache for '{process.ProcessName}'.");
+                _logger.LogInformation($"Önbellekte bulundu '{process.ProcessName}'.");
                 return Task.FromResult(pathInfo);
             }
 
-            _logger.LogWarning($"Recipe not found for '{process.ProcessName}'. Please check '{RecipesFileName}'.");
+            _logger.LogWarning($"bulunamadı '{process.ProcessName}'. Lütfen kontrol edin'{RecipesFileName}'.");
             return Task.FromResult<PathInfo>(null);
         }
     }
