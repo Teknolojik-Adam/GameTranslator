@@ -6,8 +6,8 @@
         xmlns:local="clr-namespace:P5S_ceviri"
         mc:Ignorable="d"
         Title="Anlık Oyun Çeviri Aracı" 
-        Height="725" 
-        Width="804"
+        Height="1036" 
+        Width="847"
         FontFamily="Segoe UI">
     <Window.Resources>
 

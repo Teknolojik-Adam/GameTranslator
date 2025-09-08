@@ -103,5 +103,51 @@ namespace P5S_ceviri
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
+
+        // UI: Show label for previous translations
+        private bool _showPreviousTranslationsLabel = true;
+        public bool ShowPreviousTranslationsLabel
+        {
+            get => _showPreviousTranslationsLabel;
+            set { if (_showPreviousTranslationsLabel != value) { _showPreviousTranslationsLabel = value; OnPropertyChanged(); } }
+        }
+
+        // UI: Show previous translations list or only the latest one
+        private bool _showPreviousTranslations = false;
+        public bool ShowPreviousTranslations
+        {
+            get => _showPreviousTranslations;
+            set { if (_showPreviousTranslations != value) { _showPreviousTranslations = value; OnPropertyChanged(); } }
+        }
+
+        // Performance: Tick intervals (ms)
+        private int _ocrTickIntervalMs = 500; // was 1500
+        public int OcrTickIntervalMs
+        {
+            get => _ocrTickIntervalMs;
+            set { if (_ocrTickIntervalMs != value) { _ocrTickIntervalMs = value; OnPropertyChanged(); } }
+        }
+
+        private int _ramTickIntervalMs = 300; // was 500
+        public int RamTickIntervalMs
+        {
+            get => _ramTickIntervalMs;
+            set { if (_ramTickIntervalMs != value) { _ramTickIntervalMs = value; OnPropertyChanged(); } }
+        }
+
+        // Performance: Stability requirement toggles
+        private bool _requireStableOcr = false; // translate on first read
+        public bool RequireStableOcr
+        {
+            get => _requireStableOcr;
+            set { if (_requireStableOcr != value) { _requireStableOcr = value; OnPropertyChanged(); } }
+        }
+
+        private bool _requireStableRam = false; // translate on first read
+        public bool RequireStableRam
+        {
+            get => _requireStableRam;
+            set { if (_requireStableRam != value) { _requireStableRam = value; OnPropertyChanged(); } }
+        }
     }
 }

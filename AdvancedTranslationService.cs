@@ -22,7 +22,7 @@ namespace P5S_ceviri
     public class TranslationContextManager
     {
         private readonly Queue<string> _translationHistory = new Queue<string>();
-        private const int MaxHistorySize = 10;
+        private const int MaxHistorySize = 3;
 
         public void AddToHistory(string text)
         {
@@ -40,15 +40,15 @@ namespace P5S_ceviri
             if (_translationHistory.Count == 0) return currentText;
 
             var contextBuilder = new StringBuilder();
-            contextBuilder.AppendLine("Önceki çeviriler:");
+            //contextBuilder.AppendLine("Önceki çeviriler:");
 
             foreach (var historicalText in _translationHistory)
             {
-                contextBuilder.AppendLine($"- {historicalText}");
+               // contextBuilder.AppendLine($"- {historicalText}");
             }
 
             contextBuilder.AppendLine();
-            contextBuilder.AppendLine("Şimdi çevrilecek metin:");
+            //contextBuilder.AppendLine("Şimdi çevrilecek metin:");
             contextBuilder.AppendLine(currentText);
             contextBuilder.AppendLine();
 
