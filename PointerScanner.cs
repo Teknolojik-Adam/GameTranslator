@@ -52,7 +52,7 @@ namespace P5S_ceviri
 
                 _logger?.LogInformation($"Pointer taraması başlatıldı. Hedef: 0x{targetAddress.ToInt64():X}, Derinlik: {maxDepth}");
 
-                // 1. Doğrudan offset (Pointer olmayan)
+                //  Doğrudan offset (Pointer olmayan)
                 long relativeTargetAddress = targetAddress.ToInt64() - _mainModule.BaseAddress.ToInt64();
                 if (relativeTargetAddress >= 0 && relativeTargetAddress < regionSize)
                 {
@@ -66,7 +66,7 @@ namespace P5S_ceviri
                     _logger?.LogInformation($"Doğrudan adres yolu bulundu: {directPath}");
                 }
 
-                // 2. Pointer araması
+                // Pointer araması
                 SearchPointersRecursive(targetAddress, new List<int>(), maxDepth, memoryDump, regionStart, visitedAddresses, paths);
 
 

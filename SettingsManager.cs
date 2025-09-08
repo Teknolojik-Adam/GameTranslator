@@ -14,7 +14,7 @@ namespace P5S_ceviri
         public SettingsManager(ILogger logger)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            // Uygulama dizininde "appsettings.json" dosyası oluşturulur
+            // Uygulama dizininde "appsettings.json" dosyası oluşturmak için
             _settingsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
         }
         public AppSettings LoadSettings()

@@ -86,7 +86,7 @@ namespace P5S_ceviri
 
             try
             {
-                // Window'un temalı stilini uygula
+                
                 if (Application.Current.Resources["ThemedWindow"] is Style windowStyle)
                 {
                     window.Style = windowStyle;
@@ -97,7 +97,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                // Hata durumunda sessizce devam et
+                // Hata durumunda devam et
                 System.Diagnostics.Debug.WriteLine($"Pencereye tema uygulama hatası: {ex.Message}");
             }
         }

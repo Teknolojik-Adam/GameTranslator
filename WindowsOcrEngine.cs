@@ -21,7 +21,7 @@ namespace P5S_ceviri
             _logger = logger;
             try
             {
-                // Kullanıcının Windows dil ayarlarına göre OCR motorunu başlatmayı dene
+               
                 _ocrEngine = OcrEngine.TryCreateFromUserProfileLanguages();
                 if (_ocrEngine == null)
                 {
@@ -39,7 +39,7 @@ namespace P5S_ceviri
                 }
                 else
                 {
-                    // Bu durum genellikle Windows'un N veya KN sürümlerinde medya özellik paketi yüklü olmadığında yaşanır.
+                    
                     _logger.LogError("Windows OCR motoru başlatılamadı. Lütfen Windows'ta desteklenen bir dil paketinin yüklü olduğundan emin olun.");
                 }
             }
@@ -52,7 +52,7 @@ namespace P5S_ceviri
 
         public async Task<string> RecognizeTextAsync(Bitmap image, string language)
         {
-            // Motor başlatılamadıysa veya geçerli bir resim yoksa, boş string döndür.
+            
             if (_ocrEngine == null)
             {
                 _logger.LogWarning("Windows OCR motoru kullanılamıyor, tanıma işlemi atlandı.");
@@ -85,11 +85,7 @@ namespace P5S_ceviri
             }
         }
 
-        /// <summary>
-        /// System.Drawing.Bitmap'i Windows OCR API'sinin gerektirdiği SoftwareBitmap formatına dönüştürür.
-        /// </summary>
-        /// <param name="bitmap">Dönüştürülecek kaynak resim.</param>
-        /// <returns>Dönüştürülmüş SoftwareBitmap nesnesi.</returns>
+      
         private async Task<SoftwareBitmap> CreateSoftwareBitmapFromBitmap(Bitmap bitmap)
         {
             if (bitmap == null) return null;

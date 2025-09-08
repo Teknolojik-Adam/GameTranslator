@@ -44,7 +44,7 @@ namespace P5S_ceviri
             set { if (_targetLanguage != value) { _targetLanguage = value; OnPropertyChanged(); } }
         }
 
-        // OCR Language
+       
         private string _ocrLanguage = "eng";
         public string OcrLanguage
         {
@@ -52,7 +52,7 @@ namespace P5S_ceviri
             set { if (_ocrLanguage != value) { _ocrLanguage = value; OnPropertyChanged(); } }
         }
 
-        // OCR Color Filter
+        
         private bool _enableOcrColorFilter = true;
         public bool EnableOcrColorFilter
         {
@@ -60,7 +60,7 @@ namespace P5S_ceviri
             set { if (_enableOcrColorFilter != value) { _enableOcrColorFilter = value; OnPropertyChanged(); } }
         }
 
-        // Hotkey Settings
+       
         private Hotkey _toggleOcrHotkey = new Hotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.O);
         public Hotkey ToggleOcrHotkey
         {
@@ -82,7 +82,6 @@ namespace P5S_ceviri
             set { if (_switchTranslationServiceHotkey != value) { _switchTranslationServiceHotkey = value; OnPropertyChanged(); } }
         }
 
-        // Memory Reading Settings
         private int _pointerSearchMaxDepth = 4;
         public int PointerSearchMaxDepth
         {
@@ -104,7 +103,6 @@ namespace P5S_ceviri
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
 
-        // UI: Show label for previous translations
         private bool _showPreviousTranslationsLabel = true;
         public bool ShowPreviousTranslationsLabel
         {
@@ -112,7 +110,6 @@ namespace P5S_ceviri
             set { if (_showPreviousTranslationsLabel != value) { _showPreviousTranslationsLabel = value; OnPropertyChanged(); } }
         }
 
-        // UI: Show previous translations list or only the latest one
         private bool _showPreviousTranslations = false;
         public bool ShowPreviousTranslations
         {
@@ -120,30 +117,28 @@ namespace P5S_ceviri
             set { if (_showPreviousTranslations != value) { _showPreviousTranslations = value; OnPropertyChanged(); } }
         }
 
-        // Performance: Tick intervals (ms)
-        private int _ocrTickIntervalMs = 500; // was 1500
+        private int _ocrTickIntervalMs = 500;
         public int OcrTickIntervalMs
         {
             get => _ocrTickIntervalMs;
             set { if (_ocrTickIntervalMs != value) { _ocrTickIntervalMs = value; OnPropertyChanged(); } }
         }
 
-        private int _ramTickIntervalMs = 300; // was 500
+        private int _ramTickIntervalMs = 300; 
         public int RamTickIntervalMs
         {
             get => _ramTickIntervalMs;
             set { if (_ramTickIntervalMs != value) { _ramTickIntervalMs = value; OnPropertyChanged(); } }
         }
 
-        // Performance: Stability requirement toggles
-        private bool _requireStableOcr = false; // translate on first read
+        private bool _requireStableOcr = false; 
         public bool RequireStableOcr
         {
             get => _requireStableOcr;
             set { if (_requireStableOcr != value) { _requireStableOcr = value; OnPropertyChanged(); } }
         }
 
-        private bool _requireStableRam = false; // translate on first read
+        private bool _requireStableRam = false;
         public bool RequireStableRam
         {
             get => _requireStableRam;

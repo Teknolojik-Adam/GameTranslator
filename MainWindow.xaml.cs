@@ -537,7 +537,7 @@ namespace P5S_ceviri
             {
                 string currentText = await Task.Run(() => _memoryService.TryReadStringDeep(_dynamicTextAddress));
 
-                // Stabilite gereksinimine göre çevir
+                
                 bool shouldTranslate = false;
                 if (string.IsNullOrEmpty(currentText)) { shouldTranslate = false; }
                 else if (_appSettings.RequireStableRam)
@@ -551,7 +551,7 @@ namespace P5S_ceviri
 
                 if (shouldTranslate)
                 {
-                    _lastReadText = currentText; // Çevrildi olarak işaretle
+                    _lastReadText = currentText; // Çevrildi olarak işaretlemek için
                     string translated = await _translationService.TranslateAsync(currentText, _appSettings.TargetLanguage, GetSelectedTranslationStrategy());
                     Dispatcher.Invoke(() => { txtOriginal.Text = $"[RAM] {currentText}"; UpdateTranslatedText(translated); });
                 }
@@ -633,14 +633,14 @@ namespace P5S_ceviri
                     if (_appSettings.EnableOcrColorFilter)
                     {
                         imageForOcr = _ocrService.IsolateTextByColor(imageToProcess);
-                        imageToProcess.Dispose(); // Dispose original if we created a new filtered one
+                        imageToProcess.Dispose(); 
                     }
 
                     using (imageForOcr)
                     {
                         string currentText = await _ocrService.GetTextAdaptiveAsync(imageForOcr, _appSettings.OcrLanguage);
 
-                        // Stabilite gereksinimine göre çevir
+                        
                         bool shouldTranslate;
                         if (string.IsNullOrWhiteSpace(currentText)) shouldTranslate = false;
                         else if (_appSettings.RequireStableOcr)
@@ -665,7 +665,7 @@ namespace P5S_ceviri
                                 UpdateTranslatedText(translated);
                             });
                         }
-                        _potentiallyStableOcrText = currentText; // Bir sonraki kontrol için adayı güncelle
+                        _potentiallyStableOcrText = currentText;
                     }
                 }
             }
@@ -690,7 +690,7 @@ namespace P5S_ceviri
             // Yeni çeviriyi listenin başına ekle
             _translationHistory.AddFirst(newTranslatedText);
 
-            // Geçmişi belirtilen sayıyla sınırla (mevcut + MaxTranslationHistory kadar eski)
+            
             while (_translationHistory.Count > MaxTranslationHistory + 1)
             {
                 _translationHistory.RemoveLast();
@@ -717,7 +717,7 @@ namespace P5S_ceviri
 
             // Arayüzü güncelle
             txtTranslated.Text = displayText;
-            OnTranslatedTextChanged(displayText); // Overlay penceresini de günceller
+            OnTranslatedTextChanged(displayText);
         }
 
         private void btnRefresh_Click(object sender, RoutedEventArgs e) => LoadProcesses();
@@ -733,7 +733,7 @@ namespace P5S_ceviri
                 }
                 _appSettings.LastProcessName = pi.ProcessName;
                 _settingsManager.SaveSettings(_appSettings);
-                _translationHistory.Clear(); // Geçmiş çevirileri temizle
+                _translationHistory.Clear(); // Geçmiş çevirileri temizlemmek için
                 _lastReadText = "";
                 _potentiallyStableRamText = "";
                 _potentiallyStableOcrText = "";
