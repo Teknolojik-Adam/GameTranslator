@@ -26,7 +26,7 @@ namespace P5S_ceviri
                 _ocrEngine = OcrEngine.TryCreateFromUserProfileLanguages();
                 if (_ocrEngine == null)
                 {
-                    _logger.LogWarning("Windows OCR Altyapısı kullanıcı profili dilleriyle başlatılamadı. İngilizceye geri dönmek.");
+                    _logger.LogWarning("Windows OCR Altyapısı kullanıcı profili dilleriyle başlatılamadı. İngilizceye geriye...");
                     var lang = new Language("en-US");
                     if (OcrEngine.IsLanguageSupported(lang))
                     {
@@ -45,7 +45,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError("Windows OCR Altyapısı başlatılamadı. Bu, gerekli bileşenler olmadan Windows sürümlerinde olabilir.", ex);
+                _logger.LogError("Windows OCR Altyapısı başlatılamadı. Bu, gerekli bileşenler olmadan Windows güncell sürümlerinde olabilir.", ex);
                 _ocrEngine = null;
             }
         }

@@ -97,7 +97,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                // Hata durumunda devam et
+                // Hata durumu
                 System.Diagnostics.Debug.WriteLine($"Pencereye tema uygulama hatası: {ex.Message}");
             }
         }

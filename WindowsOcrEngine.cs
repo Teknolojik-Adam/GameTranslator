@@ -62,7 +62,7 @@ namespace P5S_ceviri
 
             try
             {
-                // Windows OCR API'sinin anlayacağı formata resmi dönüştür.
+                // Windows OCR API'si resmi dönüştürmek için
                 using (SoftwareBitmap softwareBitmap = await CreateSoftwareBitmapFromBitmap(image))
                 {
                     if (softwareBitmap == null)

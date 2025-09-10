@@ -102,7 +102,16 @@ namespace P5S_ceviri
 
                 this.Closing += (s, e) =>
                 {
-                    if (_translationService is AdvancedTranslationService advancedService)
+                    if (_translationService is PerformanceOptimizedTranslationService performanceService)
+                    {
+                        // Önbellek istatistiklerini logla
+                        var cacheInfo = performanceService.GetCacheInfo();
+                        _logger.LogInformation($"Uygulama kapatılırken önbellek durumu: {cacheInfo.TotalItems} öğe, " +
+                            $"{cacheInfo.TotalSizeBytes} bytes, Hit Rate: {cacheInfo.HitRate:F2}%");
+                        
+                        performanceService.Dispose();
+                    }
+                    else if (_translationService is AdvancedTranslationService advancedService)
                     {
                         advancedService.SaveCacheToDisk();
                     }
@@ -510,7 +519,21 @@ namespace P5S_ceviri
         {
             try
             {
-                if (_translationService is AdvancedTranslationService advancedService)
+               
+                AdvancedTranslationService advancedService = null;
+                if (_translationService is PerformanceOptimizedTranslationService performanceService)
+                {
+                    if (performanceService.BaseService is AdvancedTranslationService baseService)
+                    {
+                        advancedService = baseService;
+                    }
+                }
+                else if (_translationService is AdvancedTranslationService directService)
+                {
+                    advancedService = directService;
+                }
+
+                if (advancedService != null)
                 {
                     cmbTranslationService.ItemsSource = advancedService.AvailableStrategies;
                     cmbTranslationService.SelectedIndex = 0;
@@ -526,6 +549,70 @@ namespace P5S_ceviri
         {
             return (cmbTranslationService.SelectedItem as StrategyInfo)?.Type;
         }
+
+        // Önbellek yönetimi metodları
+        //private void ClearTranslationCache()
+        //{
+        //    try
+        //    {
+        //        if (_translationService is PerformanceOptimizedTranslationService performanceService)
+        //        {
+        //            performanceService.ClearCache();
+        //            _logger.LogInformation("Çeviri önbelleği temizlendi.");
+        //            MessageBox.Show("Çeviri önbelleği başarıyla temizlendi.", "Önbellek Temizlendi", 
+        //                MessageBoxButton.OK, MessageBoxImage.Information);
+        //        }
+        //        else
+        //        {
+        //            MessageBox.Show("Önbellek temizleme sadece performans optimize edilmiş servis ile kullanılabilir.", 
+        //                "Bilgi", MessageBoxButton.OK, MessageBoxImage.Information);
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        _logger.LogError("Önbellek temizleme hatası", ex);
+        //        MessageBox.Show($"Önbellek temizlenirken hata oluştu: {ex.Message}", "Hata", 
+        //            MessageBoxButton.OK, MessageBoxImage.Error);
+        //    }
+        //}
+
+        //private void ShowCacheStatistics()
+        //{
+        //    try
+        //    {
+        //        if (_translationService is PerformanceOptimizedTranslationService performanceService)
+        //        {
+        //            var cacheInfo = performanceService.GetCacheInfo();
+        //            var stats = performanceService.Statistics;
+                    
+        //            string message = $"Önbellek İstatistikleri:\n\n" +
+        //                $"Toplam Öğe: {cacheInfo.TotalItems}\n" +
+        //                $"Toplam Boyut: {cacheInfo.TotalSizeBytes / 1024.0:F2} KB\n" +
+        //                $"Hit Rate: {cacheInfo.HitRate:F2}%\n" +
+        //                $"En Çok Erişilen: {cacheInfo.MostAccessedItem} kez\n" +
+        //                $"En Eski Öğe: {cacheInfo.OldestItem:dd.MM.yyyy HH:mm}\n\n" +
+        //                $"Performans İstatistikleri:\n" +
+        //                $"Toplam İstek: {stats.TotalRequests}\n" +
+        //                $"Başarı Oranı: {stats.SuccessRate:F2}%\n" +
+        //                $"Ortalama Yanıt Süresi: {stats.AverageResponseTime.TotalMilliseconds:F2} ms\n" +
+        //                $"Eşzamanlı İstek: {stats.ConcurrentRequests}";
+                    
+        //            MessageBox.Show(message, "Önbellek ve Performans İstatistikleri", 
+        //                MessageBoxButton.OK, MessageBoxImage.Information);
+        //        }
+        //        else
+        //        {
+        //            MessageBox.Show("İstatistikler sadece performans optimize edilmiş servis ile kullanılabilir.", 
+        //                "Bilgi", MessageBoxButton.OK, MessageBoxImage.Information);
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        _logger.LogError("İstatistik görüntüleme hatası", ex);
+        //        MessageBox.Show($"İstatistikler görüntülenirken hata oluştu: {ex.Message}", "Hata", 
+        //            MessageBoxButton.OK, MessageBoxImage.Error);
+        //    }
+        //}
 
         private async void ContinuousTranslationTimer_Tick(object sender, EventArgs e)
         {
@@ -551,12 +638,12 @@ namespace P5S_ceviri
 
                 if (shouldTranslate)
                 {
-                    _lastReadText = currentText; // Çevrildi olarak işaretlemek için
+                    _lastReadText = currentText; // Çevrildi 
                     string translated = await _translationService.TranslateAsync(currentText, _appSettings.TargetLanguage, GetSelectedTranslationStrategy());
                     Dispatcher.Invoke(() => { txtOriginal.Text = $"[RAM] {currentText}"; UpdateTranslatedText(translated); });
                 }
 
-                _potentiallyStableRamText = currentText; // Bir sonraki kontrol için adayı güncelle
+                _potentiallyStableRamText = currentText;
             }
             catch (Exception ex)
             {

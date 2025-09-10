@@ -144,5 +144,84 @@ namespace P5S_ceviri
             get => _requireStableRam;
             set { if (_requireStableRam != value) { _requireStableRam = value; OnPropertyChanged(); } }
         }
+
+       
+        private int _maxConcurrentTranslations = 10;
+        public int MaxConcurrentTranslations
+        {
+            get => _maxConcurrentTranslations;
+            set { if (_maxConcurrentTranslations != value) { _maxConcurrentTranslations = value; OnPropertyChanged(); } }
+        }
+
+        private int _batchSize = 20;
+        public int BatchSize
+        {
+            get => _batchSize;
+            set { if (_batchSize != value) { _batchSize = value; OnPropertyChanged(); } }
+        }
+
+        private int _batchCollectionWindowMs = 100;
+        public int BatchCollectionWindowMs
+        {
+            get => _batchCollectionWindowMs;
+            set { if (_batchCollectionWindowMs != value) { _batchCollectionWindowMs = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableBatchProcessing = true;
+        public bool EnableBatchProcessing
+        {
+            get => _enableBatchProcessing;
+            set { if (_enableBatchProcessing != value) { _enableBatchProcessing = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableRealtimeBatchProcessing = true;
+        public bool EnableRealtimeBatchProcessing
+        {
+            get => _enableRealtimeBatchProcessing;
+            set { if (_enableRealtimeBatchProcessing != value) { _enableRealtimeBatchProcessing = value; OnPropertyChanged(); } }
+        }
+
+        private int _realtimeBatchThresholdMs = 200;
+        public int RealtimeBatchThresholdMs
+        {
+            get => _realtimeBatchThresholdMs;
+            set { if (_realtimeBatchThresholdMs != value) { _realtimeBatchThresholdMs = value; OnPropertyChanged(); } }
+        }
+
+        // Önbellek ayarları
+        private int _cacheSizeLimit = 10000;
+        public int CacheSizeLimit
+        {
+            get => _cacheSizeLimit;
+            set { if (_cacheSizeLimit != value) { _cacheSizeLimit = value; OnPropertyChanged(); } }
+        }
+
+        private int _cacheCleanupIntervalMinutes = 30;
+        public int CacheCleanupIntervalMinutes
+        {
+            get => _cacheCleanupIntervalMinutes;
+            set { if (_cacheCleanupIntervalMinutes != value) { _cacheCleanupIntervalMinutes = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableSmartCache = true;
+        public bool EnableSmartCache
+        {
+            get => _enableSmartCache;
+            set { if (_enableSmartCache != value) { _enableSmartCache = value; OnPropertyChanged(); } }
+        }
+
+        private double _cacheCleanupThreshold = 0.8;
+        public double CacheCleanupThreshold
+        {
+            get => _cacheCleanupThreshold;
+            set { if (_cacheCleanupThreshold != value) { _cacheCleanupThreshold = value; OnPropertyChanged(); } }
+        }
+
+        private int _translationBatchSize = 20;
+        public int TranslationBatchSize
+        {
+            get => _translationBatchSize;
+            set { if (_translationBatchSize != value) { _translationBatchSize = value; OnPropertyChanged(); } }
+        }
     }
 }

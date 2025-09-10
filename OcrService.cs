@@ -41,7 +41,7 @@ namespace P5S_ceviri
             if (File.Exists(EastModelPath))
             {
                 _eastNet = CvDnn.ReadNet(EastModelPath);
-                _logger.LogInformation("EAST DOÐU metin algýlama modeli baþarýyla yüklendi.");
+                _logger.LogInformation("EAST metin algýlama modeli baþarýyla yüklendi.");
             }
             else
             {

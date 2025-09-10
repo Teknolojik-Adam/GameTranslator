@@ -35,9 +35,17 @@ namespace P5S_ceviri
         protected readonly ILogger _logger;
         protected readonly AppSettings _appSettings;
         private IntPtr _processHandle = IntPtr.Zero;
-        private ILogger logger;
+        private Process _attachedProcess; 
+        private bool _disposed = false;
+        private readonly object _lockObject = new object(); 
         private const uint PROCESS_VM_READ = 0x0010;
         private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+        
+       
+        private const int MAX_READ_SIZE = 1024 * 1024; // 1MB maksimum okuma boyutu
+        private const int MIN_PROCESS_ID = 4; 
+        private const long MAX_VALID_ADDRESS = 0x7FFFFFFFFFFF; 
+        private const long MIN_VALID_ADDRESS = 0x10000;
 
         public MemoryService(ILogger logger, AppSettings appSettings)
         {
@@ -47,50 +55,83 @@ namespace P5S_ceviri
 
         public MemoryService(ILogger logger)
         {
-            this.logger = logger;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _appSettings = new AppSettings(); // Varsayılan ayarlar
         }
 
         public string TryReadStringDeep(IntPtr address)
         {
-            var queue = new Queue<(IntPtr address, int depth)>();
-            queue.Enqueue((address, 0));
-            var visited = new HashSet<long>();
-
-            while (queue.Any())
+           
+            if (_disposed)
             {
-                var (currentAddress, currentDepth) = queue.Dequeue();
+                _logger?.LogWarning("MemoryService dispose edilmiş durumda. İşlem reddedildi.");
+                return null;
+            }
 
-                if (currentAddress == IntPtr.Zero || currentDepth > _appSettings.PointerSearchMaxDepth || !visited.Add(currentAddress.ToInt64()))
-                {
-                    continue;
-                }
+            
+            if (!IsValidAddress(address))
+            {
+                _logger?.LogWarning($"Geçersiz adres: 0x{address.ToInt64():X}");
+                return null;
+            }
 
-                var buffer = ReadBytes(currentAddress, _appSettings.StringReadLength);
-                if (buffer.Length == 0)
-                {
-                    continue;
-                }
+            lock (_lockObject)
+            {
+                var queue = new Queue<(IntPtr address, int depth)>();
+                queue.Enqueue((address, 0));
+                var visited = new HashSet<long>();
+                int maxIterations = 1000; // Sonsuz döngü koruması
+                int iterationCount = 0;
 
-                var (found, text) = ParseBufferAsString(buffer);
-                if (found)
+                while (queue.Any() && iterationCount < maxIterations)
                 {
-                    return text;
-                }
+                    iterationCount++;
+                    var (currentAddress, currentDepth) = queue.Dequeue();
 
-                if (buffer.Length >= IntPtr.Size)
-                {
-                    try
+                    
+                    if (currentAddress == IntPtr.Zero || 
+                        currentDepth > _appSettings.PointerSearchMaxDepth || 
+                        !visited.Add(currentAddress.ToInt64()) ||
+                        !IsValidAddress(currentAddress))
                     {
-                        long pointerValue = IntPtr.Size == 8 ? BitConverter.ToInt64(buffer, 0) : BitConverter.ToInt32(buffer, 0);
-                        if (pointerValue > 0x10000 && pointerValue < 0x7FFFFFFFFFFF)
+                        continue;
+                    }
+
+                    
+                    int readLength = Math.Min(_appSettings.StringReadLength, MAX_READ_SIZE);
+                    var buffer = ReadBytes(currentAddress, readLength);
+                    if (buffer.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    var (found, text) = ParseBufferAsString(buffer);
+                    if (found)
+                    {
+                        return text;
+                    }
+
+                    if (buffer.Length >= IntPtr.Size)
+                    {
+                        try
                         {
-                            queue.Enqueue((new IntPtr(pointerValue), currentDepth + 1));
+                            long pointerValue = IntPtr.Size == 8 ? BitConverter.ToInt64(buffer, 0) : BitConverter.ToInt32(buffer, 0);
+                            
+                            if (IsValidAddress(new IntPtr(pointerValue)))
+                            {
+                                queue.Enqueue((new IntPtr(pointerValue), currentDepth + 1));
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger?.LogWarning($"Pointer değeri okuma hatası: {ex.Message}");
                         }
                     }
-                    catch
-                    {
-                       
-                    }
+                }
+
+                if (iterationCount >= maxIterations)
+                {
+                    _logger?.LogWarning("Maksimum iterasyon sayısına ulaşıldı. Güvenlik nedeniyle işlem durduruldu.");
                 }
             }
             return null;
@@ -123,37 +164,132 @@ namespace P5S_ceviri
 
         public bool AttachToProcess(int processId)
         {
-            Dispose();
-            _processHandle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, processId);
-            if (_processHandle != IntPtr.Zero)
+           
+            if (_disposed)
             {
-                _logger?.LogInformation($"Process'e başarıyla bağlanıldı (ID: {processId}).");
-                return true;
-            }
-            else
-            {
-                int errorCode = Marshal.GetLastWin32Error();
-                _logger?.LogError($"Process'e bağlanılamadı (ID: {processId}). Hata Kodu: {errorCode}");
+                _logger?.LogWarning("MemoryService dispose edilmiş durumda. Process bağlantısı reddedildi.");
                 return false;
+            }
+
+            
+            if (!IsValidProcessId(processId))
+            {
+                _logger?.LogError($"Geçersiz Process ID: {processId}. Sistem process'lerine erişim reddedildi.");
+                return false;
+            }
+
+            lock (_lockObject)
+            {
+                Dispose(); 
+
+                try
+                {
+                   
+                    var process = Process.GetProcessById(processId);
+                    if (process == null)
+                    {
+                        _logger?.LogError($"Process bulunamadı (ID: {processId}).");
+                        return false;
+                    }
+
+                    
+                    if (process.HasExited)
+                    {
+                        _logger?.LogError($"Process zaten kapanmış (ID: {processId}).");
+                        return false;
+                    }
+
+                    _processHandle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, processId);
+                    if (_processHandle != IntPtr.Zero)
+                    {
+                        
+                        _attachedProcess = process;
+                        _logger?.LogInformation($"Process'e başarıyla bağlanıldı (ID: {processId}, Adı: {process.ProcessName}).");
+                        return true;
+                    }
+                    else
+                    {
+                        int errorCode = Marshal.GetLastWin32Error();
+                        _logger?.LogError($"Process'e bağlanılamadı (ID: {processId}). Hata Kodu: {errorCode}");
+                        return false;
+                    }
+                }
+                catch (ArgumentException)
+                {
+                    _logger?.LogError($"Process bulunamadı (ID: {processId}). Muhtemelen kapanmış.");
+                    return false;
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError($"Process bağlantısı sırasında beklenmeyen hata (ID: {processId}): {ex.Message}", ex);
+                    return false;
+                }
             }
         }
 
         public byte[] ReadBytes(IntPtr address, int length)
         {
-            if (_processHandle == IntPtr.Zero || address == IntPtr.Zero || length <= 0)
+            
+            if (_disposed)
             {
+                _logger?.LogWarning("MemoryService dispose edilmiş durumda. Bellek okuma reddedildi.");
                 return new byte[0];
             }
-            byte[] buffer = new byte[length];
-            if (ReadProcessMemory(_processHandle, address, buffer, length, out int bytesRead) && bytesRead == length)
+
+            if (_processHandle == IntPtr.Zero)
             {
-                return buffer;
-            }
-            else
-            {
-                int errorCode = Marshal.GetLastWin32Error();
-                _logger?.LogWarning($"Bellek okuma başarısız: Adres 0x{address.ToInt64():X}, Uzunluk {length}, Okunan Byte {bytesRead}, Hata Kodu: {errorCode}");
+                _logger?.LogWarning("Process handle geçersiz. Bellek okuma reddedildi.");
                 return new byte[0];
+            }
+
+            if (address == IntPtr.Zero)
+            {
+                _logger?.LogWarning("Geçersiz adres (null). Bellek okuma reddedildi.");
+                return new byte[0];
+            }
+
+            
+            if (!IsValidAddress(address))
+            {
+                _logger?.LogWarning($"Geçersiz adres: 0x{address.ToInt64():X}. Bellek okuma reddedildi.");
+                return new byte[0];
+            }
+
+            
+            if (length <= 0 || length > MAX_READ_SIZE)
+            {
+                _logger?.LogWarning($"Geçersiz okuma boyutu: {length}. Maksimum: {MAX_READ_SIZE}");
+                return new byte[0];
+            }
+
+            
+            if (_attachedProcess != null && _attachedProcess.HasExited)
+            {
+                _logger?.LogWarning("Bağlı process kapanmış. Bellek okuma reddedildi.");
+                return new byte[0];
+            }
+
+            lock (_lockObject)
+            {
+                try
+                {
+                    byte[] buffer = new byte[length];
+                    if (ReadProcessMemory(_processHandle, address, buffer, length, out int bytesRead) && bytesRead == length)
+                    {
+                        return buffer;
+                    }
+                    else
+                    {
+                        int errorCode = Marshal.GetLastWin32Error();
+                        _logger?.LogWarning($"Bellek okuma başarısız: Adres 0x{address.ToInt64():X}, Uzunluk {length}, Okunan Byte {bytesRead}, Hata Kodu: {errorCode}");
+                        return new byte[0];
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError($"Bellek okuma sırasında beklenmeyen hata: {ex.Message}", ex);
+                    return new byte[0];
+                }
             }
         }
 
@@ -166,6 +302,22 @@ namespace P5S_ceviri
             int printableOrWhitespaceCount = s.Count(c => !char.IsControl(c) || char.IsWhiteSpace(c));
             double printableRatio = (double)printableOrWhitespaceCount / s.Length;
             return printableRatio >= 0.8 && s.Any(char.IsLetterOrDigit);
+        }
+
+        
+        private bool IsValidAddress(IntPtr address)
+        {
+            if (address == IntPtr.Zero)
+                return false;
+
+            long addressValue = address.ToInt64();
+            return addressValue >= MIN_VALID_ADDRESS && addressValue <= MAX_VALID_ADDRESS;
+        }
+
+        
+        private bool IsValidProcessId(int processId)
+        {
+            return processId >= MIN_PROCESS_ID && processId <= int.MaxValue;
         }
 
         public IntPtr ResolveAddressFromPath(Process process, PathInfo path)
@@ -211,12 +363,61 @@ namespace P5S_ceviri
 
         public void Dispose()
         {
-            if (_processHandle != IntPtr.Zero)
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
             {
-                CloseHandle(_processHandle);
-                _processHandle = IntPtr.Zero;
-                _logger?.LogInformation("Process bağlantısı kapatıldı.");
+                if (disposing)
+                {
+                    lock (_lockObject)
+                    {
+                        if (_processHandle != IntPtr.Zero)
+                        {
+                            try
+                            {
+                                CloseHandle(_processHandle);
+                                _logger?.LogInformation("Process handle kapatıldı.");
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger?.LogError($"Process handle kapatılırken hata: {ex.Message}", ex);
+                            }
+                            finally
+                            {
+                                _processHandle = IntPtr.Zero;
+                            }
+                        }
+
+                        
+                        if (_attachedProcess != null)
+                        {
+                            try
+                            {
+                                _attachedProcess.Dispose();
+                                _logger?.LogInformation("Process nesnesi temizlendi.");
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger?.LogError($"Process nesnesi temizlenirken hata: {ex.Message}", ex);
+                            }
+                            finally
+                            {
+                                _attachedProcess = null;
+                            }
+                        }
+                    }
+                }
+                _disposed = true;
             }
+        }
+
+        ~MemoryService()
+        {
+            Dispose(false);
         }
     }
 }

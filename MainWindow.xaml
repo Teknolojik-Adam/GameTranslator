@@ -208,7 +208,7 @@
             <ComboBox x:Name="cmbTargetLanguage" Margin="5,0,5,5" Padding="5"
                       Style="{StaticResource ThemedComboBox}"/>
 
-            <CheckBox x:Name="chkEnableColorFilter" Content="OCR Renk Filtresi Kullan" 
+            <CheckBox x:Name="chkEnableColorFilter" Content="OCR Renk Filtresi " 
                       Margin="5,10,5,5" VerticalAlignment="Center"/>
 
         </StackPanel>

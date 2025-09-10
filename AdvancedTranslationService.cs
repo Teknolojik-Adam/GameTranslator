@@ -7,12 +7,12 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 
 namespace P5S_ceviri
 {
-
     public class StrategyInfo
     {
         public string Name { get; set; }
@@ -40,15 +40,16 @@ namespace P5S_ceviri
             if (_translationHistory.Count == 0) return currentText;
 
             var contextBuilder = new StringBuilder();
-            //contextBuilder.AppendLine("Önceki çeviriler:");
+            
+            // contextBuilder.AppendLine("Önceki çeviriler:");
 
             foreach (var historicalText in _translationHistory)
             {
-               // contextBuilder.AppendLine($"- {historicalText}");
+                // contextBuilder.AppendLine($"- {historicalText}");
             }
 
             contextBuilder.AppendLine();
-            //contextBuilder.AppendLine("Şimdi çevrilecek metin:");
+            // contextBuilder.AppendLine("Şimdi çevrilecek metin:");
             contextBuilder.AppendLine(currentText);
             contextBuilder.AppendLine();
 
@@ -61,7 +62,6 @@ namespace P5S_ceviri
         }
     }
 
-   
     public static class PlaceholderProtector
     {
         public static string Protect(string text, out Dictionary<string, string> placeholders)
@@ -75,6 +75,7 @@ namespace P5S_ceviri
 
             int placeholderCounter = 0;
 
+            // Sayıları koruma (örnek: 123, 45.67)
             string protectedText = Regex.Replace(text, @"\b\d+(?:\.\d+)?\b", match =>
             {
                 string placeholder = $"__NUMBER_{placeholderCounter}__";
@@ -83,6 +84,7 @@ namespace P5S_ceviri
                 return placeholder;
             });
 
+            // Tarihleri koruma (örnek: 2023-12-31, 31/12/2023, 31.12.2023)
             protectedText = Regex.Replace(protectedText, @"\b\d{4}-\d{2}-\d{2}\b|\b\d{2}/\d{2}/\d{4}\b|\b\d{1,2}\.\d{1,2}\.\d{4}\b", match =>
             {
                 string placeholder = $"__DATE_{placeholderCounter}__";
@@ -91,6 +93,7 @@ namespace P5S_ceviri
                 return placeholder;
             });
 
+            // Etiketleri koruma (örnek: {tag}, [tag])
             protectedText = Regex.Replace(protectedText, @"\{[^}]*\}|\[[^\]]*\]", match =>
             {
                 string placeholder = $"__TAG_{placeholderCounter}__";
@@ -99,6 +102,7 @@ namespace P5S_ceviri
                 return placeholder;
             });
 
+            // HTML etiketler
             protectedText = Regex.Replace(protectedText, @"<[^>]+>", match =>
             {
                 string placeholder = $"__HTML_{placeholderCounter}__";
@@ -119,6 +123,7 @@ namespace P5S_ceviri
             }
 
             string result = text;
+            // Yer tutucuları orijinal değerlerle değiştir (uzunluk sırasına göre)
             foreach (var placeholder in placeholders.OrderByDescending(p => p.Key.Length))
             {
                 result = result.Replace(placeholder.Key, placeholder.Value);
@@ -131,7 +136,7 @@ namespace P5S_ceviri
     public class SentenceProcessor
     {
         private static readonly string[] SentenceEndings = { ".", "!", "?", "。", "！", "？" };
-        private const int MaxSentenceLength = 500; 
+        private const int MaxSentenceLength = 500;
 
         public static List<string> SplitIntoSentences(string text)
         {
@@ -144,6 +149,7 @@ namespace P5S_ceviri
             {
                 currentSentence.Append(c);
 
+               
                 if (SentenceEndings.Contains(c.ToString()))
                 {
                     string sentence = currentSentence.ToString().Trim();
@@ -151,6 +157,7 @@ namespace P5S_ceviri
                     {
                         if (sentence.Length > MaxSentenceLength)
                         {
+                            // Uzun cümleleri daha küçük parçalara böl
                             sentences.AddRange(SplitLongSentence(sentence));
                         }
                         else
@@ -162,6 +169,7 @@ namespace P5S_ceviri
                 }
             }
 
+            // Kalan kısmı ekle
             string remaining = currentSentence.ToString().Trim();
             if (!string.IsNullOrWhiteSpace(remaining))
             {
@@ -337,43 +345,50 @@ namespace P5S_ceviri
 
     #endregion
 
-    public class AdvancedTranslationService : ITranslationService
+    public class AdvancedTranslationService : ITranslationService, IBatchTranslationService, IDisposable
     {
         private readonly HttpClient _httpClient;
         private readonly ILogger _logger;
-        private readonly ConcurrentDictionary<string, string> _translationCache;
         private readonly TranslationCacheManager _cacheManager;
-        private readonly List<ITranslationStrategy> _strategies;
-        public List<StrategyInfo> AvailableStrategies { get; }
         private readonly TranslationContextManager _contextManager;
+        private readonly ConcurrentDictionary<string, string> _translationCache;
         private readonly ConcurrentDictionary<Type, int> _strategyFailureCounts = new ConcurrentDictionary<Type, int>();
         private readonly ConcurrentDictionary<Type, DateTime> _strategyBlockedUntil = new ConcurrentDictionary<Type, DateTime>();
-        private const int CircuitBreakerFailureThreshold = 3;
-        private static readonly TimeSpan CircuitBreakerBlockDuration = TimeSpan.FromMinutes(2);
+        private readonly List<ITranslationStrategy> _strategies;
+
+        private const int CircuitBreakerFailureThreshold = 3; // Devre kesici başarısızlık eşiği
+        private static readonly TimeSpan CircuitBreakerBlockDuration = TimeSpan.FromMinutes(2); // Devre kesici blok süresi
+        private const int MaxParallelTranslations = 5; // Maksimum paralel çeviri sayısı
+        private const int CacheSizeLimit = 10000; // Önbellek boyut sınırı
+
+        private bool _disposed = false;
+
+        public List<StrategyInfo> AvailableStrategies { get; }
 
         public AdvancedTranslationService(HttpClient httpClient, ILogger logger)
         {
-            _httpClient = httpClient;
-            _logger = logger;
+            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+            
             _contextManager = new TranslationContextManager();
             _cacheManager = new TranslationCacheManager(_logger);
-            _translationCache = new ConcurrentDictionary<string, string>(_cacheManager.LoadCache(), StringComparer.OrdinalIgnoreCase);
 
-            try
-            {
-                if (_httpClient.Timeout == default) _httpClient.Timeout = TimeSpan.FromSeconds(15);
-                if (!_httpClient.DefaultRequestHeaders.UserAgent.Any()) _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
-                _httpClient.DefaultRequestHeaders.Accept.ParseAdd("*/*");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"HTTP istemci başlıkları ayarlanırken uyarı: {ex.Message}");
-            }
+            // Önbelleği boyut sınırıyla yüklemek iççin
+            var loadedCache = _cacheManager.LoadCache();
+            _translationCache = new ConcurrentDictionary<string, string>(
+                loadedCache.Take(CacheSizeLimit).ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
+                StringComparer.OrdinalIgnoreCase
+            );
 
+            // HTTP istemcisi
+            ConfigureHttpClient();
+
+            // Çeviri stratejileri
             _strategies = new List<ITranslationStrategy>
             {
-            new GoogleTranslationStrategy(isContextual: true),
-            new GoogleTranslationStrategy(isContextual: false),
+                new GoogleTranslationStrategy(isContextual: true),
+                new GoogleTranslationStrategy(isContextual: false),
                 new DeepLWebScrapingStrategy(),
                 new BingWebTranslationStrategy(),
                 new YandexWebScrapingStrategy()
@@ -386,67 +401,120 @@ namespace P5S_ceviri
             }).ToList();
         }
 
+        private void ConfigureHttpClient()
+        {
+            try
+            {
+                if (_httpClient.Timeout == default)
+                    _httpClient.Timeout = TimeSpan.FromSeconds(15);
+
+                if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
+                    _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+
+                _httpClient.DefaultRequestHeaders.Accept.ParseAdd("*/*");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"HTTP istemci yapılandırma uyarısı: {ex.Message}");
+            }
+        }
+
         public async Task<string> TranslateAsync(string text, string targetLanguage, Type strategyType = null)
         {
-            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-            if (string.IsNullOrWhiteSpace(targetLanguage)) targetLanguage = "tr"; // Fallback
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
 
+            if (string.IsNullOrWhiteSpace(targetLanguage))
+                targetLanguage = "tr";
+
+            // metni cümlelere ayır
             string protectedText = PlaceholderProtector.Protect(text, out Dictionary<string, string> placeholders);
-            string textToProcess = protectedText;
+            var sentences = SentenceProcessor.SplitIntoSentences(protectedText);
 
-            var sentences = SentenceProcessor.SplitIntoSentences(textToProcess);
-            var translatedSentences = new List<string>();
+            if (sentences.Count == 0)
+                return string.Empty;
+
+            // Cümleleri paralel olarak çevir
+            var translatedSentences = new ConcurrentBag<string>();
             string normalizedTarget = targetLanguage.Trim().ToLowerInvariant();
 
-            foreach (string sentence in sentences)
+            using (var semaphore = new SemaphoreSlim(MaxParallelTranslations))
             {
-                if (string.IsNullOrWhiteSpace(sentence)) continue;
-
-                string cacheKey = GenerateCacheKey(sentence, normalizedTarget);
-                if (_translationCache.TryGetValue(cacheKey, out var cachedTranslation))
+                var tasks = sentences.Select(async sentence =>
                 {
-                    translatedSentences.Add(cachedTranslation);
-                    continue;
-                }
+                    if (string.IsNullOrWhiteSpace(sentence))
+                        return;
 
-                var selectedStrategy = _strategies.FirstOrDefault(s => s.GetType() == strategyType) ?? _strategies.First();
-                string textToSend = sentence;
-
-                if (selectedStrategy is GoogleTranslationStrategy gts && gts.IsContextual)
-                {
-                    textToSend = _contextManager.GetContextualPrompt(sentence);
-                }
-
-                string translatedSentence = await TranslateWithStrategies(textToSend, normalizedTarget, strategyType);
-
-                if (!string.IsNullOrWhiteSpace(translatedSentence))
-                {
-                    if (selectedStrategy is GoogleTranslationStrategy gts2 && gts2.IsContextual && _contextManager.GetContextualPrompt("").Length > 0)
+                    await semaphore.WaitAsync();
+                    try
                     {
-                        int lastDot = translatedSentence.LastIndexOf(". ");
-                        if (lastDot > -1 && translatedSentence.Length > lastDot + 2)
+                        string cacheKey = GenerateCacheKey(sentence, normalizedTarget);
+
+                        // Önbellekten kontrol et
+                        if (_translationCache.TryGetValue(cacheKey, out var cachedTranslation))
                         {
-                            translatedSentence = translatedSentence.Substring(lastDot + 2);
+                            translatedSentences.Add(cachedTranslation);
+                            return;
+                        }
+
+                        // Strateji seç veya varsayılanı kullan
+                        var selectedStrategy = _strategies.FirstOrDefault(s => s.GetType() == strategyType) ?? _strategies.First();
+                        string textToSend = sentence;
+
+                        // Bağlamsal çeviri için önceki çevirileri ekle
+                        if (selectedStrategy is GoogleTranslationStrategy gts && gts.IsContextual)
+                        {
+                            textToSend = _contextManager.GetContextualPrompt(sentence);
+                        }
+
+                        string translatedSentence = await TranslateWithStrategies(textToSend, normalizedTarget, strategyType);
+
+                        if (!string.IsNullOrWhiteSpace(translatedSentence))
+                        {
+                            // Bağlamsal çeviriden sadece son cümleyi al
+                            if (selectedStrategy is GoogleTranslationStrategy gts2 && gts2.IsContextual &&
+                                _contextManager.GetContextualPrompt("").Length > 0)
+                            {
+                                int lastDot = translatedSentence.LastIndexOf(". ");
+                                if (lastDot > -1 && translatedSentence.Length > lastDot + 2)
+                                {
+                                    translatedSentence = translatedSentence.Substring(lastDot + 2);
+                                }
+                            }
+
+                            // Önbelleğe ekle ve sonuca ekle
+                            _translationCache[cacheKey] = translatedSentence;
+                            translatedSentences.Add(translatedSentence);
+                        }
+                        else
+                        {
+                            // Çeviri başarısız olursa orijinal cümleyi yazdirma
+                            translatedSentences.Add(sentence);
                         }
                     }
-                    _translationCache[cacheKey] = translatedSentence;
-                    translatedSentences.Add(translatedSentence);
-                }
-                else
-                {
-                    translatedSentences.Add(sentence);
-                }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                });
+
+                await Task.WhenAll(tasks);
             }
 
-            string mergedResult = SentenceProcessor.MergeSentences(translatedSentences);
+            // Geçmişe ekle
             _contextManager.AddToHistory(text);
+
+            // Cümleleri birleştir ve  geri yükle
+            string mergedResult = SentenceProcessor.MergeSentences(translatedSentences.ToList());
             string finalResult = PlaceholderProtector.Restore(mergedResult, placeholders);
+
             return finalResult;
         }
 
         private async Task<string> TranslateWithStrategies(string text, string targetLanguage, Type strategyType)
         {
             IEnumerable<ITranslationStrategy> strategiesToUse = _strategies;
+
             if (strategyType != null)
             {
                 var selectedStrategy = _strategies.FirstOrDefault(s => s.GetType() == strategyType);
@@ -458,10 +526,13 @@ namespace P5S_ceviri
 
             foreach (var strategy in strategiesToUse)
             {
-                if (IsStrategyBlocked(strategy.GetType())) continue;
+                if (IsStrategyBlocked(strategy.GetType()))
+                    continue;
+
                 try
                 {
                     var result = await AttemptTranslateWithRetries(strategy, text, targetLanguage);
+
                     if (!string.IsNullOrWhiteSpace(result))
                     {
                         RecordStrategySuccess(strategy.GetType());
@@ -476,20 +547,20 @@ namespace P5S_ceviri
                 catch (Exception ex)
                 {
                     RecordStrategyFailure(strategy.GetType());
-                    _logger.LogWarning($"{strategy.Name} servisi hata verdi: {ex.Message}");
+                    _logger.LogWarning($"{strategy.Name} servisi başarısız oldu: {ex.Message}");
                 }
             }
 
-            _logger.LogError($"Tüm çeviri servisleri başarısız oldu: '{text}'", null);
+            _logger.LogError($"Tüm çeviri servisleri şu metin için başarısız oldu: '{text}'", null);
             return null;
         }
 
-        #region Mevcut Yardımcı Metotlar
         private async Task<string> AttemptTranslateWithRetries(ITranslationStrategy strategy, string text, string targetLanguage)
         {
             const int maxAttempts = 2;
             int attempt = 0;
             string result = null;
+
             while (attempt < maxAttempts && string.IsNullOrWhiteSpace(result))
             {
                 attempt++;
@@ -499,7 +570,7 @@ namespace P5S_ceviri
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning($"{strategy.Name} denemesi hata verdi: {ex.Message}");
+                    _logger.LogWarning($"{strategy.Name} denemesi {attempt} başarısız oldu: {ex.Message}");
                 }
 
                 if (string.IsNullOrWhiteSpace(result) && attempt < maxAttempts)
@@ -508,32 +579,17 @@ namespace P5S_ceviri
                     await Task.Delay(delayMs);
                 }
             }
+
             return result;
-        }
-
-        public void SaveCacheToDisk()
-        {
-            _cacheManager.SaveCache(new Dictionary<string, string>(_translationCache));
-        }
-        public void ClearTranslationContext()
-        {
-            _contextManager.ClearHistory();
-            _logger.LogInformation("Çeviri geçmişi temizlendi.");
-        }
-
-        private static string GenerateCacheKey(string input, string targetLanguage)
-        {
-            if (string.IsNullOrWhiteSpace(input)) return $"_{targetLanguage}";
-            var normalized = new string(input.Trim().Replace('\r', ' ').Replace('\n', ' ').Select(c => char.IsWhiteSpace(c) ? ' ' : c).ToArray());
-            normalized = string.Join(" ", normalized.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
-            return $"{normalized.ToLowerInvariant()}_{targetLanguage}";
         }
 
         private bool IsStrategyBlocked(Type strategyType)
         {
             if (_strategyBlockedUntil.TryGetValue(strategyType, out var until))
             {
-                if (DateTime.UtcNow < until) return true;
+                if (DateTime.UtcNow < until)
+                    return true;
+
                 _strategyBlockedUntil.TryRemove(strategyType, out _);
             }
             return false;
@@ -542,11 +598,12 @@ namespace P5S_ceviri
         private void RecordStrategyFailure(Type strategyType)
         {
             int failures = _strategyFailureCounts.AddOrUpdate(strategyType, 1, (_, current) => current + 1);
+
             if (failures >= CircuitBreakerFailureThreshold)
             {
                 _strategyBlockedUntil[strategyType] = DateTime.UtcNow.Add(CircuitBreakerBlockDuration);
                 _strategyFailureCounts[strategyType] = 0;
-                _logger.LogWarning($"{strategyType.Name} devre kesici: {CircuitBreakerBlockDuration.TotalMinutes} dakika bloke edildi.");
+                _logger.LogWarning($"{strategyType.Name} devre kesici: {CircuitBreakerBlockDuration.TotalMinutes} dakika boyunca bloke edildi.");
             }
         }
 
@@ -555,6 +612,91 @@ namespace P5S_ceviri
             _strategyFailureCounts.TryRemove(strategyType, out _);
             _strategyBlockedUntil.TryRemove(strategyType, out _);
         }
-        #endregion
+
+        private static string GenerateCacheKey(string input, string targetLanguage)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                return $"_{targetLanguage}";
+
+            var normalized = new string(input.Trim()
+                .Replace('\r', ' ')
+                .Replace('\n', ' ')
+                .Select(c => char.IsWhiteSpace(c) ? ' ' : c)
+                .ToArray());
+
+            normalized = string.Join(" ", normalized.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
+            return $"{normalized.ToLowerInvariant()}_{targetLanguage}";
+        }
+
+        public void SaveCacheToDisk()
+        {
+            _cacheManager.SaveCache(new Dictionary<string, string>(_translationCache));
+        }
+
+        public void ClearTranslationContext()
+        {
+            _contextManager.ClearHistory();
+            _logger.LogInformation("Çeviri geçmişi temizlendi.");
+        }
+
+        public async Task<string[]> TranslateBatchAsync(string[] texts, string targetLanguage, Type strategyType = null)
+        {
+            if (texts == null || texts.Length == 0)
+                return new string[0];
+
+            if (string.IsNullOrWhiteSpace(targetLanguage))
+                targetLanguage = "tr";
+
+            var results = new string[texts.Length];
+            var tasks = new Task<string>[texts.Length];
+
+            // Tüm metinleri paralel olarak işle
+            for (int i = 0; i < texts.Length; i++)
+            {
+                int index = i; 
+                tasks[i] = Task.Run(async () =>
+                {
+                    try
+                    {
+                        return await TranslateAsync(texts[index], targetLanguage, strategyType);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError($"Toplu çeviri {index} indeksindeki metin için başarısız oldu: {ex.Message}", ex);
+                        return texts[index]; // Başarısızlık durumunda orijinal metni döndür
+                    }
+                });
+            }
+
+            // Tüm çevirilerin tamamlanmasını bekle
+            var translatedResults = await Task.WhenAll(tasks);
+
+            // Sonuçları çıktı dizisine kopyala
+            for (int i = 0; i < texts.Length; i++)
+            {
+                results[i] = translatedResults[i] ?? texts[i];
+            }
+
+            return results;
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    SaveCacheToDisk();
+                    _httpClient?.Dispose();
+                }
+                _disposed = true;
+            }
+        }
     }
 }

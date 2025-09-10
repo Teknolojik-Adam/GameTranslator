@@ -23,7 +23,45 @@ namespace P5S_ceviri
             services.AddSingleton<IProcessService, ProcessService>();
             services.AddSingleton<IMemoryService, MemoryService>();
             services.AddSingleton<IGameRecipeService, GameRecipeService>();
-            services.AddSingleton<ITranslationService, AdvancedTranslationService>();
+            services.AddSingleton<AdvancedTranslationService>();
+            services.AddSingleton<ITranslationService>(sp =>
+            {
+                var settings = sp.GetRequiredService<AppSettings>();
+                var logger = sp.GetRequiredService<ILogger>();
+                var baseService = new AdvancedTranslationService(
+                    sp.GetRequiredService<HttpClient>(),
+                    logger);
+                
+                // Önbellek ayarlarını kullanarak performans servisini oluştur
+                var optimizedService = new PerformanceOptimizedTranslationService(
+                    baseService,
+                    logger,
+                    maxConcurrentTranslations: settings.MaxConcurrentTranslations,
+                    batchSize: settings.TranslationBatchSize,
+                    batchCollectionWindow: TimeSpan.FromMilliseconds(settings.BatchCollectionWindowMs),
+                    enableBatchProcessing: settings.EnableBatchProcessing,
+                    enableRealtimeBatchProcessing: settings.EnableRealtimeBatchProcessing,
+                    realtimeBatchThresholdMs: settings.RealtimeBatchThresholdMs,
+                    maxCacheSize: settings.CacheSizeLimit,
+                    cacheCleanupIntervalMinutes: settings.CacheCleanupIntervalMinutes,
+                    enableSmartCache: settings.EnableSmartCache,
+                    cacheCleanupThreshold: settings.CacheCleanupThreshold);
+                
+                // Önbellek ayarlarını dinamik olarak güncellemek için event
+                settings.PropertyChanged += (s, e) =>
+                {
+                    if (e.PropertyName == nameof(settings.CacheSizeLimit) ||
+                        e.PropertyName == nameof(settings.EnableSmartCache) ||
+                        e.PropertyName == nameof(settings.CacheCleanupThreshold))
+                    {
+                        // Önbellek ayarları değiştiğinde log yaz
+                        logger.LogInformation($"Önbellek ayarları güncellendi: CacheSize={settings.CacheSizeLimit}, " +
+                            $"EnableSmartCache={settings.EnableSmartCache}, Threshold={settings.CacheCleanupThreshold}");
+                    }
+                };
+                
+                return optimizedService;
+            });
 
             
             services.AddSingleton<IOcrEngine, WindowsOcrEngine>();
