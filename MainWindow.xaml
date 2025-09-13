@@ -8,114 +8,10 @@
         Title="Anlık Oyun Çeviri Aracı" 
         Height="1036" 
         Width="847"
-        FontFamily="Segoe UI">
-    <Window.Resources>
+        FontFamily="Segoe UI"
+        Style="{DynamicResource ThemedWindow}">
 
-        <ResourceDictionary>
-            <!-- Renkler -->
-            <SolidColorBrush x:Key="PrimaryBackgroundBrush" Color="#FFFFFF"/>
-            <SolidColorBrush x:Key="SecondaryBackgroundBrush" Color="#F5F5F5"/>
-            <SolidColorBrush x:Key="PrimaryTextBrush" Color="#212121"/>
-            <SolidColorBrush x:Key="SecondaryTextBrush" Color="#757575"/>
-            <SolidColorBrush x:Key="AccentBrush" Color="#2196F3"/>
-            <SolidColorBrush x:Key="AccentHoverBrush" Color="#1976D2"/>
-            <SolidColorBrush x:Key="BorderBrush" Color="#E0E0E0"/>
-            <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FFFFFF"/>
-            <SolidColorBrush x:Key="GroupBoxBackgroundBrush" Color="#FAFAFA"/>
-            <SolidColorBrush x:Key="ControlBackgroundBrush" Color="#FFFFFF"/>
-            <SolidColorBrush x:Key="DisabledBackgroundBrush" Color="#F5F5F5"/>
-            <SolidColorBrush x:Key="DisabledTextBrush" Color="#BDBDBD"/>
-
-            <Style TargetType="GridSplitter">
-                <Setter Property="Background" Value="{StaticResource BorderBrush}"/>
-            </Style>
-
-            <Style TargetType="ListBoxItem">
-                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
-                <Setter Property="Background" Value="Transparent"/>
-                <Style.Triggers>
-                    <Trigger Property="IsSelected" Value="True">
-                        <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
-                        <Setter Property="Foreground" Value="White"/>
-                    </Trigger>
-                </Style.Triggers>
-            </Style>
-
-            <Style TargetType="ProgressBar">
-                <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
-                <Setter Property="Background" Value="{StaticResource ControlBackgroundBrush}"/>
-                <Setter Property="BorderThickness" Value="0"/>
-                <Setter Property="Height" Value="10"/>
-            </Style>
-
-            <Style TargetType="Button" x:Key="ThemedButton">
-                <Setter Property="Padding" Value="10,5"/>
-                <Setter Property="Margin" Value="0,5"/>
-                <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
-                <Setter Property="Foreground" Value="White"/>
-                <Setter Property="BorderThickness" Value="0"/>
-                <Setter Property="Template">
-                    <Setter.Value>
-                        <ControlTemplate TargetType="Button">
-                            <Border Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="3">
-                                <ContentPresenter HorizontalAlignment="Center" 
-                                                VerticalAlignment="Center"/>
-                            </Border>
-                        </ControlTemplate>
-                    </Setter.Value>
-                </Setter>
-                <Style.Triggers>
-                    <Trigger Property="IsMouseOver" Value="True">
-                        <Setter Property="Background" Value="{StaticResource AccentHoverBrush}"/>
-                    </Trigger>
-                    <Trigger Property="IsEnabled" Value="False">
-                        <Setter Property="Background" Value="{StaticResource DisabledBackgroundBrush}"/>
-                        <Setter Property="Foreground" Value="{StaticResource DisabledTextBrush}"/>
-                    </Trigger>
-                </Style.Triggers>
-            </Style>
-
-            <Style TargetType="TextBox" x:Key="ThemedTextBox">
-                <Setter Property="Padding" Value="5"/>
-                <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
-                <Setter Property="Background" Value="{StaticResource InputBackgroundBrush}"/>
-                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
-            </Style>
-
-            <Style TargetType="ComboBox" x:Key="ThemedComboBox">
-                <Setter Property="Padding" Value="5"/>
-                <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
-                <Setter Property="Background" Value="{StaticResource ControlBackgroundBrush}"/>
-                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
-            </Style>
-
-            <Style TargetType="GroupBox" x:Key="ThemedGroupBox">
-                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
-                <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="Background" Value="{StaticResource GroupBoxBackgroundBrush}"/>
-                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
-                <Setter Property="Padding" Value="5"/>
-            </Style>
-
-            <Style TargetType="Label" x:Key="ThemedLabel">
-                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
-            </Style>
-
-            <Style TargetType="ListBox" x:Key="ThemedListBox">
-                <Setter Property="Background" Value="{StaticResource ControlBackgroundBrush}"/>
-                <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
-                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
-                <Setter Property="BorderThickness" Value="1"/>
-            </Style>
-        </ResourceDictionary>
-    </Window.Resources>
-
-    <Grid Background="{StaticResource PrimaryBackgroundBrush}">
+    <Grid Background="{DynamicResource PrimaryBackgroundBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -128,13 +24,14 @@
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
+        <!-- Üst Panel -->
         <Border Grid.Row="0" Grid.ColumnSpan="2" 
-                Background="{StaticResource SecondaryBackgroundBrush}"
+                Background="{DynamicResource SecondaryBackgroundBrush}"
                 Padding="5">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <Label Content="Uygulama:" Style="{StaticResource ThemedLabel}"/>
+                <Label Content="Uygulama:" Style="{DynamicResource ThemedLabel}"/>
                 <ComboBox Name="cmbProcesses" Width="480" 
-                          Style="{StaticResource ThemedComboBox}"
+                          Style="{DynamicResource ThemedComboBox}"
                           SelectionChanged="CmbProcesses_SelectionChanged">
                     <ComboBox.ItemTemplate>
                         <DataTemplate>
@@ -143,142 +40,136 @@
                                        Margin="0,0,5,0" VerticalAlignment="Center"/>
                                 <TextBlock Text="{Binding ProcessName}" 
                                            VerticalAlignment="Center"
-                                           Foreground="{StaticResource PrimaryTextBrush}"/>
+                                           Foreground="{DynamicResource PrimaryTextBrush}"/>
                             </StackPanel>
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
                 </ComboBox>
-
                 <Button Name="btnRefresh" Content="Yenile" Margin="10,0"
-                        Style="{StaticResource ThemedButton}"
+                        Style="{DynamicResource ThemedButton}"
                         Click="btnRefresh_Click"/>
-
-                <Label Content="Tema:" Style="{StaticResource ThemedLabel}" Margin="10,0,0,0"/>
+                <Label Content="Tema:" Style="{DynamicResource ThemedLabel}" Margin="10,0,0,0"/>
                 <ComboBox Name="cmbTheme" Width="100" Margin="5,0"
-                          Style="{StaticResource ThemedComboBox}"
+                          Style="{DynamicResource ThemedComboBox}"
                           SelectionChanged="CmbTheme_SelectionChanged">
                     <ComboBoxItem Content="Aydınlık" Tag="Light"/>
                     <ComboBoxItem Content="Karanlık" Tag="Dark"/>
                 </ComboBox>
-
                 <Label Name="lblStatus" Content="Hazır." 
-                       Style="{StaticResource ThemedLabel}" 
+                       Style="{DynamicResource ThemedLabel}" 
                        VerticalAlignment="Center" Margin="10,0,0,0"/>
             </StackPanel>
         </Border>
 
+        <!-- Metin Alanları -->
         <GroupBox Header="Orijinal Metin" Grid.Row="1" Grid.Column="0" 
-                  Style="{StaticResource ThemedGroupBox}" Margin="5">
-            <TextBox Name="txtOriginal" Style="{StaticResource ThemedTextBox}" 
+                  Style="{DynamicResource ThemedGroupBox}" Margin="5">
+            <TextBox Name="txtOriginal" Style="{DynamicResource ThemedTextBox}" 
                      TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
         </GroupBox>
 
         <GroupBox Header="Çevrilmiş Metin" Grid.Row="1" Grid.Column="1" 
-                  Style="{StaticResource ThemedGroupBox}" Margin="5">
-            <TextBox Name="txtTranslated" Style="{StaticResource ThemedTextBox}" 
+                  Style="{DynamicResource ThemedGroupBox}" Margin="5">
+            <TextBox Name="txtTranslated" Style="{DynamicResource ThemedTextBox}" 
                      TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
         </GroupBox>
 
-        <GridSplitter Grid.Row="2" Grid.ColumnSpan="2" Height="3" HorizontalAlignment="Stretch" Background="{StaticResource BorderBrush}"/>
+        <GridSplitter Grid.Row="2" Grid.ColumnSpan="2" Height="3" HorizontalAlignment="Stretch" 
+                       Background="{DynamicResource BorderBrush}"/>
 
+        <!-- Sol Panel Kontrolleri -->
         <StackPanel Grid.Row="3" Grid.Column="0" Margin="5">
-            <GroupBox Header="RAM'den Çeviri" Style="{StaticResource ThemedGroupBox}">
+            <GroupBox Header="RAM'den Çeviri" Style="{DynamicResource ThemedGroupBox}">
                 <StackPanel Margin="5">
                     <Button Name="btnTranslate" Content="RAM Çevirisini Başlat" 
-                            Style="{StaticResource ThemedButton}"
+                            Style="{DynamicResource ThemedButton}"
                             Click="btnTranslate_Click"/>
-
                     <TextBlock Text="Bellek Adresi (Hex):" Margin="0,10,0,5"
-                               Foreground="{StaticResource PrimaryTextBrush}"/>
-                    <TextBox Name="txtAddress" Style="{StaticResource ThemedTextBox}"/>
-
+                               Foreground="{DynamicResource PrimaryTextBrush}"/>
+                    <TextBox Name="txtAddress" Style="{DynamicResource ThemedTextBox}"/>
                 </StackPanel>
             </GroupBox>
 
-            <Label Content="Çeviri Servisi:" Style="{StaticResource ThemedLabel}" Margin="5,10,5,0"/>
+            <Label Content="Çeviri Servisi:" Style="{DynamicResource ThemedLabel}" Margin="5,10,5,0"/>
             <ComboBox x:Name="cmbTranslationService" Margin="5,0,5,5" Padding="5"
-                      Style="{StaticResource ThemedComboBox}"
+                      Style="{DynamicResource ThemedComboBox}"
                       DisplayMemberPath="Name" SelectedValuePath="Type"/>
 
-            <Label Content="OCR Dili:" Style="{StaticResource ThemedLabel}" Margin="5,10,5,0"/>
+            <Label Content="OCR Dili:" Style="{DynamicResource ThemedLabel}" Margin="5,10,5,0"/>
             <ComboBox x:Name="cmbOcrLanguage" Margin="5,0,5,5" Padding="5"
-                      Style="{StaticResource ThemedComboBox}"/>
+                      Style="{DynamicResource ThemedComboBox}"/>
 
-            <Label Content="Hedef Dil:" Style="{StaticResource ThemedLabel}" Margin="5,10,5,0"/>
+            <Label Content="Hedef Dil:" Style="{DynamicResource ThemedLabel}" Margin="5,10,5,0"/>
             <ComboBox x:Name="cmbTargetLanguage" Margin="5,0,5,5" Padding="5"
-                      Style="{StaticResource ThemedComboBox}"/>
+                      Style="{DynamicResource ThemedComboBox}"/>
 
-            <CheckBox x:Name="chkEnableColorFilter" Content="OCR Renk Filtresi " 
+            <CheckBox x:Name="chkEnableColorFilter" Content="OCR Renk Filtresi" 
                       Margin="5,10,5,5" VerticalAlignment="Center"/>
-
         </StackPanel>
 
-
-
+        <!-- Sağ Panel Kontrolleri -->
         <StackPanel Grid.Row="3" Grid.Column="1" Margin="5">
-            <GroupBox Header="Ekrandan Çeviri (OCR)" Style="{StaticResource ThemedGroupBox}">
+            <GroupBox Header="Ekrandan Çeviri (OCR)" Style="{DynamicResource ThemedGroupBox}">
                 <StackPanel Margin="5">
                     <TextBlock Text="Seçilen oyun penceresinin otomatik olarak taranacaktır." 
                                TextWrapping="Wrap"
-                               Foreground="{StaticResource PrimaryTextBrush}"/>
+                               Foreground="{DynamicResource PrimaryTextBrush}"/>
                     <Button Name="btnContinuousOcr" Content="Ekran Çevirisini Başlat" 
-                            Margin="0,10,0,0" Style="{StaticResource ThemedButton}"
+                            Margin="0,10,0,0" Style="{DynamicResource ThemedButton}"
                             Click="btnContinuousOcr_Click"/>
-
                     <Separator Margin="0,10" />
-                    <TextBlock Text="OCR Motoru:" Margin="0,5,0,5" />
+                    <TextBlock Text="OCR Motoru:" Margin="0,5,0,5" 
+                               Foreground="{DynamicResource PrimaryTextBrush}"/>
                     <ComboBox Name="cmbOcrEngine"
-                              Style="{StaticResource ThemedComboBox}"
+                              Style="{DynamicResource ThemedComboBox}"
                               SelectionChanged="CmbOcrEngine_SelectionChanged">
                         <ComboBoxItem Content="Windows OCR" Tag="Windows"/>
                         <ComboBoxItem Content="Tesseract OCR" Tag="Tesseract"/>
                     </ComboBox>
                     <TextBlock Text="Bu ayarın geçerli olması için uygulamanın yeniden başlatılması gerekir."
-           TextWrapping="Wrap"
-           FontSize="10"
-           FontStyle="Italic"
-           Foreground="{StaticResource SecondaryTextBrush}"
-           Margin="0,5,0,0"/>
-
+                               TextWrapping="Wrap"
+                               FontSize="10"
+                               FontStyle="Italic"
+                               Foreground="{DynamicResource SecondaryTextBrush}"
+                               Margin="0,5,0,0"/>
                 </StackPanel>
             </GroupBox>
 
-            <GroupBox Header="Görsel Ayarlar" Style="{StaticResource ThemedGroupBox}" Margin="0,5,0,0">
+            <GroupBox Header="Görsel Ayarlar" Style="{DynamicResource ThemedGroupBox}" Margin="0,5,0,0">
                 <StackPanel Margin="5">
                     <Button x:Name="btnToggleOverlay" Content="Çeviri Penceresini Göster/Gizle" 
-                        Style="{StaticResource ThemedButton}"
-                        Click="btnToggleOverlay_Click"/>
+                            Style="{DynamicResource ThemedButton}"
+                            Click="btnToggleOverlay_Click"/>
                 </StackPanel>
             </GroupBox>
 
-
-            <GroupBox Header="Gelişmiş Pointer Tarama" Style="{StaticResource ThemedGroupBox}" Margin="0,5,0,0">
+            <GroupBox Header="Gelişmiş Pointer Tarama" Style="{DynamicResource ThemedGroupBox}" Margin="0,5,0,0">
                 <StackPanel Margin="5">
                     <TextBlock Text="RAM'de aranacak pattern:" Margin="0,0,0,5"
-                               Foreground="{StaticResource PrimaryTextBrush}"/>
+                               Foreground="{DynamicResource PrimaryTextBrush}"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                         <TextBox Name="txtScanText" Width="150" Margin="0,0,5,0" 
-                                 Style="{StaticResource ThemedTextBox}"
+                                 Style="{DynamicResource ThemedTextBox}"
                                  ToolTip="RAM'de aranacak pattern"/>
                         <Button Name="btnScanPointers" Content="Tara" 
-                                Style="{StaticResource ThemedButton}" Width="60" Margin="5,0,0,0"
+                                Style="{DynamicResource ThemedButton}" Width="60" Margin="5,0,0,0"
                                 Click="btnScanPointers_Click"/>
                         <Button Name="btnStopScan" Content="Durdur" 
-                                Style="{StaticResource ThemedButton}" Width="60" Margin="5,0,0,0"
+                                Style="{DynamicResource ThemedButton}" Width="60" Margin="5,0,0,0"
                                 Click="btnStopScan_Click"/>
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Margin="0,5,0,10">
                         <TextBlock Text="Encoding:" VerticalAlignment="Center" Margin="0,0,5,0"
-                                   Foreground="{StaticResource PrimaryTextBrush}"/>
-                        <ComboBox Name="cmbEncoding" Width="80" Style="{StaticResource ThemedComboBox}" SelectedIndex="0">
+                                   Foreground="{DynamicResource PrimaryTextBrush}"/>
+                        <ComboBox Name="cmbEncoding" Width="80" Style="{DynamicResource ThemedComboBox}" SelectedIndex="0">
                             <ComboBoxItem Content="Unicode" Tag="Unicode"/>
                             <ComboBoxItem Content="UTF-8" Tag="UTF-8"/>
                             <ComboBoxItem Content="ASCII" Tag="ASCII"/>
                         </ComboBox>
                         <TextBlock Text="Derinlik:" VerticalAlignment="Center" Margin="10,0,5,0"
-                                   Foreground="{StaticResource PrimaryTextBrush}"/>
-                        <ComboBox Name="cmbDepth" Width="50" Style="{StaticResource ThemedComboBox}" SelectedIndex="1">
+                                   Foreground="{DynamicResource PrimaryTextBrush}"/>
+                        <ComboBox Name="cmbDepth" Width="50" Style="{DynamicResource ThemedComboBox}" SelectedIndex="1">
                             <ComboBoxItem Content="1" Tag="1"/>
                             <ComboBoxItem Content="2" Tag="2"/>
                             <ComboBoxItem Content="3" Tag="3"/>
@@ -288,50 +179,57 @@
                     </StackPanel>
 
                     <ProgressBar Name="progressScan" Margin="0,0,0,5" Visibility="Collapsed"
-                                 Foreground="{StaticResource AccentBrush}"
-                                 Background="{StaticResource ControlBackgroundBrush}"
+                                 Foreground="{DynamicResource AccentBrush}"
+                                 Background="{DynamicResource ControlBackgroundBrush}"
                                  Height="10"/>
+
                     <TextBlock Name="lblScanStatus" Text="" Margin="0,0,0,5" FontSize="11" 
-                               Foreground="{StaticResource AccentBrush}" Height="12"/>
+                               Foreground="{DynamicResource AccentBrush}" Height="12"/>
+
                     <ListBox Name="lstAddresses" Height="80" Margin="0,5,0,5"
-                             Style="{StaticResource ThemedListBox}"/>
+                             Style="{DynamicResource ThemedListBox}"/>
 
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                         <Button x:Name="btnTestPointer" Content="Test Et" 
-                                Style="{StaticResource ThemedButton}"  Width="70" Margin="5,0,0,0"
+                                Style="{DynamicResource ThemedButton}"  Width="70" Margin="5,0,0,0"
                                 Click="btnTestPointer_Click" />
                         <Button x:Name="btnSavePointers" Content="Kaydet" 
-                                Style="{StaticResource ThemedButton}" Width="70" Margin="5,0,0,0"
+                                Style="{DynamicResource ThemedButton}" Width="70" Margin="5,0,0,0"
                                 Click="btnSavePointers_Click"/>
                         <Button x:Name="btnLoadPointers" Content="Yükle" 
-                                Style="{StaticResource ThemedButton}" Width="70" Margin="5,0,0,0"
+                                Style="{DynamicResource ThemedButton}" Width="70" Margin="5,0,0,0"
                                 Click="btnLoadPointers_Click"/>
                     </StackPanel>
                 </StackPanel>
             </GroupBox>
         </StackPanel>
 
+        <!-- Kısayol Ayarları -->
         <GroupBox Header="Kısayol Ayarları" Grid.Row="3" Grid.Column="0" 
-                  Style="{StaticResource ThemedGroupBox}" Margin="0,522,10,24" Grid.RowSpan="2">
+                  Style="{DynamicResource ThemedGroupBox}" Margin="0,522,10,24" Grid.RowSpan="2">
             <StackPanel x:Name="HotkeySettingsPanel" Margin="5">
                 <StackPanel Orientation="Horizontal" Margin="0,5">
-                    <Label Content="OCR Kısayolu:" Style="{StaticResource ThemedLabel}" Width="100"/>
-                    <TextBox x:Name="hotkeyOcr" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+O"/>
+                    <Label Content="OCR Kısayolu:" Style="{DynamicResource ThemedLabel}" Width="100"/>
+                    <TextBox x:Name="hotkeyOcr" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+O"
+                             Style="{DynamicResource ThemedTextBox}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,5">
-                    <Label Content="Çeviri Penceresi:" Style="{StaticResource ThemedLabel}" Width="100"/>
-                    <TextBox x:Name="hotkeyTranslateWindow" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+T"/>
+                    <Label Content="Çeviri Penceresi:" Style="{DynamicResource ThemedLabel}" Width="100"/>
+                    <TextBox x:Name="hotkeyTranslateWindow" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+T"
+                             Style="{DynamicResource ThemedTextBox}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,5">
-                    <Label Content="Servis Değiştir:" Style="{StaticResource ThemedLabel}" Width="100"/>
-                    <TextBox x:Name="hotkeySwitchService" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+S"/>
+                    <Label Content="Servis Değiştir:" Style="{DynamicResource ThemedLabel}" Width="100"/>
+                    <TextBox x:Name="hotkeySwitchService" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+S"
+                             Style="{DynamicResource ThemedTextBox}"/>
                 </StackPanel>
             </StackPanel>
         </GroupBox>
 
+        <!-- Log Alanı -->
         <GroupBox Header="Log" Grid.Row="4" Grid.Column="1" 
-                  Style="{StaticResource ThemedGroupBox}" Margin="5,0,5,5">
-            <ListBox Name="txtOutput" Style="{StaticResource ThemedListBox}"/>
+                  Style="{DynamicResource ThemedGroupBox}" Margin="5,0,5,5">
+            <ListBox Name="txtOutput" Style="{DynamicResource ThemedListBox}"/>
         </GroupBox>
     </Grid>
 </Window>

@@ -1,5 +1,7 @@
 using System;
 using System.Windows;
+using System.Windows.Media;
+using System.Windows.Controls;
 
 namespace P5S_ceviri
 {
@@ -28,7 +30,7 @@ namespace P5S_ceviri
                     Source = new Uri(themeUri, UriKind.Relative)
                 };
 
-                // Tema kaynaklarını uygulamaya ekle
+             
                 Application.Current.Resources.MergedDictionaries.Add(themeResource);
 
                 // Tüm pencerelere yeni temayı uygula
@@ -51,7 +53,6 @@ namespace P5S_ceviri
             return Theme.Light; 
         }
 
-
         public static string GetStringFromTheme(Theme theme)
         {
             return theme.ToString();
@@ -59,7 +60,7 @@ namespace P5S_ceviri
 
         private static void ClearThemeResources()
         {
-            // Tema kaynak sözlüklerini bul ve kaldır
+           
             for (int i = Application.Current.Resources.MergedDictionaries.Count - 1; i >= 0; i--)
             {
                 var dictionary = Application.Current.Resources.MergedDictionaries[i];
@@ -86,10 +87,16 @@ namespace P5S_ceviri
 
             try
             {
-                
+                // Window stilini uygula
                 if (Application.Current.Resources["ThemedWindow"] is Style windowStyle)
                 {
                     window.Style = windowStyle;
+                }
+
+                // Window'un arka plan rengini doğrudan ayarla
+                if (Application.Current.Resources["PrimaryBackgroundBrush"] is SolidColorBrush windowBackground)
+                {
+                    window.Background = windowBackground;
                 }
 
                 // Alt kontrollerin temalarını güncelle
@@ -113,7 +120,7 @@ namespace P5S_ceviri
                 
                 // Kontrol tipine göre ilgili stili uygula
                 ApplyControlTheme(child);
-                
+
                 // Alt kontrolleri işle
                 RefreshControlThemes(child);
             }
@@ -147,15 +154,21 @@ namespace P5S_ceviri
                 case "CheckBox":
                     styleKey = "ThemedCheckBox";
                     break;
+                case "RadioButton":
+                    styleKey = "ThemedRadioButton";
+                    break;
+                case "TextBlock":
+                    styleKey = "ThemedTextBlock";
+                    break;
             }
 
             if (!string.IsNullOrEmpty(styleKey) && 
                 Application.Current.Resources[styleKey] is Style style &&
                 control is FrameworkElement element)
             {
+                // Stili uygula
                 element.Style = style;
             }
         }
     }
-} 
-
+}
