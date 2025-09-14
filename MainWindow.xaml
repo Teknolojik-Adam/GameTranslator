@@ -206,22 +206,22 @@
 
         <!-- Kısayol Ayarları -->
         <GroupBox Header="Kısayol Ayarları" Grid.Row="3" Grid.Column="0" 
-                  Style="{DynamicResource ThemedGroupBox}" Margin="0,522,10,24" Grid.RowSpan="2">
+          Style="{StaticResource ThemedGroupBox}" Margin="0,522,10,24" Grid.RowSpan="2">
             <StackPanel x:Name="HotkeySettingsPanel" Margin="5">
                 <StackPanel Orientation="Horizontal" Margin="0,5">
-                    <Label Content="OCR Kısayolu:" Style="{DynamicResource ThemedLabel}" Width="100"/>
-                    <TextBox x:Name="hotkeyOcr" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+O"
-                             Style="{DynamicResource ThemedTextBox}"/>
+                    <Label Content="OCR Kısayolu:" Style="{StaticResource ThemedLabel}" Width="100"/>
+                    <local:HotkeyInputControl x:Name="hotkeyOcr" Width="150" Margin="5,0" 
+                                      Hotkey="{Binding ToggleOcrHotkey, Mode=TwoWay}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,5">
-                    <Label Content="Çeviri Penceresi:" Style="{DynamicResource ThemedLabel}" Width="100"/>
-                    <TextBox x:Name="hotkeyTranslateWindow" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+T"
-                             Style="{DynamicResource ThemedTextBox}"/>
+                    <Label Content="Çeviri Penceresi:" Style="{StaticResource ThemedLabel}" Width="100"/>
+                    <local:HotkeyInputControl x:Name="hotkeyTranslateWindow" Width="150" Margin="5,0" 
+                                      Hotkey="{Binding ToggleTranslateWindowHotkey, Mode=TwoWay}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,5">
-                    <Label Content="Servis Değiştir:" Style="{DynamicResource ThemedLabel}" Width="100"/>
-                    <TextBox x:Name="hotkeySwitchService" Width="150" Margin="5,0" IsReadOnly="True" Text="Ctrl+Shift+S"
-                             Style="{DynamicResource ThemedTextBox}"/>
+                    <Label Content="Servis Değiştir:" Style="{StaticResource ThemedLabel}" Width="100"/>
+                    <local:HotkeyInputControl x:Name="hotkeySwitchService" Width="150" Margin="5,0" 
+                                      Hotkey="{Binding SwitchTranslationServiceHotkey, Mode=TwoWay}"/>
                 </StackPanel>
             </StackPanel>
         </GroupBox>

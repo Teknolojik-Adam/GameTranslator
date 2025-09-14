@@ -69,8 +69,10 @@ namespace P5S_ceviri
             InitializeComponent();
             try
             {
-                // Initialize services
+                // Servisleri başlat
                 ServiceContainer.Initialize();
+
+                // Servisleri al
                 _processService = ServiceContainer.GetService<IProcessService>();
                 _memoryService = ServiceContainer.GetService<IMemoryService>();
                 _translationService = ServiceContainer.GetService<ITranslationService>();
@@ -79,56 +81,106 @@ namespace P5S_ceviri
                 _gameRecipeService = ServiceContainer.GetService<IGameRecipeService>();
                 _settingsManager = ServiceContainer.GetService<SettingsManager>();
                 _appSettings = ServiceContainer.GetService<AppSettings>();
-                _enhancedMemoryService = new EnhancedMemoryService(_logger);
-                _pointerValidationService = new PointerValidationService(_memoryService, _logger);
 
+                // UI bileşenlerini başlat
                 InitializeTranslationServices();
                 InitializeLanguageControls();
 
+                // Veri bağlamayı ayarla
                 HotkeySettingsPanel.DataContext = _appSettings;
+
+                // Olay dinleyicileri ekle
                 _appSettings.PropertyChanged += AppSettings_PropertyChanged;
 
-
-                _manualTranslationTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(_appSettings.RamTickIntervalMs > 50 ? _appSettings.RamTickIntervalMs : 50) };
+                // Zamanlayıcıları ayarla
+                _manualTranslationTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(_appSettings.RamTickIntervalMs > 50 ? _appSettings.RamTickIntervalMs : 50)
+                };
                 _manualTranslationTimer.Tick += ManualTranslationTimer_Tick;
 
-                _continuousTranslationTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(_appSettings.RamTickIntervalMs > 50 ? _appSettings.RamTickIntervalMs : 50) };
+                _continuousTranslationTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(_appSettings.RamTickIntervalMs > 50 ? _appSettings.RamTickIntervalMs : 50)
+                };
                 _continuousTranslationTimer.Tick += ContinuousTranslationTimer_Tick;
 
-                _continuousOcrTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(_appSettings.OcrTickIntervalMs > 100 ? _appSettings.OcrTickIntervalMs : 100) };
+                _continuousOcrTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(_appSettings.OcrTickIntervalMs > 100 ? _appSettings.OcrTickIntervalMs : 100)
+                };
                 _continuousOcrTimer.Tick += ContinuousOcrTimer_Tick;
 
-
-
+                // Pencere kapatma olayı
+                // Pencere kapatma olayı
                 this.Closing += (s, e) =>
                 {
+                    // Son durumu kaydet
+                    _appSettings.LastOcrState = _isContinuousOcrRunning;
+                    _appSettings.LastRamState = _isContinuousTranslationRunning || _manualTranslationTimer.IsEnabled;
+
+                    if (cmbTranslationService.SelectedItem is StrategyInfo strategyInfo)
+                    {
+                        _appSettings.LastUsedTranslationService = strategyInfo.Name;
+                    }
+
+                    // Ayarları kaydet
+                    _settingsManager.SaveSettings(_appSettings);
+
+                    // Çeviri önbelleğini kaydet
                     if (_translationService is PerformanceOptimizedTranslationService performanceService)
                     {
-                        // Önbellek istatistiklerini logla
                         var cacheInfo = performanceService.GetCacheInfo();
                         _logger.LogInformation($"Uygulama kapatılırken önbellek durumu: {cacheInfo.TotalItems} öğe, " +
                             $"{cacheInfo.TotalSizeBytes} bytes, Hit Rate: {cacheInfo.HitRate:F2}%");
-                        
                         performanceService.Dispose();
                     }
                     else if (_translationService is AdvancedTranslationService advancedService)
                     {
                         advancedService.SaveCacheToDisk();
                     }
+
                     StopAllTranslations();
                     _memoryService?.Dispose();
-
                     _outputWindow?.Close();
                     ServiceContainer.Cleanup();
                 };
 
+                // İşlemleri yükle ve UI'ı güncelle
                 LoadProcesses();
-                InitializeThemeUI();
                 UpdateUIState();
+
+                // Başlangıç ayarlarını uygula
+                cmbOcrEngine.SelectedIndex = _appSettings.OcrEngine == OcrEngineType.WindowsOcr ? 0 : 1;
+                chkEnableColorFilter.IsChecked = _appSettings.EnableOcrColorFilter;
+
+                // Son kullanılan çeviri servisini seç
+                if (!string.IsNullOrEmpty(_appSettings.LastUsedTranslationService))
+                {
+                    var strategy = cmbTranslationService.Items.Cast<StrategyInfo>()
+                        .FirstOrDefault(s => s.Name == _appSettings.LastUsedTranslationService);
+                    if (strategy != null)
+                    {
+                        cmbTranslationService.SelectedItem = strategy;
+                    }
+                }
+                // Son OCR durumunu geri yükle
+                if (_appSettings.LastOcrState)
+                {
+                    StartContinuousOcr();
+                }
+                // Son RAM durumunu geri yükle
+                if (_appSettings.LastRamState)
+                {
+                    StartContinuousTranslation();
+                }
+
+                _logger.LogInformation("Uygulama başarıyla başlatıldı.");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Uygulama başlatılırken kritik bir hata oluştu: {ex.Message}", "Kritik Hata", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Uygulama başlatılırken kritik bir hata oluştu: {ex.Message}", "Kritik Hata",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
                 Application.Current.Shutdown();
             }
         }
@@ -188,10 +240,32 @@ namespace P5S_ceviri
 
         private void AppSettings_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
+            // Tüm özellik değişikliklerinde ayarları kaydet
+            _settingsManager.SaveSettings(_appSettings);
+
+            // Özel işlemler
             if (e.PropertyName.EndsWith("Hotkey"))
             {
                 UpdateHotkeys();
-                _settingsManager.SaveSettings(_appSettings);
+            }
+            else if (e.PropertyName == nameof(AppSettings.OcrEngine))
+            {
+                _logger.LogInformation($"OCR motoru değiştirildi: {_appSettings.OcrEngine}");
+                // OCR motoru değişikliği için gerekli işlemler
+            }
+            else if (e.PropertyName == nameof(AppSettings.Theme))
+            {
+                var selectedTheme = ThemeManager.GetThemeFromString(_appSettings.Theme);
+                ThemeManager.ChangeTheme(selectedTheme);
+            }
+            else if (e.PropertyName == nameof(AppSettings.RamTickIntervalMs))
+            {
+                _manualTranslationTimer.Interval = TimeSpan.FromMilliseconds(_appSettings.RamTickIntervalMs > 50 ? _appSettings.RamTickIntervalMs : 50);
+                _continuousTranslationTimer.Interval = TimeSpan.FromMilliseconds(_appSettings.RamTickIntervalMs > 50 ? _appSettings.RamTickIntervalMs : 50);
+            }
+            else if (e.PropertyName == nameof(AppSettings.OcrTickIntervalMs))
+            {
+                _continuousOcrTimer.Interval = TimeSpan.FromMilliseconds(_appSettings.OcrTickIntervalMs > 100 ? _appSettings.OcrTickIntervalMs : 100);
             }
         }
 

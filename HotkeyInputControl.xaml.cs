@@ -8,9 +8,9 @@ namespace P5S_ceviri
     {
         public static readonly DependencyProperty HotkeyProperty =
             DependencyProperty.Register("Hotkey", typeof(Hotkey), typeof(HotkeyInputControl),
-            new PropertyMetadata(new Hotkey(), OnHotkeyPressed));
+            new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.BindsTwoWayByDefault, OnHotkeyChanged));
 
-        private static void OnHotkeyPressed(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        private static void OnHotkeyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             if (d is HotkeyInputControl control)
             {
@@ -51,7 +51,6 @@ namespace P5S_ceviri
         private void HotkeyTextBox_KeyDown(object sender, KeyEventArgs e)
         {
             e.Handled = true;
-
             Key key = e.Key;
 
             if (key == Key.LeftCtrl || key == Key.RightCtrl ||
@@ -63,6 +62,7 @@ namespace P5S_ceviri
             }
 
             ModifierKeys modifiers = Keyboard.Modifiers;
+
             if (modifiers == ModifierKeys.None && key == Key.None)
             {
                 return;
@@ -70,7 +70,6 @@ namespace P5S_ceviri
 
             Hotkey = new Hotkey(modifiers, key);
             UpdateText();
-
             Keyboard.ClearFocus();
             (sender as UIElement)?.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
         }

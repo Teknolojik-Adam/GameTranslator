@@ -14,15 +14,17 @@ namespace P5S_ceviri
 
             var services = new ServiceCollection();
 
-            
+            // Temel servisler
             services.AddSingleton<ILogger, ConsoleLogger>();
             services.AddSingleton<AppSettings>();
             services.AddSingleton<SettingsManager>();
 
-            
+            // İşlem ve bellek servisleri
             services.AddSingleton<IProcessService, ProcessService>();
             services.AddSingleton<IMemoryService, MemoryService>();
             services.AddSingleton<IGameRecipeService, GameRecipeService>();
+
+            // Çeviri servisleri
             services.AddSingleton<AdvancedTranslationService>();
             services.AddSingleton<ITranslationService>(sp =>
             {
@@ -31,8 +33,7 @@ namespace P5S_ceviri
                 var baseService = new AdvancedTranslationService(
                     sp.GetRequiredService<HttpClient>(),
                     logger);
-                
-                // Önbellek ayarlarını kullanarak performans servisini oluştur
+
                 var optimizedService = new PerformanceOptimizedTranslationService(
                     baseService,
                     logger,
@@ -46,32 +47,17 @@ namespace P5S_ceviri
                     cacheCleanupIntervalMinutes: settings.CacheCleanupIntervalMinutes,
                     enableSmartCache: settings.EnableSmartCache,
                     cacheCleanupThreshold: settings.CacheCleanupThreshold);
-                
-                // Önbellek ayarlarını dinamik olarak güncellemek için event
-                settings.PropertyChanged += (s, e) =>
-                {
-                    if (e.PropertyName == nameof(settings.CacheSizeLimit) ||
-                        e.PropertyName == nameof(settings.EnableSmartCache) ||
-                        e.PropertyName == nameof(settings.CacheCleanupThreshold))
-                    {
-                        // Önbellek ayarları değiştiğinde log yaz
-                        logger.LogInformation($"Önbellek ayarları güncellendi: CacheSize={settings.CacheSizeLimit}, " +
-                            $"EnableSmartCache={settings.EnableSmartCache}, Threshold={settings.CacheCleanupThreshold}");
-                    }
-                };
-                
+
                 return optimizedService;
             });
 
-            
+            // OCR servisleri
             services.AddSingleton<IOcrEngine, WindowsOcrEngine>();
             services.AddSingleton<IOcrEngine, TesseractOcrEngine>();
-
-            
             services.AddSingleton<IOcrService>(sp =>
                 new OcrService(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
 
-           
+            // HTTP Client
             services.AddSingleton<HttpClient>(sp =>
             {
                 var client = new HttpClient();

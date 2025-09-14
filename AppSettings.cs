@@ -12,7 +12,6 @@ namespace P5S_ceviri
 
     public class AppSettings : INotifyPropertyChanged
     {
-       
         private OcrEngineType _ocrEngine = OcrEngineType.Tesseract;
         public OcrEngineType OcrEngine
         {
@@ -20,7 +19,6 @@ namespace P5S_ceviri
             set { if (_ocrEngine != value) { _ocrEngine = value; OnPropertyChanged(); } }
         }
 
-        
         private string _lastProcessName = "";
         public string LastProcessName
         {
@@ -28,7 +26,6 @@ namespace P5S_ceviri
             set { if (_lastProcessName != value) { _lastProcessName = value; OnPropertyChanged(); } }
         }
 
-      
         private string _theme = "Light";
         public string Theme
         {
@@ -36,7 +33,6 @@ namespace P5S_ceviri
             set { if (_theme != value) { _theme = value; OnPropertyChanged(); } }
         }
 
-        
         private string _targetLanguage = "tr";
         public string TargetLanguage
         {
@@ -44,7 +40,6 @@ namespace P5S_ceviri
             set { if (_targetLanguage != value) { _targetLanguage = value; OnPropertyChanged(); } }
         }
 
-       
         private string _ocrLanguage = "eng";
         public string OcrLanguage
         {
@@ -52,7 +47,6 @@ namespace P5S_ceviri
             set { if (_ocrLanguage != value) { _ocrLanguage = value; OnPropertyChanged(); } }
         }
 
-        
         private bool _enableOcrColorFilter = true;
         public bool EnableOcrColorFilter
         {
@@ -60,7 +54,6 @@ namespace P5S_ceviri
             set { if (_enableOcrColorFilter != value) { _enableOcrColorFilter = value; OnPropertyChanged(); } }
         }
 
-       
         private Hotkey _toggleOcrHotkey = new Hotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.O);
         public Hotkey ToggleOcrHotkey
         {
@@ -96,13 +89,6 @@ namespace P5S_ceviri
             set { if (_stringReadLength != value) { _stringReadLength = value; OnPropertyChanged(); } }
         }
 
-        public event PropertyChangedEventHandler PropertyChanged;
-
-        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
-        {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-        }
-
         private bool _showPreviousTranslationsLabel = true;
         public bool ShowPreviousTranslationsLabel
         {
@@ -124,14 +110,14 @@ namespace P5S_ceviri
             set { if (_ocrTickIntervalMs != value) { _ocrTickIntervalMs = value; OnPropertyChanged(); } }
         }
 
-        private int _ramTickIntervalMs = 300; 
+        private int _ramTickIntervalMs = 300;
         public int RamTickIntervalMs
         {
             get => _ramTickIntervalMs;
             set { if (_ramTickIntervalMs != value) { _ramTickIntervalMs = value; OnPropertyChanged(); } }
         }
 
-        private bool _requireStableOcr = false; 
+        private bool _requireStableOcr = false;
         public bool RequireStableOcr
         {
             get => _requireStableOcr;
@@ -145,7 +131,6 @@ namespace P5S_ceviri
             set { if (_requireStableRam != value) { _requireStableRam = value; OnPropertyChanged(); } }
         }
 
-       
         private int _maxConcurrentTranslations = 10;
         public int MaxConcurrentTranslations
         {
@@ -188,7 +173,6 @@ namespace P5S_ceviri
             set { if (_realtimeBatchThresholdMs != value) { _realtimeBatchThresholdMs = value; OnPropertyChanged(); } }
         }
 
-        // Önbellek ayarları
         private int _cacheSizeLimit = 10000;
         public int CacheSizeLimit
         {
@@ -222,6 +206,35 @@ namespace P5S_ceviri
         {
             get => _translationBatchSize;
             set { if (_translationBatchSize != value) { _translationBatchSize = value; OnPropertyChanged(); } }
+        }
+
+        // Son kullanılan ayarlar
+        private string _lastUsedTranslationService = "";
+        public string LastUsedTranslationService
+        {
+            get => _lastUsedTranslationService;
+            set { if (_lastUsedTranslationService != value) { _lastUsedTranslationService = value; OnPropertyChanged(); } }
+        }
+
+        private bool _lastOcrState = false;
+        public bool LastOcrState
+        {
+            get => _lastOcrState;
+            set { if (_lastOcrState != value) { _lastOcrState = value; OnPropertyChanged(); } }
+        }
+
+        private bool _lastRamState = false;
+        public bool LastRamState
+        {
+            get => _lastRamState;
+            set { if (_lastRamState != value) { _lastRamState = value; OnPropertyChanged(); } }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
     }
 }

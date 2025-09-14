@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Windows;
+
 namespace P5S_ceviri
 {
     public partial class App : Application
@@ -7,7 +8,20 @@ namespace P5S_ceviri
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
-            InitializeTheme();
+
+            try
+            {
+                // Servisleri başlat
+                ServiceContainer.Initialize();
+
+                // Ayarları yükle ve temayı uygula
+                InitializeTheme();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Uygulama başlatılırken hata: {ex.Message}", "Başlatma Hatası",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
 
             AppDomain.CurrentDomain.UnhandledException += (s, args) =>
             {
@@ -22,15 +36,25 @@ namespace P5S_ceviri
             };
         }
 
+        protected override void OnExit(ExitEventArgs e)
+        {
+            // Servisleri temizle
+            ServiceContainer.Cleanup();
+            base.OnExit(e);
+        }
+
         private void InitializeTheme()
         {
             try
             {
-                var tempLogger = new ConsoleLogger();
-                var settingsManager = new SettingsManager(tempLogger);
-                var appSettings = settingsManager.LoadSettings();
+                // ServiceContainer'dan ayarları al
+                var settingsManager = ServiceContainer.GetService<SettingsManager>();
+                var appSettings = ServiceContainer.GetService<AppSettings>();
 
+                // Kullanıcının tema tercihini al
                 var selectedTheme = ThemeManager.GetThemeFromString(appSettings.Theme);
+
+                // Temayı uygula
                 ThemeManager.ChangeTheme(selectedTheme);
             }
             catch (Exception ex)
