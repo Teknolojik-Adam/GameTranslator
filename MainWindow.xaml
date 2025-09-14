@@ -10,7 +10,6 @@
         Width="847"
         FontFamily="Segoe UI"
         Style="{DynamicResource ThemedWindow}">
-
     <Grid Background="{DynamicResource PrimaryBackgroundBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -23,7 +22,6 @@
             <ColumnDefinition Width="*"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
-
         <!-- Üst Panel -->
         <Border Grid.Row="0" Grid.ColumnSpan="2" 
                 Background="{DynamicResource SecondaryBackgroundBrush}"
@@ -60,23 +58,19 @@
                        VerticalAlignment="Center" Margin="10,0,0,0"/>
             </StackPanel>
         </Border>
-
         <!-- Metin Alanları -->
         <GroupBox Header="Orijinal Metin" Grid.Row="1" Grid.Column="0" 
                   Style="{DynamicResource ThemedGroupBox}" Margin="5">
             <TextBox Name="txtOriginal" Style="{DynamicResource ThemedTextBox}" 
                      TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
         </GroupBox>
-
         <GroupBox Header="Çevrilmiş Metin" Grid.Row="1" Grid.Column="1" 
                   Style="{DynamicResource ThemedGroupBox}" Margin="5">
             <TextBox Name="txtTranslated" Style="{DynamicResource ThemedTextBox}" 
                      TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto"/>
         </GroupBox>
-
         <GridSplitter Grid.Row="2" Grid.ColumnSpan="2" Height="3" HorizontalAlignment="Stretch" 
                        Background="{DynamicResource BorderBrush}"/>
-
         <!-- Sol Panel Kontrolleri -->
         <StackPanel Grid.Row="3" Grid.Column="0" Margin="5">
             <GroupBox Header="RAM'den Çeviri" Style="{DynamicResource ThemedGroupBox}">
@@ -89,24 +83,19 @@
                     <TextBox Name="txtAddress" Style="{DynamicResource ThemedTextBox}"/>
                 </StackPanel>
             </GroupBox>
-
             <Label Content="Çeviri Servisi:" Style="{DynamicResource ThemedLabel}" Margin="5,10,5,0"/>
             <ComboBox x:Name="cmbTranslationService" Margin="5,0,5,5" Padding="5"
                       Style="{DynamicResource ThemedComboBox}"
                       DisplayMemberPath="Name" SelectedValuePath="Type"/>
-
             <Label Content="OCR Dili:" Style="{DynamicResource ThemedLabel}" Margin="5,10,5,0"/>
             <ComboBox x:Name="cmbOcrLanguage" Margin="5,0,5,5" Padding="5"
                       Style="{DynamicResource ThemedComboBox}"/>
-
             <Label Content="Hedef Dil:" Style="{DynamicResource ThemedLabel}" Margin="5,10,5,0"/>
             <ComboBox x:Name="cmbTargetLanguage" Margin="5,0,5,5" Padding="5"
                       Style="{DynamicResource ThemedComboBox}"/>
-
             <CheckBox x:Name="chkEnableColorFilter" Content="OCR Renk Filtresi" 
                       Margin="5,10,5,5" VerticalAlignment="Center"/>
         </StackPanel>
-
         <!-- Sağ Panel Kontrolleri -->
         <StackPanel Grid.Row="3" Grid.Column="1" Margin="5">
             <GroupBox Header="Ekrandan Çeviri (OCR)" Style="{DynamicResource ThemedGroupBox}">
@@ -126,7 +115,16 @@
                         <ComboBoxItem Content="Windows OCR" Tag="Windows"/>
                         <ComboBoxItem Content="Tesseract OCR" Tag="Tesseract"/>
                     </ComboBox>
-                    <TextBlock Text="Bu ayarın geçerli olması için uygulamanın yeniden başlatılması gerekir."
+                    <TextBlock Text="Metin Algılama Yöntemi:" Margin="0,5,0,5" 
+                               Foreground="{DynamicResource PrimaryTextBrush}"/>
+                    <ComboBox Name="cmbTextDetectionMethod"
+                              Style="{DynamicResource ThemedComboBox}"
+                              SelectionChanged="CmbTextDetectionMethod_SelectionChanged">
+                        <ComboBoxItem Content="EAST Modeli" Tag="East"/>
+                        <ComboBoxItem Content="OpenCV " Tag="OpenCV"/>
+                        <ComboBoxItem Content="Yok (Tam Ekran)" Tag="None"/>
+                    </ComboBox>
+                    <TextBlock Text="Bu ayarların geçerli olması için uygulamanın yeniden başlatılması gerekmez."
                                TextWrapping="Wrap"
                                FontSize="10"
                                FontStyle="Italic"
@@ -134,7 +132,6 @@
                                Margin="0,5,0,0"/>
                 </StackPanel>
             </GroupBox>
-
             <GroupBox Header="Görsel Ayarlar" Style="{DynamicResource ThemedGroupBox}" Margin="0,5,0,0">
                 <StackPanel Margin="5">
                     <Button x:Name="btnToggleOverlay" Content="Çeviri Penceresini Göster/Gizle" 
@@ -142,7 +139,6 @@
                             Click="btnToggleOverlay_Click"/>
                 </StackPanel>
             </GroupBox>
-
             <GroupBox Header="Gelişmiş Pointer Tarama" Style="{DynamicResource ThemedGroupBox}" Margin="0,5,0,0">
                 <StackPanel Margin="5">
                     <TextBlock Text="RAM'de aranacak pattern:" Margin="0,0,0,5"
@@ -158,7 +154,6 @@
                                 Style="{DynamicResource ThemedButton}" Width="60" Margin="5,0,0,0"
                                 Click="btnStopScan_Click"/>
                     </StackPanel>
-
                     <StackPanel Orientation="Horizontal" Margin="0,5,0,10">
                         <TextBlock Text="Encoding:" VerticalAlignment="Center" Margin="0,0,5,0"
                                    Foreground="{DynamicResource PrimaryTextBrush}"/>
@@ -177,18 +172,14 @@
                             <ComboBoxItem Content="5" Tag="5"/>
                         </ComboBox>
                     </StackPanel>
-
                     <ProgressBar Name="progressScan" Margin="0,0,0,5" Visibility="Collapsed"
                                  Foreground="{DynamicResource AccentBrush}"
                                  Background="{DynamicResource ControlBackgroundBrush}"
                                  Height="10"/>
-
                     <TextBlock Name="lblScanStatus" Text="" Margin="0,0,0,5" FontSize="11" 
                                Foreground="{DynamicResource AccentBrush}" Height="12"/>
-
                     <ListBox Name="lstAddresses" Height="80" Margin="0,5,0,5"
                              Style="{DynamicResource ThemedListBox}"/>
-
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                         <Button x:Name="btnTestPointer" Content="Test Et" 
                                 Style="{DynamicResource ThemedButton}"  Width="70" Margin="5,0,0,0"
@@ -203,7 +194,6 @@
                 </StackPanel>
             </GroupBox>
         </StackPanel>
-
         <!-- Kısayol Ayarları -->
         <GroupBox Header="Kısayol Ayarları" Grid.Row="3" Grid.Column="0" 
           Style="{StaticResource ThemedGroupBox}" Margin="0,522,10,24" Grid.RowSpan="2">
@@ -225,7 +215,6 @@
                 </StackPanel>
             </StackPanel>
         </GroupBox>
-
         <!-- Log Alanı -->
         <GroupBox Header="Log" Grid.Row="4" Grid.Column="1" 
                   Style="{DynamicResource ThemedGroupBox}" Margin="5,0,5,5">

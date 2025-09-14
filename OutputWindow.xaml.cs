@@ -12,7 +12,7 @@ namespace P5S_ceviri
         private bool _isSelectionMode = false;
         private Point _startPoint;
 
-     
+
         public event Action<System.Drawing.Rectangle> RegionSelected;
 
         public OutputWindow(MainWindow mainWindow)
@@ -85,12 +85,10 @@ namespace P5S_ceviri
             var y = (int)(Canvas.GetTop(SelectionRectangle) * dpiScale.M22);
             var width = (int)(SelectionRectangle.Width * dpiScale.M11);
             var height = (int)(SelectionRectangle.Height * dpiScale.M22);
-
             if (width > 5 && height > 5)
             {
                 RegionSelected?.Invoke(new System.Drawing.Rectangle(x, y, width, height));
             }
-
             ExitSelectionMode();
         }
 

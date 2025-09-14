@@ -12,13 +12,11 @@ namespace P5S_ceviri
         private readonly ILogger _logger;
         private readonly string _settingsFilePath;
         private readonly object _lockObject = new object();
-
         public SettingsManager(ILogger logger)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _settingsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
         }
-
         public AppSettings LoadSettings()
         {
             lock (_lockObject)
@@ -33,7 +31,6 @@ namespace P5S_ceviri
                             _logger.LogWarning($"Ayar dosyası boş: '{_settingsFilePath}'. Varsayılan ayarlar kullanılacak.");
                             return new AppSettings();
                         }
-
                         var options = new JsonSerializerOptions
                         {
                             PropertyNameCaseInsensitive = true,
@@ -42,7 +39,6 @@ namespace P5S_ceviri
                                 new HotkeyJsonConverter()
                             }
                         };
-
                         var settings = JsonSerializer.Deserialize<AppSettings>(json, options);
                         if (settings != null)
                         {
@@ -63,11 +59,9 @@ namespace P5S_ceviri
                 {
                     _logger.LogError($"Ayarlar yüklenirken hata oluştu: '{_settingsFilePath}'. Hata: {ex.Message}", ex);
                 }
-
                 return new AppSettings();
             }
         }
-
         public void SaveSettings(AppSettings settings)
         {
             if (settings == null)
@@ -75,7 +69,6 @@ namespace P5S_ceviri
                 _logger.LogWarning("Ayarlar nesnesi null olduğu için kaydetme işlemi iptal edildi.");
                 return;
             }
-
             lock (_lockObject)
             {
                 try
@@ -88,23 +81,19 @@ namespace P5S_ceviri
                             new HotkeyJsonConverter()
                         }
                     };
-
                     string jsonString = JsonSerializer.Serialize(settings, options);
-
                     // Yedekleme
                     if (File.Exists(_settingsFilePath))
                     {
                         string backupPath = _settingsFilePath + ".backup";
                         File.Copy(_settingsFilePath, backupPath, true);
                     }
-
                     File.WriteAllText(_settingsFilePath, jsonString);
                     _logger.LogInformation($"Ayarlar '{_settingsFilePath}' dosyasına kaydedildi.");
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError($"Ayarlar kaydedilemedi: '{_settingsFilePath}'. Hata: {ex.Message}", ex);
-
                     // Yedekten geri yükleme denemesi
                     try
                     {
@@ -130,18 +119,14 @@ namespace P5S_ceviri
         {
             if (reader.TokenType == JsonTokenType.Null)
                 return null;
-
             if (reader.TokenType == JsonTokenType.String)
             {
                 var value = reader.GetString();
                 var parts = value.Split(new[] { " + " }, StringSplitOptions.None);
-
                 if (parts.Length < 2)
                     return null;
-
                 var modifiers = ModifierKeys.None;
                 var key = Key.None;
-
                 for (int i = 0; i < parts.Length - 1; i++)
                 {
                     switch (parts[i])
@@ -152,16 +137,13 @@ namespace P5S_ceviri
                         case "Win": modifiers |= ModifierKeys.Windows; break;
                     }
                 }
-
                 if (Enum.TryParse<Key>(parts[parts.Length - 1], out key))
                 {
                     return new Hotkey(modifiers, key);
                 }
             }
-
             return null;
         }
-
         public override void Write(Utf8JsonWriter writer, Hotkey value, JsonSerializerOptions options)
         {
             if (value == null)
@@ -169,7 +151,6 @@ namespace P5S_ceviri
                 writer.WriteNullValue();
                 return;
             }
-
             writer.WriteStringValue(value.ToString());
         }
     }

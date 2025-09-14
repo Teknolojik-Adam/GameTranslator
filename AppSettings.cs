@@ -10,6 +10,13 @@ namespace P5S_ceviri
         WindowsOcr
     }
 
+    public enum TextDetectionMethod
+    {
+        OpenCV,  // OpenCV ile genel metin algılama
+        East,     // EAST modeli ile metin algılama
+        None     // Metin algılama yok (tam ekran)
+    }
+
     public class AppSettings : INotifyPropertyChanged
     {
         private OcrEngineType _ocrEngine = OcrEngineType.Tesseract;
@@ -17,6 +24,13 @@ namespace P5S_ceviri
         {
             get => _ocrEngine;
             set { if (_ocrEngine != value) { _ocrEngine = value; OnPropertyChanged(); } }
+        }
+
+        private TextDetectionMethod _textDetectionMethod = TextDetectionMethod.East;
+        public TextDetectionMethod TextDetectionMethod
+        {
+            get => _textDetectionMethod;
+            set { if (_textDetectionMethod != value) { _textDetectionMethod = value; OnPropertyChanged(); } }
         }
 
         private string _lastProcessName = "";
@@ -231,7 +245,6 @@ namespace P5S_ceviri
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
-
         protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
