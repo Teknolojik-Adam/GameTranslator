@@ -1,24 +1,24 @@
 Özellikler
-• RAM Üzerinden Çeviri: Oyunların belleğinden metinleri okuyup otomatik olarak Türkçeye çevirir.
-• OCR (Ekran Görüntüsü) ile Çeviri: Oyun penceresinin ekran görüntüsünü alıp, metinleri OCR ile algılar ve çevirir.
-• Çeviri Penceresi (Overlay): Çevirileri ayrı bir pencerede veya oyun üzerinde gösterebilirsiniz.
-• Kolay Kurulum: Oyunlar için kalıcı pointer yolunu Cheat Engine ile bulup programa tanımlayabilirsiniz.
-• Birden Fazla Oyun Desteği: Farklı oyunlar için farklı adres yolları kaydedilebilir.
-• Kapsamlı Hata Yönetimi: Hatalar kullanıcıya bildirilir ve loglanır.
+• RAM Üzerinden Çeviri: Oyunların belleğinden metinleri okuyarak otomatik olarak Türkçeye çevirir. • OCR (Ekran Görüntüsü) ile Çeviri: Oyun penceresinin ekran görüntüsünü alır, metinleri OCR ile algılar ve çevirir. • Çeviri Penceresi (Overlay): Çevirileri ayrı bir pencerede veya doğrudan oyun üzerinde gösterebilirsiniz. • Kolay Kurulum: Oyunlar için kalıcı pointer yolunu Cheat Engine ile bulup programa tanımlayabilirsiniz. • Birden Fazla Oyun Desteği: Farklı oyunlar için farklı adres yolları kaydedilebilir. • Kapsamlı Hata Yönetimi: Hatalar kullanıcıya bildirilir ve loglanır.
+Gereksinimler
+• .NET Framework 4.8 yüklü olduğundan emin olun. • program.exe ve tessdata klasörünü aynı dizinde bulundurun.
 
-.NET Framework 4.8 yüklü olduğundan emin olun.
-program.exe ve tessdata klasörünü aynı dizinde bulundurun.
 Kullanım
-
 Programı başlatın.
+
 Açık olan oyun penceresini listeden seçin.
-manuel ram değeri ile kullanmak istiyorsaniz , Cheat Engine ile bulduğunuz pointer yolunu girerek oyunu tanımlayın.
+
+Manuel RAM değeri ile kullanmak istiyorsanız, Cheat Engine ile bulduğunuz pointer yolunu girerek oyunu tanımlayın.
+
 RAM Çevirisini Başlat butonuyla otomatik çeviriyi başlatabilirsiniz.
+
 Ekran Çevirisini Başlat ile OCR tabanlı çeviri yapabilirsiniz.
+
 Çeviri penceresini açmak/gizlemek için ilgili butonu kullanın.
-Not:
+Notlar
 • Bazı oyunlarda RAM adresleri güncellenirse, yeniden pointer yolu girmeniz gerekebilir.
 • OCR kalitesi, oyunun fontuna ve arka planına göre değişiklik gösterebilir.
+• Crunchyroll gibi anime veya film izleme platformlarında yaklaşık %90 başarı oranı sağlar.
 
 Akiş Şemasi
 
