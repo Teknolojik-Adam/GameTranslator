@@ -53,11 +53,6 @@ namespace P5S_ceviri
             _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
         }
 
-        public MemoryService(ILogger logger)
-        {
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _appSettings = new AppSettings(); // Varsayılan ayarlar
-        }
 
         public string TryReadStringDeep(IntPtr address)
         {

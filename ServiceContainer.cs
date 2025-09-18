@@ -16,12 +16,18 @@ namespace P5S_ceviri
 
             // Temel servisler
             services.AddSingleton<ILogger, ConsoleLogger>();
-            services.AddSingleton<AppSettings>();
-            services.AddSingleton<SettingsManager>();
+            services.AddSingleton<SettingsManager>(sp => 
+                new SettingsManager(sp.GetRequiredService<ILogger>()));
+            services.AddSingleton<AppSettings>(sp => 
+                sp.GetRequiredService<SettingsManager>().LoadSettings());
 
             // İşlem ve bellek servisleri
-            services.AddSingleton<IProcessService, ProcessService>();
-            services.AddSingleton<IMemoryService, MemoryService>();
+            services.AddSingleton<IProcessService>(sp => 
+                new ProcessService(sp.GetRequiredService<ILogger>()));
+            services.AddSingleton<IMemoryService>(sp => 
+                new MemoryService(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
+            services.AddSingleton<EnhancedMemoryService>(sp => 
+                new EnhancedMemoryService(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
             services.AddSingleton<IGameRecipeService, GameRecipeService>();
 
             // Çeviri servisleri
@@ -54,8 +60,22 @@ namespace P5S_ceviri
             // OCR servisleri
             services.AddSingleton<IOcrEngine, WindowsOcrEngine>();
             services.AddSingleton<IOcrEngine, TesseractOcrEngine>();
+            services.AddSingleton<WindowsOcrService>(sp =>
+                new WindowsOcrService(sp.GetRequiredService<ILogger>()));
             services.AddSingleton<IOcrService>(sp =>
                 new OcrService(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
+
+            // Anomali tespit servisi
+            services.AddSingleton<AnomalyDetector>(sp =>
+                new AnomalyDetector(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
+
+            // Pointer validation servisi
+            services.AddSingleton<PointerValidationService>(sp =>
+                new PointerValidationService(sp.GetRequiredService<IMemoryService>(), sp.GetRequiredService<ILogger>()));
+
+            // ML metin işleme servisi
+            services.AddSingleton<MLTextProcessor>(sp =>
+                new MLTextProcessor(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
 
             // HTTP Client
             services.AddSingleton<HttpClient>(sp =>

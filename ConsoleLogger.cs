@@ -60,8 +60,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                
-                Console.WriteLine($"FATAL: Günlük döndürme sırasında günlük kaydı başlatılamadı. Hata: {ex.Message}");
+                Console.WriteLine($"FATAL: Log yazma sırasında hata oluştu. Hata: {ex.Message}");
             }
         }
 

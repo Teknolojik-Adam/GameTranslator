@@ -6,11 +6,11 @@
         xmlns:local="clr-namespace:P5S_ceviri"
         mc:Ignorable="d"
         Title="Anlık Oyun Çeviri Aracı" 
-        Height="1036" 
+        Height="946" 
         Width="847"
         FontFamily="Segoe UI"
         Style="{DynamicResource ThemedWindow}">
-    <Grid Background="{DynamicResource PrimaryBackgroundBrush}">
+    <Grid Background="{DynamicResource PrimaryBackgroundBrush}" Margin="0,0,0,6">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -94,7 +94,51 @@
             <ComboBox x:Name="cmbTargetLanguage" Margin="5,0,5,5" Padding="5"
                       Style="{DynamicResource ThemedComboBox}"/>
             <CheckBox x:Name="chkEnableColorFilter" Content="OCR Renk Filtresi" 
-                      Margin="5,10,5,5" VerticalAlignment="Center"/>
+                      Margin="5,10,5,5" VerticalAlignment="Center" Checked="chkEnableColorFilter_Checked"/>
+            <CheckBox x:Name="chkEnableSkewCorrection" Content="Skew Correction (Döndürülmüş Metin Düzeltme)" 
+                      Margin="5,5,5,5" VerticalAlignment="Center"/>
+            <CheckBox x:Name="chkEnableHandwritingMode" Content="El Yazısı Modu" 
+                      Margin="5,5,5,5" VerticalAlignment="Center"/>
+            <CheckBox x:Name="chkEnableSuperResolution" Content="Süper Çözünürlük (Düşük Çözünürlük için)" 
+                      Margin="5,5,5,5" VerticalAlignment="Center"/>
+            <CheckBox x:Name="chkEnableAnomalyDetection" Content="Anomali Tespiti (Anormal Metinleri Filtrele)" 
+                      Margin="5,5,5,5" VerticalAlignment="Center" Checked="chkEnableAnomalyDetection_Checked" Unchecked="chkEnableAnomalyDetection_Unchecked"/>
+            <CheckBox x:Name="chkEnableMachineLearning" Content="Makine Öğrenmesi (Metin İyileştirme)" 
+                      Margin="5,5,5,5" VerticalAlignment="Center" Checked="chkEnableMachineLearning_Checked" Unchecked="chkEnableMachineLearning_Unchecked"/>
+            <CheckBox x:Name="chkEnableTextCorrection" Content="Metin Düzeltme (OCR Hatalarını Düzelt)" 
+                      Margin="5,5,5,5" VerticalAlignment="Center" Checked="chkEnableTextCorrection_Checked" Unchecked="chkEnableTextCorrection_Unchecked"/>
+            <CheckBox x:Name="chkEnableContextAnalysis" Content="Bağlam Analizi (Oyun Terimlerini Tanı)" 
+                      Margin="5,5,5,5" VerticalAlignment="Center" Checked="chkEnableContextAnalysis_Checked" Unchecked="chkEnableContextAnalysis_Unchecked"/>
+
+            <!-- ML ve Anomali İstatistikleri -->
+            <StackPanel Orientation="Horizontal" Margin="5,10,5,5">
+                <Button x:Name="btnMLStatistics" Content="ML İstatistikleri" 
+                        Style="{DynamicResource ThemedButton}" Width="120" Margin="0,0,5,0"
+                        Click="btnMLStatistics_Click"/>
+                <Button x:Name="btnAnomalyStatistics" Content="Anomali İstatistikleri" 
+                        Style="{DynamicResource ThemedButton}" Width="140" Margin="0,0,5,0"
+                        Click="btnAnomalyStatistics_Click"/>
+            </StackPanel>
+
+            <!-- Temizleme Butonları -->
+            <StackPanel Orientation="Horizontal" Margin="5,5,5,5">
+                <Button x:Name="btnClearMLHistory" Content="ML Geçmişini Temizle" 
+                        Style="{DynamicResource ThemedButton}" Width="140" Margin="0,0,5,0"
+                        Click="btnClearMLHistory_Click"/>
+                <Button x:Name="btnClearAnomalyHistory" Content="Anomali Geçmişini Temizle" 
+                        Style="{DynamicResource ThemedButton}" Width="160" Margin="0,0,5,0"
+                        Click="btnClearAnomalyHistory_Click"/>
+            </StackPanel>
+
+            <!-- Log Yönetimi -->
+            <StackPanel Orientation="Horizontal" Margin="5,5,5,5">
+                <Button x:Name="btnViewLogFile" Content="Log Dosyasını Görüntüle" 
+                        Style="{DynamicResource ThemedButton}" Width="150" Margin="0,0,5,0"
+                        Click="btnViewLogFile_Click"/>
+                <Button x:Name="btnClearLogFile" Content="Log Dosyasını Temizle" 
+                        Style="{DynamicResource ThemedButton}" Width="150" Margin="0,0,5,0"
+                        Click="btnClearLogFile_Click"/>
+            </StackPanel>
         </StackPanel>
         <!-- Sağ Panel Kontrolleri -->
         <StackPanel Grid.Row="3" Grid.Column="1" Margin="5">
@@ -123,6 +167,16 @@
                         <ComboBoxItem Content="EAST Modeli" Tag="East"/>
                         <ComboBoxItem Content="OpenCV " Tag="OpenCV"/>
                         <ComboBoxItem Content="Yok (Tam Ekran)" Tag="None"/>
+                    </ComboBox>
+                    <TextBlock Text="DNN Modeli:" Margin="0,5,0,5" 
+                               Foreground="{DynamicResource PrimaryTextBrush}"/>
+                    <ComboBox Name="cmbDnnModel"
+                              Style="{DynamicResource ThemedComboBox}"
+                              SelectionChanged="CmbDnnModel_SelectionChanged">
+                        <ComboBoxItem Content="EAST (Metin Tespiti)" Tag="EAST"/>
+                        <ComboBoxItem Content="CRNN (Metin Tanıma)" Tag="CRNN"/>
+                        <ComboBoxItem Content="PaddleOCR (Çok Dilli)" Tag="PaddleOCR"/>
+                        <ComboBoxItem Content="Custom (Özel Model)" Tag="Custom"/>
                     </ComboBox>
                     <TextBlock Text="Bu ayarların geçerli olması için uygulamanın yeniden başlatılması gerekmez."
                                TextWrapping="Wrap"
@@ -196,8 +250,8 @@
         </StackPanel>
         <!-- Kısayol Ayarları -->
         <GroupBox Header="Kısayol Ayarları" Grid.Row="3" Grid.Column="0" 
-          Style="{StaticResource ThemedGroupBox}" Margin="0,522,10,24" Grid.RowSpan="2">
-            <StackPanel x:Name="HotkeySettingsPanel" Margin="5">
+          Style="{StaticResource ThemedGroupBox}" Margin="10,623,6,157" Grid.RowSpan="2">
+            <StackPanel x:Name="HotkeySettingsPanel" Margin="10,0,6,0" Height="160">
                 <StackPanel Orientation="Horizontal" Margin="0,5">
                     <Label Content="OCR Kısayolu:" Style="{StaticResource ThemedLabel}" Width="100"/>
                     <local:HotkeyInputControl x:Name="hotkeyOcr" Width="150" Margin="5,0" 

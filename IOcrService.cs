@@ -1,3 +1,4 @@
+using OpenCvSharp;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -17,5 +18,8 @@ namespace P5S_ceviri
         Bitmap CropImage(Bitmap image, Rectangle region);
         List<Rectangle> FindTextRegions(Bitmap sourceImage);
         Bitmap IsolateTextByColor(Bitmap sourceImage);
+        Mat CreateEdgeMask(Mat imageMat);
+        Mat CreateContrastMask(Mat imageMat);
+        Scalar[] DetectTextColors(Mat hsvImage);
     }
 }

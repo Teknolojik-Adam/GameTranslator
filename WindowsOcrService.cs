@@ -1,4 +1,5 @@
-﻿using System;
+﻿using OpenCvSharp;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -139,6 +140,21 @@ namespace P5S_ceviri
 
                 return softwareBitmap;
             }
+        }
+
+        public Mat CreateEdgeMask(Mat imageMat)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Mat CreateContrastMask(Mat imageMat)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Scalar[] DetectTextColors(Mat hsvImage)
+        {
+            throw new NotImplementedException();
         }
     }
 }

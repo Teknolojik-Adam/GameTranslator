@@ -13,10 +13,14 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using System.ComponentModel;
+using OpenCvSharp;
+using Point = System.Drawing.Point; // System.Drawing.Point'ı varsayılan yap
+using CvPoint = OpenCvSharp.Point;
+using System.IO; // OpenCV Point'ı için alias
 
 namespace P5S_ceviri
 {
-    public partial class MainWindow : Window
+    public partial class MainWindow : System.Windows.Window
     {
         #region Win32 Imports and Fields
         [DllImport("user32.dll", SetLastError = true)]
@@ -29,11 +33,15 @@ namespace P5S_ceviri
         private readonly ITranslationService _translationService;
         private readonly ILogger _logger;
         private readonly IOcrService _ocrService;
+        private readonly WindowsOcrService _windowsOcrService;
         private readonly IGameRecipeService _gameRecipeService;
         private readonly SettingsManager _settingsManager;
         private readonly AppSettings _appSettings;
         private readonly EnhancedMemoryService _enhancedMemoryService;
         private readonly PointerValidationService _pointerValidationService;
+        private readonly AnomalyDetector _anomalyDetector;
+        private readonly MLTextProcessor _mlTextProcessor;
+        private readonly OcrRegionProcessor _ocrRegionProcessor;
         private readonly DispatcherTimer _continuousTranslationTimer;
         private readonly DispatcherTimer _manualTranslationTimer;
         private readonly DispatcherTimer _continuousOcrTimer;
@@ -73,9 +81,15 @@ namespace P5S_ceviri
                 _translationService = ServiceContainer.GetService<ITranslationService>();
                 _logger = ServiceContainer.GetService<ILogger>();
                 _ocrService = ServiceContainer.GetService<IOcrService>();
+                _windowsOcrService = ServiceContainer.GetService<WindowsOcrService>();
                 _gameRecipeService = ServiceContainer.GetService<IGameRecipeService>();
                 _settingsManager = ServiceContainer.GetService<SettingsManager>();
                 _appSettings = ServiceContainer.GetService<AppSettings>();
+                _enhancedMemoryService = ServiceContainer.GetService<EnhancedMemoryService>();
+                _pointerValidationService = ServiceContainer.GetService<PointerValidationService>();
+                _anomalyDetector = ServiceContainer.GetService<AnomalyDetector>();
+                _mlTextProcessor = ServiceContainer.GetService<MLTextProcessor>();
+                _ocrRegionProcessor = new OcrRegionProcessor(_ocrService, _translationService, _appSettings.OcrLanguage, _appSettings.TargetLanguage);
                 // UI bileşenlerini başlat
                 InitializeTranslationServices();
                 InitializeLanguageControls();
@@ -99,7 +113,7 @@ namespace P5S_ceviri
                     Interval = TimeSpan.FromMilliseconds(_appSettings.OcrTickIntervalMs > 100 ? _appSettings.OcrTickIntervalMs : 100)
                 };
                 _continuousOcrTimer.Tick += ContinuousOcrTimer_Tick;
-                // Pencere kapatma 
+                // Pencere kapatma olayı
                 this.Closing += (s, e) =>
                 {
                     // Son durumu kaydet
@@ -125,6 +139,7 @@ namespace P5S_ceviri
                     }
                     StopAllTranslations();
                     _memoryService?.Dispose();
+                    _ocrRegionProcessor?.Dispose();
                     _outputWindow?.Close();
                     ServiceContainer.Cleanup();
                 };
@@ -155,6 +170,9 @@ namespace P5S_ceviri
                 {
                     StartContinuousTranslation();
                 }
+                // Tema UI'sını başlat
+                InitializeThemeUI();
+                
                 _logger.LogInformation("Uygulama başarıyla başlatıldı.");
             }
             catch (Exception ex)
@@ -171,6 +189,8 @@ namespace P5S_ceviri
             base.OnSourceInitialized(e);
             try
             {
+                _logger?.LogInformation("OnSourceInitialized çağrıldı - Hotkey kayıtları başlatılıyor");
+                
                 var presentationSource = PresentationSource.FromVisual(this);
                 if (presentationSource == null)
                 {
@@ -186,6 +206,7 @@ namespace P5S_ceviri
                 _hotkeyManager = new HotkeyManager(hwndSource, _logger);
                 // Kısayolları kaydet
                 RegisterHotkeys();
+                _logger?.LogInformation("Hotkey kayıtları başarıyla tamamlandı");
             }
             catch (Exception ex)
             {
@@ -195,9 +216,23 @@ namespace P5S_ceviri
 
         protected override void OnClosed(EventArgs e)
         {
-            // Kısayolları kaldır
-            UnregisterHotkeys();
-            base.OnClosed(e);
+            try
+            {
+                _logger?.LogInformation("OnClosed çağrıldı - Uygulama kapatılıyor");
+                
+                // Kısayolları kaldır
+                UnregisterHotkeys();
+                
+                _logger?.LogInformation("Uygulama başarıyla kapatıldı");
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Uygulama kapatılırken hata oluştu", ex);
+            }
+            finally
+            {
+                base.OnClosed(e);
+            }
         }
 
         private void RegisterHotkeys()
@@ -397,11 +432,27 @@ namespace P5S_ceviri
             }
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
             if (pi == null) return;
-            // En iyi skorlu pointer'ı test et
-            var bestPath = _lastFoundPaths.First();
-            AppendToLog($"Pointer stabilite testi başlatılıyor: {bestPath}");
+
+            // Önce tüm pointer'ları ValidatePointersAsync ile doğrula
+            AppendToLog($"Pointer doğrulama testi başlatılıyor... ({_lastFoundPaths.Count} pointer)");
             try
             {
+                var validationResults = await _pointerValidationService.ValidatePointersAsync(pi.Process, _lastFoundPaths);
+                AppendToLog($"Pointer Doğrulama Sonuçları:");
+                
+                int validCount = 0;
+                foreach (var result in validationResults.Take(10)) // İlk 10 sonucu göster
+                {
+                    AppendToLog($"  • {result.Path}: Skor={result.Score}, Geçerli={result.IsValid}, Değer='{result.CurrentValue?.Substring(0, Math.Min(50, result.CurrentValue?.Length ?? 0))}'");
+                    if (result.IsValid) validCount++;
+                }
+                
+                AppendToLog($"Toplam {validCount}/{validationResults.Count} pointer geçerli bulundu.");
+
+                // En iyi skorlu pointer'ı stabilite testi ile test et
+                var bestPath = _lastFoundPaths.First();
+                AppendToLog($"En iyi pointer stabilite testi başlatılıyor: {bestPath}");
+                
                 var stabilityResult = await _pointerValidationService.TestPointerStabilityAsync(pi.Process, bestPath, 15, 500);
                 AppendToLog($"Stabilite Testi Sonuçları:");
                 AppendToLog($"  • Başarı Oranı: {stabilityResult.SuccessRate:F1}%");
@@ -417,7 +468,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                AppendToLog($"Stabilite testi sırasında hata: {ex.Message}", true);
+                AppendToLog($"Pointer testi sırasında hata: {ex.Message}", true);
             }
         }
 
@@ -448,7 +499,7 @@ namespace P5S_ceviri
             }
         }
 
-        private void btnLoadPointers_Click(object sender, RoutedEventArgs e)
+        private async void btnLoadPointers_Click(object sender, RoutedEventArgs e)
         {
             try
             {
@@ -471,6 +522,30 @@ namespace P5S_ceviri
                         }
                         btnTestPointer.IsEnabled = true;
                         btnSavePointers.IsEnabled = true;
+                        
+                        // Yüklenen pointer'ları otomatik olarak doğrula
+                        var pi = cmbProcesses.SelectedItem as ProcessInfo;
+                        if (pi != null)
+                        {
+                            AppendToLog("Yüklenen pointer'lar otomatik olarak doğrulanıyor...");
+                            try
+                            {
+                                var validationResults = await _pointerValidationService.ValidatePointersAsync(pi.Process, loadedPaths);
+                                int validCount = validationResults.Count(r => r.IsValid);
+                                AppendToLog($"Otomatik doğrulama tamamlandı: {validCount}/{validationResults.Count} pointer geçerli");
+                                
+                                // Geçerli olmayan pointer'ları listeden çıkar
+                                _lastFoundPaths = validationResults.Where(r => r.IsValid).Select(r => r.Path).ToList();
+                                if (_lastFoundPaths.Count != loadedPaths.Count)
+                                {
+                                    AppendToLog($"Geçersiz pointer'lar filtrelendi. Kalan: {_lastFoundPaths.Count}");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                AppendToLog($"Otomatik doğrulama hatası: {ex.Message}", true);
+                            }
+                        }
                     }
                     else
                     {
@@ -504,7 +579,7 @@ namespace P5S_ceviri
         {
             try
             {
-                // Dilleri ComboBox'lara yazmak için
+                // Dilleri ComboBox'lara doldur
                 var ocrLanguages = new List<string> { "eng", "jpn", "chi_sim", "kor", "rus" };
                 cmbOcrLanguage.ItemsSource = ocrLanguages;
                 var targetLanguages = new List<string> { "tr", "en", "de", "fr", "es" };
@@ -513,10 +588,25 @@ namespace P5S_ceviri
                 cmbOcrLanguage.SelectedItem = _appSettings.OcrLanguage;
                 cmbTargetLanguage.SelectedItem = _appSettings.TargetLanguage;
                 chkEnableColorFilter.IsChecked = _appSettings.EnableOcrColorFilter;
+                chkEnableSkewCorrection.IsChecked = _appSettings.EnableSkewCorrection;
+                chkEnableHandwritingMode.IsChecked = _appSettings.EnableHandwritingMode;
+                chkEnableSuperResolution.IsChecked = _appSettings.EnableSuperResolution;
+                chkEnableAnomalyDetection.IsChecked = _appSettings.EnableAnomalyDetection;
+                chkEnableMachineLearning.IsChecked = _appSettings.EnableMachineLearning;
+                chkEnableTextCorrection.IsChecked = _appSettings.EnableTextCorrection;
+                chkEnableContextAnalysis.IsChecked = _appSettings.EnableContextAnalysis;
+                cmbDnnModel.SelectedIndex = (int)_appSettings.SelectedDnnModel;
+                
                 // Olay dinleyicilerini ekle
                 cmbOcrLanguage.SelectionChanged += CmbOcrLanguage_SelectionChanged;
                 cmbTargetLanguage.SelectionChanged += CmbTargetLanguage_SelectionChanged;
                 chkEnableColorFilter.Click += ChkEnableColorFilter_Click;
+                chkEnableSkewCorrection.Click += ChkEnableSkewCorrection_Click;
+                chkEnableHandwritingMode.Click += ChkEnableHandwritingMode_Click;
+                chkEnableSuperResolution.Click += ChkEnableSuperResolution_Click;
+
+                // Metin algılama yöntemi seçimi
+                cmbTextDetectionMethod.SelectedIndex = (int)_appSettings.TextDetectionMethod;
             }
             catch (Exception ex)
             {
@@ -578,9 +668,26 @@ namespace P5S_ceviri
                 }
                 if (shouldTranslate)
                 {
-                    _lastReadText = currentText; // Çevrildi 
-                    string translated = await _translationService.TranslateAsync(currentText, _appSettings.TargetLanguage, GetSelectedTranslationStrategy());
-                    Dispatcher.Invoke(() => { txtOriginal.Text = $"[RAM] {currentText}"; UpdateTranslatedText(translated); });
+                    // Anomali tespiti
+                    if (_appSettings.EnableAnomalyDetection)
+                    {
+                        var anomalyResult = _anomalyDetector.DetectAnomaly(currentText, _lastReadText);
+                        if (anomalyResult.IsAnomalous && anomalyResult.Confidence >= _appSettings.AnomalyDetectionThreshold)
+                        {
+                            if (_appSettings.LogAnomalies)
+                            {
+                                AppendToLog($"RAM Anomali tespit edildi: {anomalyResult.Reason} (Güven: %{anomalyResult.Confidence * 100:F1})", true);
+                            }
+                            shouldTranslate = false; // Anormal metni çevirme
+                        }
+                    }
+
+                    if (shouldTranslate)
+                    {
+                        _lastReadText = currentText; // Çevrildi 
+                        string translated = await _translationService.TranslateAsync(currentText, _appSettings.TargetLanguage, GetSelectedTranslationStrategy());
+                        Dispatcher.Invoke(() => { txtOriginal.Text = $"[RAM] {currentText}"; UpdateTranslatedText(translated); });
+                    }
                 }
                 _potentiallyStableRamText = currentText;
             }
@@ -598,9 +705,27 @@ namespace P5S_ceviri
                 string currentText = await Task.Run(() => _memoryService.TryReadStringDeep(_manualAddress));
                 if (!string.IsNullOrWhiteSpace(currentText) && currentText != _lastManualText)
                 {
-                    _lastManualText = currentText;
-                    string translated = await _translationService.TranslateAsync(currentText, _appSettings.TargetLanguage, GetSelectedTranslationStrategy());
-                    Dispatcher.Invoke(() => { txtOriginal.Text = $"[Manuel] {currentText}"; UpdateTranslatedText(translated); });
+                    // Anomali tespiti
+                    bool shouldTranslate = true;
+                    if (_appSettings.EnableAnomalyDetection)
+                    {
+                        var anomalyResult = _anomalyDetector.DetectAnomaly(currentText, _lastManualText);
+                        if (anomalyResult.IsAnomalous && anomalyResult.Confidence >= _appSettings.AnomalyDetectionThreshold)
+                        {
+                            if (_appSettings.LogAnomalies)
+                            {
+                                AppendToLog($"Manuel Anomali tespit edildi: {anomalyResult.Reason} (Güven: %{anomalyResult.Confidence * 100:F1})", true);
+                            }
+                            shouldTranslate = false; // Anormal metni çevirme
+                        }
+                    }
+
+                    if (shouldTranslate)
+                    {
+                        _lastManualText = currentText;
+                        string translated = await _translationService.TranslateAsync(currentText, _appSettings.TargetLanguage, GetSelectedTranslationStrategy());
+                        Dispatcher.Invoke(() => { txtOriginal.Text = $"[Manuel] {currentText}"; UpdateTranslatedText(translated); });
+                    }
                 }
             }
             catch (Exception ex)
@@ -614,26 +739,32 @@ namespace P5S_ceviri
             // Aynı anda birden fazla OCR tick'i çalışmasını engellemek için
             if (_isOcrTickBusy) return;
             _isOcrTickBusy = true;
+            
             try
             {
                 if (!_isContinuousOcrRunning)
                     return;
+                    
                 var pi = cmbProcesses.SelectedItem as ProcessInfo;
                 if (pi == null || pi.Process.HasExited)
                 {
                     StopContinuousOcr();
                     return;
                 }
+                
                 IntPtr handle = pi.Process.MainWindowHandle;
                 if (handle == IntPtr.Zero)
                     return;
+
                 // Ekran görüntüsü alma
                 using (var screenshot = await Task.Run(() => _ocrService.CaptureWindow(handle)))
                 {
                     if (screenshot == null)
                         return;
+
                     Bitmap imageToProcess;
-                    //  kırpma
+                    
+                    // Kırpma işlemi
                     if (_selectedOcrRegion.HasValue)
                     {
                         var cropRect = _selectedOcrRegion.Value;
@@ -648,25 +779,150 @@ namespace P5S_ceviri
                     }
 
                     Bitmap imageForOcr = imageToProcess;
+                    
+                    // Renk filtresi uygula
                     if (_appSettings.EnableOcrColorFilter)
                     {
                         imageForOcr = _ocrService.IsolateTextByColor(imageToProcess);
                         imageToProcess.Dispose();
                     }
+                    
                     using (imageForOcr)
                     {
-                        string currentText = await _ocrService.GetTextAdaptiveAsync(imageForOcr, _appSettings.OcrLanguage);
+                        // Görüntü analizi yap
+                        using (var imageMat = OpenCvSharp.Extensions.BitmapConverter.ToMat(imageForOcr))
+                        {
+                            // Kenar maskesi oluştur (gerekirse)
+                            if (_appSettings.EnableOcrColorFilter)
+                            {
+                                using (var edgeMask = _ocrService.CreateEdgeMask(imageMat))
+                                using (var contrastMask = _ocrService.CreateContrastMask(imageMat))
+                                {
+                                   
+                                }
+                            }
+                        }
 
+                        // OCR işlemi - OcrRegionProcessor kullanarak
+                        _logger.LogInformation($"OCR işlemi başlatılıyor. OCR Motoru: {_appSettings.OcrEngine}, Dil: {_appSettings.OcrLanguage}");
+                        var regionResults = await _ocrRegionProcessor.ProcessChangedRegionsAsync(imageForOcr);
+                        string currentText = string.Join(" ", regionResults.Select(r => r.TranslatedText).Where(t => !string.IsNullOrWhiteSpace(t)));
+                        
+                        _logger.LogInformation($"OcrRegionProcessor sonucu: {regionResults.Count} bölge, Metin: '{currentText}'");
+
+                        // WindowsOcrService ile alternatif OCR işlemi (ayarlara göre)
+                        if (string.IsNullOrWhiteSpace(currentText) && _appSettings.OcrEngine == OcrEngineType.WindowsOcr)
+                        {
+                            try
+                            {
+                                _logger.LogInformation("WindowsOcrService ile alternatif OCR deneniyor...");
+                                var windowsOcrText = await _windowsOcrService.GetTextFromImage(imageForOcr, _appSettings.OcrLanguage);
+                                if (!string.IsNullOrWhiteSpace(windowsOcrText))
+                                {
+                                    currentText = windowsOcrText;
+                                    _logger.LogInformation($"WindowsOcrService ile metin tanındı: {currentText.Substring(0, Math.Min(50, currentText.Length))}...");
+                                }
+                                else
+                                {
+                                    _logger.LogWarning("WindowsOcrService metin tanıyamadı.");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError($"WindowsOcrService hatası: {ex.Message}", ex);
+                            }
+                        }
+                        
+                        // Eğer hala metin yoksa, doğrudan OCR servislerini dene
+                        if (string.IsNullOrWhiteSpace(currentText))
+                        {
+                            _logger.LogInformation("Doğrudan OCR servisleri deneniyor...");
+                            try
+                            {
+                                // IOcrService ile doğrudan metin tanıma
+                                var directOcrText = await _ocrService.GetTextFromImage(imageForOcr, _appSettings.OcrLanguage);
+                                if (!string.IsNullOrWhiteSpace(directOcrText))
+                                {
+                                    currentText = directOcrText;
+                                    _logger.LogInformation($"IOcrService ile metin tanındı: {currentText.Substring(0, Math.Min(50, currentText.Length))}...");
+                                }
+                                else
+                                {
+                                    _logger.LogWarning("IOcrService metin tanıyamadı.");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError($"IOcrService hatası: {ex.Message}", ex);
+                            }
+                        }
+
+                        // Anomali tespiti
+                        if (!string.IsNullOrWhiteSpace(currentText) && _appSettings.EnableAnomalyDetection)
+                        {
+                            var anomalyResult = _anomalyDetector.DetectAnomaly(currentText, _lastReadText);
+                            if (anomalyResult.IsAnomalous && anomalyResult.Confidence >= _appSettings.AnomalyDetectionThreshold)
+                            {
+                                if (_appSettings.LogAnomalies)
+                                {
+                                    AppendToLog($"Anomali tespit edildi: {anomalyResult.Reason} (Güven: %{anomalyResult.Confidence * 100:F1})", true);
+                                    _logger.LogWarning($"Anomali tespit edildi: {currentText} - {anomalyResult.Reason}");
+                                }
+                                currentText = string.Empty; // Anormal metni filtrele
+                            }
+                            else
+                            {
+                                _logger.LogInformation($"OCR metni anomali kontrolünden geçti: {currentText.Substring(0, Math.Min(50, currentText.Length))}...");
+                            }
+                        }
+
+                        // Makine öğrenmesi ile metin iyileştirme
+                        if (!string.IsNullOrWhiteSpace(currentText) && _appSettings.EnableMachineLearning)
+                        {
+                            using (var imageMat = OpenCvSharp.Extensions.BitmapConverter.ToMat(imageForOcr))
+                            {
+                                var mlResult = _mlTextProcessor.ProcessTextWithML(currentText, imageMat, _lastReadText);
+                                if (mlResult.Confidence >= _appSettings.MlConfidenceThreshold)
+                                {
+                                    currentText = mlResult.ProcessedText;
+                                    if (mlResult.Improvements.Any())
+                                    {
+                                        AppendToLog($"ML iyileştirmeleri: {string.Join(", ", mlResult.Improvements)} (Güven: %{mlResult.Confidence * 100:F1})");
+                                        _logger.LogInformation($"ML iyileştirmesi uygulandı: {string.Join(", ", mlResult.Improvements)}");
+                                    }
+                                }
+                                else
+                                {
+                                    _logger.LogInformation($"ML işleme güven eşiğinin altında: %{mlResult.Confidence * 100:F1}");
+                                }
+                            }
+                        }
+
+                        // Çeviri kararı
                         bool shouldTranslate;
-                        if (string.IsNullOrWhiteSpace(currentText)) shouldTranslate = false;
+                        if (string.IsNullOrWhiteSpace(currentText)) 
+                        {
+                            shouldTranslate = false;
+                            _logger.LogWarning("OCR işlemi başarısız - metin tanınamadı.");
+                            AppendToLog("OCR: Metin tanınamadı", true);
+                        }
                         else if (_appSettings.RequireStableOcr)
+                        {
                             shouldTranslate = currentText == _potentiallyStableOcrText && currentText != _lastReadText;
+                            _logger.LogInformation($"Kararlılık kontrolü: Mevcut='{currentText}', Potansiyel='{_potentiallyStableOcrText}', Son='{_lastReadText}', Çevir={shouldTranslate}");
+                        }
                         else
+                        {
                             shouldTranslate = currentText != _lastReadText;
+                            _logger.LogInformation($"Basit kontrol: Mevcut='{currentText}', Son='{_lastReadText}', Çevir={shouldTranslate}");
+                        }
+
                         if (shouldTranslate)
                         {
                             _lastReadText = currentText;
-                            // Çeviri 
+                            _logger.LogInformation($"Çeviri için metin hazır: {currentText.Substring(0, Math.Min(30, currentText.Length))}...");
+                            
+                            // Çeviri işlemi
                             string translated = await _translationService.TranslateAsync(
                                 currentText,
                                 _appSettings.TargetLanguage,
@@ -677,7 +933,13 @@ namespace P5S_ceviri
                                 txtOriginal.Text = $"[OCR] {currentText}";
                                 UpdateTranslatedText(translated);
                             });
+                            
+                            if (!string.IsNullOrWhiteSpace(translated))
+                            {
+                                _logger.LogInformation($"Çeviri tamamlandı: {translated.Substring(0, Math.Min(30, translated.Length))}...");
+                            }
                         }
+                        
                         _potentiallyStableOcrText = currentText;
                     }
                 }
@@ -694,7 +956,7 @@ namespace P5S_ceviri
 
         private void UpdateTranslatedText(string newTranslatedText)
         {
-            // Geçersiz veya tekrar eden mesajları geçmişe ekle
+            // Geçersiz veya tekrar eden mesajları geçmişe ekleme
             if (string.IsNullOrWhiteSpace(newTranslatedText) || (_translationHistory.Any() && _translationHistory.First.Value == newTranslatedText))
             {
                 return;
@@ -742,7 +1004,7 @@ namespace P5S_ceviri
                 }
                 _appSettings.LastProcessName = pi.ProcessName;
                 _settingsManager.SaveSettings(_appSettings);
-                _translationHistory.Clear(); // Geçmiş çevirileri temizlemmek için
+                _translationHistory.Clear(); // Geçmiş çevirileri temizlemek için
                 _lastReadText = "";
                 _potentiallyStableRamText = "";
                 _potentiallyStableOcrText = "";
@@ -854,10 +1116,30 @@ namespace P5S_ceviri
         private void StartContinuousOcr()
         {
             StopAllTranslations();
-            if (cmbProcesses.SelectedItem == null) { AppendToLog("Lütfen önce listeden bir oyun seçin."); return; }
+            if (cmbProcesses.SelectedItem == null) { 
+                AppendToLog("Lütfen önce listeden bir oyun seçin."); 
+                return; 
+            }
+            
+            var pi = cmbProcesses.SelectedItem as ProcessInfo;
+            if (pi == null || pi.Process.HasExited)
+            {
+                AppendToLog("Seçilen işlem geçersiz veya kapanmış.");
+                return;
+            }
+            
+            IntPtr handle = pi.Process.MainWindowHandle;
+            if (handle == IntPtr.Zero)
+            {
+                AppendToLog("Seçilen işlemin penceresi bulunamadı.");
+                return;
+            }
+            
+            _logger.LogInformation($"Sürekli OCR başlatılıyor. İşlem: {pi.ProcessName}, Pencere: {handle}, OCR Motoru: {_appSettings.OcrEngine}");
             _isContinuousOcrRunning = true;
             _continuousOcrTimer.Start();
             UpdateUIState();
+            AppendToLog($"Sürekli OCR başlatıldı. İşlem: {pi.ProcessName}");
         }
 
         private void StopAllTranslations()
@@ -1014,6 +1296,8 @@ namespace P5S_ceviri
         {
             try
             {
+                _logger?.LogInformation("InitializeThemeUI çağrıldı - Tema başlatılıyor");
+                
                 var currentTheme = ThemeManager.GetThemeFromString(_appSettings.Theme);
                 foreach (ComboBoxItem item in cmbTheme.Items)
                 {
@@ -1027,6 +1311,8 @@ namespace P5S_ceviri
                 {
                     cmbTheme.SelectedIndex = 0;
                 }
+                
+                _logger?.LogInformation($"Tema başarıyla başlatıldı: {_appSettings.Theme}");
             }
             catch (Exception ex)
             {
@@ -1076,14 +1362,115 @@ namespace P5S_ceviri
                     _settingsManager.SaveSettings(_appSettings);
                     AppendToLog($"OCR motoru değiştirildi: {engineName}");
 
-                    // OCR motoru değişme 
+                    // OCR motoru değiştiğinde metin algılama yöntemini güncelle
                     UpdateTextDetectionMethodOptions();
+                    
+                    // OCR servislerini test et
+                    AppendToLog("OCR servisleri test ediliyor...");
+                    TestWindowsOcrService();
                 }
             }
             catch (Exception ex)
             {
                 _logger?.LogError("OCR motoru değiştirme sırasında hata oluştu.", ex);
                 AppendToLog("OCR motoru değiştirme sırasında hata oluştu.", true);
+            }
+        }
+
+        private async void TestWindowsOcrService()
+        {
+            try
+            {
+                var pi = cmbProcesses.SelectedItem as ProcessInfo;
+                if (pi == null || pi.Process.HasExited)
+                {
+                    AppendToLog("Test için geçerli bir işlem seçin.", true);
+                    return;
+                }
+
+                IntPtr handle = pi.Process.MainWindowHandle;
+                if (handle == IntPtr.Zero)
+                {
+                    AppendToLog("İşlem penceresi bulunamadı.", true);
+                    return;
+                }
+
+                AppendToLog("OCR servisleri test ediliyor...");
+                
+                // Ekran görüntüsü al
+                using (var screenshot = await Task.Run(() => _ocrService.CaptureWindow(handle)))
+                {
+                    if (screenshot == null)
+                    {
+                        AppendToLog("Ekran görüntüsü alınamadı.", true);
+                        return;
+                    }
+
+                    AppendToLog($"Ekran görüntüsü alındı: {screenshot.Width}x{screenshot.Height}");
+
+                    // 1. WindowsOcrService ile metin tanıma
+                    try
+                    {
+                        AppendToLog("WindowsOcrService test ediliyor...");
+                        var windowsOcrText = await _windowsOcrService.GetTextFromImage(screenshot, _appSettings.OcrLanguage);
+                        if (!string.IsNullOrWhiteSpace(windowsOcrText))
+                        {
+                            AppendToLog($"WindowsOcrService başarılı! Tanınan metin: {windowsOcrText}");
+                        }
+                        else
+                        {
+                            AppendToLog("WindowsOcrService metin tanıyamadı.", true);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendToLog($"WindowsOcrService hatası: {ex.Message}", true);
+                    }
+
+                    // 2. IOcrService ile metin tanıma
+                    try
+                    {
+                        AppendToLog("IOcrService test ediliyor...");
+                        var iocrText = await _ocrService.GetTextFromImage(screenshot, _appSettings.OcrLanguage);
+                        if (!string.IsNullOrWhiteSpace(iocrText))
+                        {
+                            AppendToLog($"IOcrService başarılı! Tanınan metin: {iocrText}");
+                        }
+                        else
+                        {
+                            AppendToLog("IOcrService metin tanıyamadı.", true);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendToLog($"IOcrService hatası: {ex.Message}", true);
+                    }
+
+                    // 3. OcrRegionProcessor ile test
+                    try
+                    {
+                        AppendToLog("OcrRegionProcessor test ediliyor...");
+                        var regionResults = await _ocrRegionProcessor.ProcessChangedRegionsAsync(screenshot);
+                        var regionText = string.Join(" ", regionResults.Select(r => r.TranslatedText).Where(t => !string.IsNullOrWhiteSpace(t)));
+                        if (!string.IsNullOrWhiteSpace(regionText))
+                        {
+                            AppendToLog($"OcrRegionProcessor başarılı! Tanınan metin: {regionText}");
+                        }
+                        else
+                        {
+                            AppendToLog($"OcrRegionProcessor {regionResults.Count} bölge buldu ama metin yok.", true);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendToLog($"OcrRegionProcessor hatası: {ex.Message}", true);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendToLog($"OCR test hatası: {ex.Message}", true);
+                _logger.LogError($"OCR test hatası: {ex.Message}", ex);
             }
         }
 
@@ -1168,7 +1555,295 @@ namespace P5S_ceviri
             _appSettings.EnableOcrColorFilter = chkEnableColorFilter.IsChecked ?? true;
             _settingsManager.SaveSettings(_appSettings);
         }
+
+        private void chkEnableColorFilter_Checked(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableOcrColorFilter = chkEnableColorFilter.IsChecked ?? true;
+            _settingsManager.SaveSettings(_appSettings);
+        }
+
+        private void ChkEnableSkewCorrection_Click(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableSkewCorrection = chkEnableSkewCorrection.IsChecked ?? true;
+            _settingsManager.SaveSettings(_appSettings);
+        }
+
+        private void ChkEnableHandwritingMode_Click(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableHandwritingMode = chkEnableHandwritingMode.IsChecked ?? false;
+            _settingsManager.SaveSettings(_appSettings);
+        }
+
+        private void ChkEnableSuperResolution_Click(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableSuperResolution = chkEnableSuperResolution.IsChecked ?? false;
+            _settingsManager.SaveSettings(_appSettings);
+        }
+
+        private void chkEnableAnomalyDetection_Checked(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableAnomalyDetection = chkEnableAnomalyDetection.IsChecked ?? true;
+            _settingsManager.SaveSettings(_appSettings);
+            AppendToLog("Anomali tespiti etkinleştirildi");
+        }
+
+        private void chkEnableAnomalyDetection_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableAnomalyDetection = chkEnableAnomalyDetection.IsChecked ?? false;
+            _settingsManager.SaveSettings(_appSettings);
+            AppendToLog("Anomali tespiti devre dışı bırakıldı");
+        }
+
+        private void chkEnableMachineLearning_Checked(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableMachineLearning = chkEnableMachineLearning.IsChecked ?? true;
+            _settingsManager.SaveSettings(_appSettings);
+            AppendToLog("Makine öğrenmesi etkinleştirildi");
+        }
+
+        private void chkEnableMachineLearning_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableMachineLearning = chkEnableMachineLearning.IsChecked ?? false;
+            _settingsManager.SaveSettings(_appSettings);
+            AppendToLog("Makine öğrenmesi devre dışı bırakıldı");
+        }
+
+        private void chkEnableTextCorrection_Checked(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableTextCorrection = chkEnableTextCorrection.IsChecked ?? true;
+            _settingsManager.SaveSettings(_appSettings);
+            AppendToLog("Metin düzeltme etkinleştirildi");
+        }
+
+        private void chkEnableTextCorrection_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableTextCorrection = chkEnableTextCorrection.IsChecked ?? false;
+            _settingsManager.SaveSettings(_appSettings);
+            AppendToLog("Metin düzeltme devre dışı bırakıldı");
+        }
+
+        private void chkEnableContextAnalysis_Checked(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableContextAnalysis = chkEnableContextAnalysis.IsChecked ?? true;
+            _settingsManager.SaveSettings(_appSettings);
+            AppendToLog("Bağlam analizi etkinleştirildi");
+        }
+
+        private void chkEnableContextAnalysis_Unchecked(object sender, RoutedEventArgs e)
+        {
+            _appSettings.EnableContextAnalysis = chkEnableContextAnalysis.IsChecked ?? false;
+            _settingsManager.SaveSettings(_appSettings);
+            AppendToLog("Bağlam analizi devre dışı bırakıldı");
+        }
+
+        private void CmbDnnModel_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            try
+            {
+                if (cmbDnnModel.SelectedItem is ComboBoxItem selectedItem)
+                {
+                    string modelString = selectedItem.Tag.ToString();
+                    if (Enum.TryParse<DnnModelType>(modelString, out var model))
+                    {
+                        _appSettings.SelectedDnnModel = model;
+                        _settingsManager.SaveSettings(_appSettings);
+                        AppendToLog($"DNN modeli değiştirildi: {selectedItem.Content}");
+
+                        // Model özelliklerini açıkla
+                        switch (model)
+                        {
+                            case DnnModelType.EAST:
+                                AppendToLog("EAST: Yüksek doğruluklu metin tespiti");
+                                break;
+                            case DnnModelType.CRNN:
+                                AppendToLog("CRNN: Gelişmiş metin tanıma");
+                                break;
+                            case DnnModelType.PaddleOCR:
+                                AppendToLog("PaddleOCR: Çok dilli OCR desteği");
+                                break;
+                            case DnnModelType.Custom:
+                                AppendToLog("Custom: Özel DNN modeli");
+                                break;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("DNN modeli değiştirme sırasında hata oluştu.", ex);
+                AppendToLog("DNN modeli değiştirme sırasında hata oluştu.", true);
+            }
+        }
         #endregion
+
+        #region ML ve Anomali İstatistikleri
+
+        private void btnMLStatistics_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var stats = _mlTextProcessor.GetStatistics();
+                var message = $"ML İstatistikleri:\n\n" +
+                             $"İşlenen Toplam Metin: {stats.TotalTextsProcessed}\n" +
+                             $"Öğrenilen Benzersiz Kelime: {stats.UniqueWordsLearned}\n" +
+                             $"Yüklenen DNN Modeli: {stats.DnnModelsLoaded}\n" +
+                             $"Ortalama Güven Skoru: %{stats.AverageConfidence * 100:F1}";
+                
+                MessageBox.Show(message, "ML İstatistikleri", MessageBoxButton.OK, MessageBoxImage.Information);
+                AppendToLog($"ML istatistikleri görüntülendi: {stats.TotalTextsProcessed} metin işlendi");
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("ML istatistikleri alınırken hata oluştu.", ex);
+                AppendToLog("ML istatistikleri alınırken hata oluştu.", true);
+            }
+        }
+
+        private void btnAnomalyStatistics_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var stats = _anomalyDetector.GetStatistics();
+                var message = $"Anomali İstatistikleri:\n\n" +
+                             $"Analiz Edilen Toplam Metin: {stats.TotalTextsAnalyzed}\n" +
+                             $"Ortalama Metin Uzunluğu: {stats.AverageTextLength:F1} karakter\n" +
+                             $"Benzersiz Kelime Sayısı: {stats.UniqueWords}";
+                
+                MessageBox.Show(message, "Anomali İstatistikleri", MessageBoxButton.OK, MessageBoxImage.Information);
+                AppendToLog($"Anomali istatistikleri görüntülendi: {stats.TotalTextsAnalyzed} metin analiz edildi");
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Anomali istatistikleri alınırken hata oluştu.", ex);
+                AppendToLog("Anomali istatistikleri alınırken hata oluştu.", true);
+            }
+        }
+
+        private void btnClearMLHistory_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var result = MessageBox.Show("ML geçmişini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.", 
+                                           "ML Geçmişini Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                
+                if (result == MessageBoxResult.Yes)
+                {
+                    _mlTextProcessor.ClearHistory();
+                    AppendToLog("ML geçmişi başarıyla temizlendi");
+                    MessageBox.Show("ML geçmişi başarıyla temizlendi.", "Başarılı", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("ML geçmişi temizlenirken hata oluştu.", ex);
+                AppendToLog("ML geçmişi temizlenirken hata oluştu.", true);
+            }
+        }
+
+        private void btnClearAnomalyHistory_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var result = MessageBox.Show("Anomali tespit geçmişini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.", 
+                                           "Anomali Geçmişini Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                
+                if (result == MessageBoxResult.Yes)
+                {
+                    _anomalyDetector.ClearHistory();
+                    AppendToLog("Anomali tespit geçmişi başarıyla temizlendi");
+                    MessageBox.Show("Anomali tespit geçmişi başarıyla temizlendi.", "Başarılı", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Anomali geçmişi temizlenirken hata oluştu.", ex);
+                AppendToLog("Anomali geçmişi temizlenirken hata oluştu.", true);
+            }
+        }
+
         #endregion
+
+        #region Log Yönetimi
+
+        private void btnViewLogFile_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var logFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_log.txt");
+                if (File.Exists(logFilePath))
+                {
+                    var logContent = File.ReadAllText(logFilePath);
+                    var logWindow = new System.Windows.Window
+                    {
+                        Title = "Log Dosyası",
+                        Width = 800,
+                        Height = 600,
+                        WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                        Owner = this
+                    };
+
+                    var textBox = new TextBox
+                    {
+                        Text = logContent,
+                        IsReadOnly = true,
+                        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                        HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                        FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                        FontSize = 12,
+                        Margin = new Thickness(10)
+                    };
+
+                    logWindow.Content = textBox;
+                    logWindow.Show();
+                    
+                    _logger.LogInformation("Log dosyası görüntülendi");
+                }
+                else
+                {
+                    MessageBox.Show("Log dosyası bulunamadı.", "Bilgi", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Log dosyası görüntülenirken hata oluştu.", ex);
+                MessageBox.Show($"Log dosyası görüntülenirken hata oluştu: {ex.Message}", "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void btnClearLogFile_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var result = MessageBox.Show("Log dosyasını temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.", 
+                                           "Log Dosyasını Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                
+                if (result == MessageBoxResult.Yes)
+                {
+                    var logFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_log.txt");
+                    if (File.Exists(logFilePath))
+                    {
+                        File.WriteAllText(logFilePath, string.Empty);
+                        _logger.LogInformation("Log dosyası temizlendi");
+                        MessageBox.Show("Log dosyası başarıyla temizlendi.", "Başarılı", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                    else
+                    {
+                        MessageBox.Show("Log dosyası bulunamadı.", "Bilgi", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Log dosyası temizlenirken hata oluştu.", ex);
+                MessageBox.Show($"Log dosyası temizlenirken hata oluştu: {ex.Message}", "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        #endregion
+
+  
+        #endregion
+
+       
     }
 }

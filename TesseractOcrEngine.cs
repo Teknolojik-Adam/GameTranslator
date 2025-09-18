@@ -14,9 +14,12 @@ namespace P5S_ceviri
 
         public OcrEngineType EngineType => OcrEngineType.Tesseract;
 
-        public TesseractOcrEngine(ILogger logger)
+        private readonly AppSettings _appSettings;
+
+        public TesseractOcrEngine(ILogger logger, AppSettings appSettings = null)
         {
             _logger = logger;
+            _appSettings = appSettings;
         }
 
         public async Task<string> RecognizeTextAsync(Bitmap image, string language)
@@ -48,6 +51,12 @@ namespace P5S_ceviri
                     {
                         engine.DefaultPageSegMode = psm;
                         engine.SetVariable("user_defined_dpi", "300");
+
+                        // El yazısı modu ayarları
+                        if (_appSettings?.EnableHandwritingMode == true)
+                        {
+                            ConfigureHandwritingMode(engine);
+                        }
 
                         using (var page = engine.Process(preprocessedPix))
                         {
@@ -111,6 +120,35 @@ namespace P5S_ceviri
                                  })
                                  .OrderByDescending(x => x.Variance)
                                  .FirstOrDefault()?.Threshold ?? -1;
+            }
+        }
+        /// Tesseract'ı el yazısı tanıma için yapılandırır
+        private void ConfigureHandwritingMode(TesseractEngine engine)
+        {
+            try
+            {
+                // El yazısı için optimize edilmiş ayarlar
+                engine.SetVariable("tessedit_char_whitelist", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?;:()[]{}\"'");
+                engine.SetVariable("classify_bln_numeric_mode", "0");
+                engine.SetVariable("textord_min_linesize", "2.5");
+                engine.SetVariable("textord_old_baselines", "1");
+                engine.SetVariable("textord_old_xheight", "1");
+                engine.SetVariable("textord_min_xheight", "8");
+                engine.SetVariable("textord_force_make_prop_words", "F");
+                engine.SetVariable("tessedit_enable_doc_dict", "0");
+                engine.SetVariable("load_system_dawg", "0");
+                engine.SetVariable("load_freq_dawg", "0");
+                engine.SetVariable("load_punc_dawg", "0");
+                engine.SetVariable("load_number_dawg", "0");
+                engine.SetVariable("load_unambig_dawg", "0");
+                engine.SetVariable("load_bigram_dawg", "0");
+                engine.SetVariable("load_fixed_length_dawgs", "0");
+
+                _logger?.LogInformation("El yazısı modu etkinleştirildi");
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("El yazısı modu yapılandırılırken hata oluştu", ex);
             }
         }
     }

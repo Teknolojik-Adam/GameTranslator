@@ -1,13 +1,20 @@
-﻿using System;
+﻿using OpenCvSharp;
+using OpenCvSharp.Extensions;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
-using OpenCvSharp;
-using OpenCvSharp.Extensions;
 
 namespace P5S_ceviri
 {
+    public class RegionProcessResult
+    {
+        public Rectangle Region { get; set; }
+        public string RecognizedText { get; set; }
+        public string TranslatedText { get; set; }
+        public DateTime ProcessedAt { get; set; }
+    }
 
     public class OcrRegionProcessor : IDisposable
     {
@@ -20,7 +27,7 @@ namespace P5S_ceviri
         private Bitmap _previousImage;
         private bool _disposed = false;
 
-   
+
         public OcrRegionProcessor(IOcrService ocrService, ITranslationService translationService, string ocrLanguage, string targetLanguage, double changeThreshold = 0.01, int mergeTolerance = 15)
         {
             _ocrService = ocrService ?? throw new ArgumentNullException(nameof(ocrService));
@@ -32,42 +39,78 @@ namespace P5S_ceviri
         }
 
 
-        public async Task ProcessChangedRegionsAsync(Bitmap currentImage)
+        public async Task<List<RegionProcessResult>> ProcessChangedRegionsAsync(Bitmap currentImage)
         {
-            if (currentImage == null) return;
+            var results = new List<RegionProcessResult>();
+            
+            if (currentImage == null) 
+                return results;
 
             if (_previousImage == null)
             {
                 _previousImage = new Bitmap(currentImage);
-                return;
+                return results;
             }
 
-            // Değişen bölgeleri filtreleme
-            var changedRegions = _ocrService
-                .FindTextRegions(currentImage)
-                .Where(r => IsRegionChanged(_previousImage, currentImage, r))
-                .ToList();
-
-            // Bitişik bölgeleri birleştir
-            var mergedRegions = MergeAdjacentRegions(changedRegions, _mergeTolerance);
-
-            var tasks = mergedRegions.Select(async region =>
+            try
             {
-                using (var regionBmp = _ocrService.CropImage(currentImage, region))
+                // Değişen bölgeleri filtreleme
+                var changedRegions = _ocrService
+                    .FindTextRegions(currentImage)
+                    .Where(r => IsRegionChanged(_previousImage, currentImage, r))
+                    .ToList();
+
+                if (!changedRegions.Any())
                 {
-                    string recognized = await _ocrService.GetTextAdaptiveAsync(regionBmp, _ocrLanguage);
-                    if (!string.IsNullOrWhiteSpace(recognized))
-                    {
-                        string translated = await _translationService.TranslateAsync(recognized, _targetLanguage);
-                        OnOcrRegionProcessed(region, recognized, translated);
-                    }
+                    _previousImage?.Dispose();
+                    _previousImage = new Bitmap(currentImage);
+                    return results;
                 }
-            });
 
-            await Task.WhenAll(tasks);
+                // Bitişik bölgeleri birleştir
+                var mergedRegions = MergeAdjacentRegions(changedRegions, _mergeTolerance);
 
-            _previousImage?.Dispose();
-            _previousImage = new Bitmap(currentImage);
+                var tasks = mergedRegions.Select(async region =>
+                {
+                    try
+                    {
+                        using (var regionBmp = _ocrService.CropImage(currentImage, region))
+                        {
+                            string recognized = await _ocrService.GetTextAdaptiveAsync(regionBmp, _ocrLanguage);
+                            if (!string.IsNullOrWhiteSpace(recognized))
+                            {
+                                string translated = await _translationService.TranslateAsync(recognized, _targetLanguage, null);
+                                
+                                var result = new RegionProcessResult
+                                {
+                                    Region = region,
+                                    RecognizedText = recognized,
+                                    TranslatedText = translated,
+                                    ProcessedAt = DateTime.Now
+                                };
+                                
+                                results.Add(result);
+                                OnOcrRegionProcessed(region, recognized, translated);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        OnOcrRegionProcessError(region, ex);
+                    }
+                });
+
+                await Task.WhenAll(tasks);
+
+                _previousImage?.Dispose();
+                _previousImage = new Bitmap(currentImage);
+            }
+            catch (Exception ex)
+            {
+                OnOcrRegionProcessError(Rectangle.Empty, ex);
+            }
+
+            return results;
         }
 
         private List<Rectangle> MergeAdjacentRegions(List<Rectangle> regions, int mergeTolerance)
@@ -126,8 +169,22 @@ namespace P5S_ceviri
         }
         protected virtual void OnOcrRegionProcessed(Rectangle region, string recognizedText, string translatedText)
         {
-            Console.WriteLine($"[Bölge: {region}] “{recognizedText}” → “{translatedText}”");
+            // OCR bölgesi başarıyla işlendiğinde çağrılır
+            if (!string.IsNullOrWhiteSpace(recognizedText) && !string.IsNullOrWhiteSpace(translatedText))
+            {
+                Console.WriteLine($"[Bölge: {region}] \"{recognizedText}\" → \"{translatedText}\"");
+            }
+            else if (!string.IsNullOrWhiteSpace(recognizedText))
+            {
+                Console.WriteLine($"[Bölge: {region}] \"{recognizedText}\" → (çevrilemedi)");
+            }
         }
+
+        protected virtual void OnOcrRegionProcessError(Rectangle region, Exception exception)
+        {
+            Console.WriteLine($"[Hata - Bölge: {region}] {exception.Message}");
+        }
+
 
         public void Dispose()
         {

@@ -17,6 +17,14 @@ namespace P5S_ceviri
         None     // Metin algılama yok (tam ekran)
     }
 
+    public enum DnnModelType
+    {
+        EAST,           // EAST text detection
+        CRNN,           // CRNN text recognition
+        PaddleOCR,      // PaddleOCR model
+        Custom          // Custom DNN model
+    }
+
     public class AppSettings : INotifyPropertyChanged
     {
         private OcrEngineType _ocrEngine = OcrEngineType.Tesseract;
@@ -31,6 +39,34 @@ namespace P5S_ceviri
         {
             get => _textDetectionMethod;
             set { if (_textDetectionMethod != value) { _textDetectionMethod = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableAutoColorDetection = true;
+        public bool EnableAutoColorDetection
+        {
+            get => _enableAutoColorDetection;
+            set { if (_enableAutoColorDetection != value) { _enableAutoColorDetection = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableDynamicThresholding = true;
+        public bool EnableDynamicThresholding
+        {
+            get => _enableDynamicThresholding;
+            set { if (_enableDynamicThresholding != value) { _enableDynamicThresholding = value; OnPropertyChanged(); } }
+        }
+
+        private int _adaptiveThresholdBlockSize = 11;
+        public int AdaptiveThresholdBlockSize
+        {
+            get => _adaptiveThresholdBlockSize;
+            set { if (_adaptiveThresholdBlockSize != value) { _adaptiveThresholdBlockSize = value; OnPropertyChanged(); } }
+        }
+
+        private int _adaptiveThresholdC = 2;
+        public int AdaptiveThresholdC
+        {
+            get => _adaptiveThresholdC;
+            set { if (_adaptiveThresholdC != value) { _adaptiveThresholdC = value; OnPropertyChanged(); } }
         }
 
         private string _lastProcessName = "";
@@ -66,6 +102,48 @@ namespace P5S_ceviri
         {
             get => _enableOcrColorFilter;
             set { if (_enableOcrColorFilter != value) { _enableOcrColorFilter = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableSkewCorrection = true;
+        public bool EnableSkewCorrection
+        {
+            get => _enableSkewCorrection;
+            set { if (_enableSkewCorrection != value) { _enableSkewCorrection = value; OnPropertyChanged(); } }
+        }
+
+        private float _skewCorrectionThreshold = 0.5f;
+        public float SkewCorrectionThreshold
+        {
+            get => _skewCorrectionThreshold;
+            set { if (_skewCorrectionThreshold != value) { _skewCorrectionThreshold = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableHandwritingMode = false;
+        public bool EnableHandwritingMode
+        {
+            get => _enableHandwritingMode;
+            set { if (_enableHandwritingMode != value) { _enableHandwritingMode = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableSuperResolution = false;
+        public bool EnableSuperResolution
+        {
+            get => _enableSuperResolution;
+            set { if (_enableSuperResolution != value) { _enableSuperResolution = value; OnPropertyChanged(); } }
+        }
+
+        private float _superResolutionScale = 2.0f;
+        public float SuperResolutionScale
+        {
+            get => _superResolutionScale;
+            set { if (_superResolutionScale != value) { _superResolutionScale = value; OnPropertyChanged(); } }
+        }
+
+        private int _minImageSizeForSuperResolution = 50;
+        public int MinImageSizeForSuperResolution
+        {
+            get => _minImageSizeForSuperResolution;
+            set { if (_minImageSizeForSuperResolution != value) { _minImageSizeForSuperResolution = value; OnPropertyChanged(); } }
         }
 
         private Hotkey _toggleOcrHotkey = new Hotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.O);
@@ -242,6 +320,69 @@ namespace P5S_ceviri
         {
             get => _lastRamState;
             set { if (_lastRamState != value) { _lastRamState = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableAnomalyDetection = true;
+        public bool EnableAnomalyDetection
+        {
+            get => _enableAnomalyDetection;
+            set { if (_enableAnomalyDetection != value) { _enableAnomalyDetection = value; OnPropertyChanged(); } }
+        }
+
+        private double _anomalyDetectionThreshold = 0.7;
+        public double AnomalyDetectionThreshold
+        {
+            get => _anomalyDetectionThreshold;
+            set { if (_anomalyDetectionThreshold != value) { _anomalyDetectionThreshold = value; OnPropertyChanged(); } }
+        }
+
+        private bool _logAnomalies = true;
+        public bool LogAnomalies
+        {
+            get => _logAnomalies;
+            set { if (_logAnomalies != value) { _logAnomalies = value; OnPropertyChanged(); } }
+        }
+
+        private DnnModelType _selectedDnnModel = DnnModelType.EAST;
+        public DnnModelType SelectedDnnModel
+        {
+            get => _selectedDnnModel;
+            set { if (_selectedDnnModel != value) { _selectedDnnModel = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableMachineLearning = true;
+        public bool EnableMachineLearning
+        {
+            get => _enableMachineLearning;
+            set { if (_enableMachineLearning != value) { _enableMachineLearning = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableTextCorrection = true;
+        public bool EnableTextCorrection
+        {
+            get => _enableTextCorrection;
+            set { if (_enableTextCorrection != value) { _enableTextCorrection = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableContextAnalysis = true;
+        public bool EnableContextAnalysis
+        {
+            get => _enableContextAnalysis;
+            set { if (_enableContextAnalysis != value) { _enableContextAnalysis = value; OnPropertyChanged(); } }
+        }
+
+        private double _mlConfidenceThreshold = 0.8;
+        public double MlConfidenceThreshold
+        {
+            get => _mlConfidenceThreshold;
+            set { if (_mlConfidenceThreshold != value) { _mlConfidenceThreshold = value; OnPropertyChanged(); } }
+        }
+
+        private string _customDnnModelPath = "";
+        public string CustomDnnModelPath
+        {
+            get => _customDnnModelPath;
+            set { if (_customDnnModelPath != value) { _customDnnModelPath = value; OnPropertyChanged(); } }
         }
 
         public event PropertyChangedEventHandler PropertyChanged;

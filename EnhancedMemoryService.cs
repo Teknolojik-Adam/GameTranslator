@@ -14,8 +14,16 @@ namespace P5S_ceviri
         public event Action<string> StatusChanged;
         public event Action<int> ProgressChanged;
 
-        public EnhancedMemoryService(ILogger logger) : base(logger)
+        public EnhancedMemoryService(ILogger logger) : base(logger, new AppSettings())
         {
+            // Enhanced memory service için ek başlatma işlemleri
+            _logger?.LogInformation("EnhancedMemoryService başlatıldı");
+        }
+
+        public EnhancedMemoryService(ILogger logger, AppSettings appSettings) : base(logger, appSettings)
+        {
+            // Enhanced memory service için ek başlatma işlemleri
+            _logger?.LogInformation("EnhancedMemoryService başlatıldı (AppSettings ile)");
         }
 
         protected virtual void ReportStatus(string status)
