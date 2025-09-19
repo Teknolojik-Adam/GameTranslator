@@ -23,3 +23,4 @@ Notlar
 Akiş Şemasi
 
 <img width="318" height="466" alt="image"  src="https://github.com/user-attachments/assets/e6217574-e2d1-42ca-a6b4-bcb0e8d86f1b" />
+https://teknolojikadam.itch.io/teknolojikadamgametranslator
