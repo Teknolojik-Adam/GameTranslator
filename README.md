@@ -13,4 +13,5 @@ Ekran Çevirisini Başlat ile OCR tabanlı çeviri yapabilirsiniz.
 Çeviri penceresini açmak/gizlemek için ilgili butonu kullanın. Notlar • Bazı oyunlarda RAM adresleri güncellenirse, yeniden pointer yolu girmeniz gerekebilir. • OCR kalitesi, oyunun fontuna ve arka planına göre değişiklik gösterebilir. • Crunchyroll gibi anime veya film izleme platformlarında yaklaşık %90 başarı oranı sağlar.
 
 Akiş Şemasi
+
 <img width="318" height="466" alt="473813728-e6217574-e2d1-42ca-a6b4-bcb0e8d86f1b" src="https://github.com/user-attachments/assets/2f330cb8-563b-4d1c-832f-d48594f78142" />
