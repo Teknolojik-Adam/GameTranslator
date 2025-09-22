@@ -10,7 +10,7 @@
         Width="847"
         FontFamily="Segoe UI"
         Style="{DynamicResource ThemedWindow}">
-    <Grid Background="{DynamicResource PrimaryBackgroundBrush}" Margin="0,0,0,6">
+    <Grid Background="{DynamicResource PrimaryBackgroundBrush}" Margin="0,0,0,-17">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -75,9 +75,12 @@
         <StackPanel Grid.Row="3" Grid.Column="0" Margin="5">
             <GroupBox Header="RAM'den Çeviri" Style="{DynamicResource ThemedGroupBox}">
                 <StackPanel Margin="5">
-                    <Button Name="btnTranslate" Content="RAM Çevirisini Başlat" 
-                            Style="{DynamicResource ThemedButton}"
-                            Click="btnTranslate_Click"/>
+                <Button Name="btnTranslate" Content="RAM Çevirisini Başlat" 
+                        Style="{DynamicResource ThemedButton}"
+                        Click="btnTranslate_Click"/>
+                <Button Name="btnVideoOcr" Content="Video OCR Aç" 
+                        Style="{DynamicResource ThemedButton}"
+                        Click="btnVideoOcr_Click" Margin="0,5,0,0"/>
                     <TextBlock Text="Bellek Adresi (Hex):" Margin="0,10,0,5"
                                Foreground="{DynamicResource PrimaryTextBrush}"/>
                     <TextBox Name="txtAddress" Style="{DynamicResource ThemedTextBox}"/>
@@ -250,7 +253,7 @@
         </StackPanel>
         <!-- Kısayol Ayarları -->
         <GroupBox Header="Kısayol Ayarları" Grid.Row="3" Grid.Column="0" 
-          Style="{StaticResource ThemedGroupBox}" Margin="10,623,6,157" Grid.RowSpan="2">
+          Style="{StaticResource ThemedGroupBox}" Margin="10,643,10,157" Grid.RowSpan="2">
             <StackPanel x:Name="HotkeySettingsPanel" Margin="10,0,6,0" Height="160">
                 <StackPanel Orientation="Horizontal" Margin="0,5">
                     <Label Content="OCR Kısayolu:" Style="{StaticResource ThemedLabel}" Width="100"/>

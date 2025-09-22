@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
+using System.IO; 
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
@@ -9,14 +10,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
-using System.ComponentModel;
-using OpenCvSharp;
-using Point = System.Drawing.Point; // System.Drawing.Point'ı varsayılan yap
-using CvPoint = OpenCvSharp.Point;
-using System.IO; // OpenCV Point'ı için alias
 
 namespace P5S_ceviri
 {
@@ -42,6 +37,10 @@ namespace P5S_ceviri
         private readonly AnomalyDetector _anomalyDetector;
         private readonly MLTextProcessor _mlTextProcessor;
         private readonly OcrRegionProcessor _ocrRegionProcessor;
+        private readonly IRealtimeVideoOcrService _videoOcrService;
+        private readonly IVideoCaptureService _videoCaptureService;
+        private readonly IOcrComparisonService _ocrComparisonService;
+        private readonly IOcrAccuracyService _ocrAccuracyService;
         private readonly DispatcherTimer _continuousTranslationTimer;
         private readonly DispatcherTimer _manualTranslationTimer;
         private readonly DispatcherTimer _continuousOcrTimer;
@@ -89,8 +88,12 @@ namespace P5S_ceviri
                 _pointerValidationService = ServiceContainer.GetService<PointerValidationService>();
                 _anomalyDetector = ServiceContainer.GetService<AnomalyDetector>();
                 _mlTextProcessor = ServiceContainer.GetService<MLTextProcessor>();
+                _videoOcrService = ServiceContainer.GetService<IRealtimeVideoOcrService>();
+                _videoCaptureService = ServiceContainer.GetService<IVideoCaptureService>();
+                _ocrComparisonService = ServiceContainer.GetService<IOcrComparisonService>();
+                _ocrAccuracyService = ServiceContainer.GetService<IOcrAccuracyService>();
                 _ocrRegionProcessor = new OcrRegionProcessor(_ocrService, _translationService, _appSettings.OcrLanguage, _appSettings.TargetLanguage);
-                // UI bileşenlerini başlat
+                // UI bileşenlerini başlatmak için
                 InitializeTranslationServices();
                 InitializeLanguageControls();
                 // Veri bağlamayı ayarla
@@ -172,7 +175,7 @@ namespace P5S_ceviri
                 }
                 // Tema UI'sını başlat
                 InitializeThemeUI();
-                
+
                 _logger.LogInformation("Uygulama başarıyla başlatıldı.");
             }
             catch (Exception ex)
@@ -190,7 +193,7 @@ namespace P5S_ceviri
             try
             {
                 _logger?.LogInformation("OnSourceInitialized çağrıldı - Hotkey kayıtları başlatılıyor");
-                
+
                 var presentationSource = PresentationSource.FromVisual(this);
                 if (presentationSource == null)
                 {
@@ -219,10 +222,10 @@ namespace P5S_ceviri
             try
             {
                 _logger?.LogInformation("OnClosed çağrıldı - Uygulama kapatılıyor");
-                
+
                 // Kısayolları kaldır
                 UnregisterHotkeys();
-                
+
                 _logger?.LogInformation("Uygulama başarıyla kapatıldı");
             }
             catch (Exception ex)
@@ -439,20 +442,20 @@ namespace P5S_ceviri
             {
                 var validationResults = await _pointerValidationService.ValidatePointersAsync(pi.Process, _lastFoundPaths);
                 AppendToLog($"Pointer Doğrulama Sonuçları:");
-                
+
                 int validCount = 0;
                 foreach (var result in validationResults.Take(10)) // İlk 10 sonucu göster
                 {
                     AppendToLog($"  • {result.Path}: Skor={result.Score}, Geçerli={result.IsValid}, Değer='{result.CurrentValue?.Substring(0, Math.Min(50, result.CurrentValue?.Length ?? 0))}'");
                     if (result.IsValid) validCount++;
                 }
-                
+
                 AppendToLog($"Toplam {validCount}/{validationResults.Count} pointer geçerli bulundu.");
 
                 // En iyi skorlu pointer'ı stabilite testi ile test et
                 var bestPath = _lastFoundPaths.First();
                 AppendToLog($"En iyi pointer stabilite testi başlatılıyor: {bestPath}");
-                
+
                 var stabilityResult = await _pointerValidationService.TestPointerStabilityAsync(pi.Process, bestPath, 15, 500);
                 AppendToLog($"Stabilite Testi Sonuçları:");
                 AppendToLog($"  • Başarı Oranı: {stabilityResult.SuccessRate:F1}%");
@@ -522,7 +525,7 @@ namespace P5S_ceviri
                         }
                         btnTestPointer.IsEnabled = true;
                         btnSavePointers.IsEnabled = true;
-                        
+
                         // Yüklenen pointer'ları otomatik olarak doğrula
                         var pi = cmbProcesses.SelectedItem as ProcessInfo;
                         if (pi != null)
@@ -533,7 +536,7 @@ namespace P5S_ceviri
                                 var validationResults = await _pointerValidationService.ValidatePointersAsync(pi.Process, loadedPaths);
                                 int validCount = validationResults.Count(r => r.IsValid);
                                 AppendToLog($"Otomatik doğrulama tamamlandı: {validCount}/{validationResults.Count} pointer geçerli");
-                                
+
                                 // Geçerli olmayan pointer'ları listeden çıkar
                                 _lastFoundPaths = validationResults.Where(r => r.IsValid).Select(r => r.Path).ToList();
                                 if (_lastFoundPaths.Count != loadedPaths.Count)
@@ -596,7 +599,7 @@ namespace P5S_ceviri
                 chkEnableTextCorrection.IsChecked = _appSettings.EnableTextCorrection;
                 chkEnableContextAnalysis.IsChecked = _appSettings.EnableContextAnalysis;
                 cmbDnnModel.SelectedIndex = (int)_appSettings.SelectedDnnModel;
-                
+
                 // Olay dinleyicilerini ekle
                 cmbOcrLanguage.SelectionChanged += CmbOcrLanguage_SelectionChanged;
                 cmbTargetLanguage.SelectionChanged += CmbTargetLanguage_SelectionChanged;
@@ -739,19 +742,19 @@ namespace P5S_ceviri
             // Aynı anda birden fazla OCR tick'i çalışmasını engellemek için
             if (_isOcrTickBusy) return;
             _isOcrTickBusy = true;
-            
+
             try
             {
                 if (!_isContinuousOcrRunning)
                     return;
-                    
+
                 var pi = cmbProcesses.SelectedItem as ProcessInfo;
                 if (pi == null || pi.Process.HasExited)
                 {
                     StopContinuousOcr();
                     return;
                 }
-                
+
                 IntPtr handle = pi.Process.MainWindowHandle;
                 if (handle == IntPtr.Zero)
                     return;
@@ -763,7 +766,7 @@ namespace P5S_ceviri
                         return;
 
                     Bitmap imageToProcess;
-                    
+
                     // Kırpma işlemi
                     if (_selectedOcrRegion.HasValue)
                     {
@@ -779,14 +782,14 @@ namespace P5S_ceviri
                     }
 
                     Bitmap imageForOcr = imageToProcess;
-                    
+
                     // Renk filtresi uygula
                     if (_appSettings.EnableOcrColorFilter)
                     {
                         imageForOcr = _ocrService.IsolateTextByColor(imageToProcess);
                         imageToProcess.Dispose();
                     }
-                    
+
                     using (imageForOcr)
                     {
                         // Görüntü analizi yap
@@ -798,7 +801,7 @@ namespace P5S_ceviri
                                 using (var edgeMask = _ocrService.CreateEdgeMask(imageMat))
                                 using (var contrastMask = _ocrService.CreateContrastMask(imageMat))
                                 {
-                                   
+
                                 }
                             }
                         }
@@ -807,7 +810,7 @@ namespace P5S_ceviri
                         _logger.LogInformation($"OCR işlemi başlatılıyor. OCR Motoru: {_appSettings.OcrEngine}, Dil: {_appSettings.OcrLanguage}");
                         var regionResults = await _ocrRegionProcessor.ProcessChangedRegionsAsync(imageForOcr);
                         string currentText = string.Join(" ", regionResults.Select(r => r.TranslatedText).Where(t => !string.IsNullOrWhiteSpace(t)));
-                        
+
                         _logger.LogInformation($"OcrRegionProcessor sonucu: {regionResults.Count} bölge, Metin: '{currentText}'");
 
                         // WindowsOcrService ile alternatif OCR işlemi (ayarlara göre)
@@ -832,7 +835,7 @@ namespace P5S_ceviri
                                 _logger.LogError($"WindowsOcrService hatası: {ex.Message}", ex);
                             }
                         }
-                        
+
                         // Eğer hala metin yoksa, doğrudan OCR servislerini dene
                         if (string.IsNullOrWhiteSpace(currentText))
                         {
@@ -900,7 +903,7 @@ namespace P5S_ceviri
 
                         // Çeviri kararı
                         bool shouldTranslate;
-                        if (string.IsNullOrWhiteSpace(currentText)) 
+                        if (string.IsNullOrWhiteSpace(currentText))
                         {
                             shouldTranslate = false;
                             _logger.LogWarning("OCR işlemi başarısız - metin tanınamadı.");
@@ -921,7 +924,7 @@ namespace P5S_ceviri
                         {
                             _lastReadText = currentText;
                             _logger.LogInformation($"Çeviri için metin hazır: {currentText.Substring(0, Math.Min(30, currentText.Length))}...");
-                            
+
                             // Çeviri işlemi
                             string translated = await _translationService.TranslateAsync(
                                 currentText,
@@ -933,13 +936,13 @@ namespace P5S_ceviri
                                 txtOriginal.Text = $"[OCR] {currentText}";
                                 UpdateTranslatedText(translated);
                             });
-                            
+
                             if (!string.IsNullOrWhiteSpace(translated))
                             {
                                 _logger.LogInformation($"Çeviri tamamlandı: {translated.Substring(0, Math.Min(30, translated.Length))}...");
                             }
                         }
-                        
+
                         _potentiallyStableOcrText = currentText;
                     }
                 }
@@ -1039,6 +1042,28 @@ namespace P5S_ceviri
             }
         }
 
+        private void btnVideoOcr_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var videoOcrWindow = new VideoOcrWindow(
+                    _logger,
+                    _appSettings,
+                    _videoOcrService,
+                    _videoCaptureService,
+                    _ocrComparisonService,
+                    _ocrAccuracyService);
+
+                videoOcrWindow.Show();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error opening video OCR window", ex);
+                MessageBox.Show($"Video OCR penceresi açılırken hata oluştu: {ex.Message}",
+                              "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         private void btnContinuousOcr_Click(object sender, RoutedEventArgs e)
         {
             if (_isContinuousOcrRunning) StopContinuousOcr();
@@ -1116,25 +1141,26 @@ namespace P5S_ceviri
         private void StartContinuousOcr()
         {
             StopAllTranslations();
-            if (cmbProcesses.SelectedItem == null) { 
-                AppendToLog("Lütfen önce listeden bir oyun seçin."); 
-                return; 
+            if (cmbProcesses.SelectedItem == null)
+            {
+                AppendToLog("Lütfen önce listeden bir oyun seçin.");
+                return;
             }
-            
+
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
             if (pi == null || pi.Process.HasExited)
             {
                 AppendToLog("Seçilen işlem geçersiz veya kapanmış.");
                 return;
             }
-            
+
             IntPtr handle = pi.Process.MainWindowHandle;
             if (handle == IntPtr.Zero)
             {
                 AppendToLog("Seçilen işlemin penceresi bulunamadı.");
                 return;
             }
-            
+
             _logger.LogInformation($"Sürekli OCR başlatılıyor. İşlem: {pi.ProcessName}, Pencere: {handle}, OCR Motoru: {_appSettings.OcrEngine}");
             _isContinuousOcrRunning = true;
             _continuousOcrTimer.Start();
@@ -1297,7 +1323,7 @@ namespace P5S_ceviri
             try
             {
                 _logger?.LogInformation("InitializeThemeUI çağrıldı - Tema başlatılıyor");
-                
+
                 var currentTheme = ThemeManager.GetThemeFromString(_appSettings.Theme);
                 foreach (ComboBoxItem item in cmbTheme.Items)
                 {
@@ -1311,7 +1337,7 @@ namespace P5S_ceviri
                 {
                     cmbTheme.SelectedIndex = 0;
                 }
-                
+
                 _logger?.LogInformation($"Tema başarıyla başlatıldı: {_appSettings.Theme}");
             }
             catch (Exception ex)
@@ -1364,7 +1390,7 @@ namespace P5S_ceviri
 
                     // OCR motoru değiştiğinde metin algılama yöntemini güncelle
                     UpdateTextDetectionMethodOptions();
-                    
+
                     // OCR servislerini test et
                     AppendToLog("OCR servisleri test ediliyor...");
                     TestWindowsOcrService();
@@ -1396,7 +1422,7 @@ namespace P5S_ceviri
                 }
 
                 AppendToLog("OCR servisleri test ediliyor...");
-                
+
                 // Ekran görüntüsü al
                 using (var screenshot = await Task.Run(() => _ocrService.CaptureWindow(handle)))
                 {
@@ -1688,7 +1714,7 @@ namespace P5S_ceviri
                              $"Öğrenilen Benzersiz Kelime: {stats.UniqueWordsLearned}\n" +
                              $"Yüklenen DNN Modeli: {stats.DnnModelsLoaded}\n" +
                              $"Ortalama Güven Skoru: %{stats.AverageConfidence * 100:F1}";
-                
+
                 MessageBox.Show(message, "ML İstatistikleri", MessageBoxButton.OK, MessageBoxImage.Information);
                 AppendToLog($"ML istatistikleri görüntülendi: {stats.TotalTextsProcessed} metin işlendi");
             }
@@ -1708,7 +1734,7 @@ namespace P5S_ceviri
                              $"Analiz Edilen Toplam Metin: {stats.TotalTextsAnalyzed}\n" +
                              $"Ortalama Metin Uzunluğu: {stats.AverageTextLength:F1} karakter\n" +
                              $"Benzersiz Kelime Sayısı: {stats.UniqueWords}";
-                
+
                 MessageBox.Show(message, "Anomali İstatistikleri", MessageBoxButton.OK, MessageBoxImage.Information);
                 AppendToLog($"Anomali istatistikleri görüntülendi: {stats.TotalTextsAnalyzed} metin analiz edildi");
             }
@@ -1723,9 +1749,9 @@ namespace P5S_ceviri
         {
             try
             {
-                var result = MessageBox.Show("ML geçmişini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.", 
+                var result = MessageBox.Show("ML geçmişini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.",
                                            "ML Geçmişini Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
-                
+
                 if (result == MessageBoxResult.Yes)
                 {
                     _mlTextProcessor.ClearHistory();
@@ -1744,9 +1770,9 @@ namespace P5S_ceviri
         {
             try
             {
-                var result = MessageBox.Show("Anomali tespit geçmişini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.", 
+                var result = MessageBox.Show("Anomali tespit geçmişini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.",
                                            "Anomali Geçmişini Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
-                
+
                 if (result == MessageBoxResult.Yes)
                 {
                     _anomalyDetector.ClearHistory();
@@ -1795,7 +1821,7 @@ namespace P5S_ceviri
 
                     logWindow.Content = textBox;
                     logWindow.Show();
-                    
+
                     _logger.LogInformation("Log dosyası görüntülendi");
                 }
                 else
@@ -1814,9 +1840,9 @@ namespace P5S_ceviri
         {
             try
             {
-                var result = MessageBox.Show("Log dosyasını temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.", 
+                var result = MessageBox.Show("Log dosyasını temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.",
                                            "Log Dosyasını Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
-                
+
                 if (result == MessageBoxResult.Yes)
                 {
                     var logFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_log.txt");
@@ -1841,9 +1867,9 @@ namespace P5S_ceviri
 
         #endregion
 
-  
+
         #endregion
 
-       
+
     }
 }

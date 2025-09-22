@@ -154,6 +154,14 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+    <Page Include="VideoOcrWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="AccuracyReportWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
     <Compile Include="AdvancedTranslationService.cs" />
     <Compile Include="AnomalyDetector.cs" />
     <Compile Include="MLTextProcessor.cs" />
@@ -194,6 +202,20 @@
     <Compile Include="EnhancedMemoryService.cs" />
     <Compile Include="PointerValidationService.cs" />
     <Compile Include="PointerStabilityResult.cs" />
+    <Compile Include="IVideoCaptureService.cs" />
+    <Compile Include="VideoCaptureService.cs" />
+    <Compile Include="IOcrComparisonService.cs" />
+    <Compile Include="OcrComparisonService.cs" />
+    <Compile Include="IOcrAccuracyService.cs" />
+    <Compile Include="OcrAccuracyService.cs" />
+    <Compile Include="IRealtimeVideoOcrService.cs" />
+    <Compile Include="RealtimeVideoOcrService.cs" />
+    <Compile Include="VideoOcrWindow.xaml.cs">
+      <DependentUpon>VideoOcrWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="AccuracyReportWindow.xaml.cs">
+      <DependentUpon>AccuracyReportWindow.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Properties\AssemblyInfo.cs">

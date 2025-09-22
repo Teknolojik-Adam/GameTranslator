@@ -385,6 +385,77 @@ namespace P5S_ceviri
             set { if (_customDnnModelPath != value) { _customDnnModelPath = value; OnPropertyChanged(); } }
         }
 
+        // Video OCR Settings
+        private bool _enableVideoOcr = false;
+        public bool EnableVideoOcr
+        {
+            get => _enableVideoOcr;
+            set { if (_enableVideoOcr != value) { _enableVideoOcr = value; OnPropertyChanged(); } }
+        }
+
+        private int _videoOcrFrameRate = 30;
+        public int VideoOcrFrameRate
+        {
+            get => _videoOcrFrameRate;
+            set { if (_videoOcrFrameRate != value) { _videoOcrFrameRate = value; OnPropertyChanged(); } }
+        }
+
+        private int _videoOcrWidth = 640;
+        public int VideoOcrWidth
+        {
+            get => _videoOcrWidth;
+            set { if (_videoOcrWidth != value) { _videoOcrWidth = value; OnPropertyChanged(); } }
+        }
+
+        private int _videoOcrHeight = 480;
+        public int VideoOcrHeight
+        {
+            get => _videoOcrHeight;
+            set { if (_videoOcrHeight != value) { _videoOcrHeight = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableOcrComparison = true;
+        public bool EnableOcrComparison
+        {
+            get => _enableOcrComparison;
+            set { if (_enableOcrComparison != value) { _enableOcrComparison = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableOcrAccuracyScoring = false;
+        public bool EnableOcrAccuracyScoring
+        {
+            get => _enableOcrAccuracyScoring;
+            set { if (_enableOcrAccuracyScoring != value) { _enableOcrAccuracyScoring = value; OnPropertyChanged(); } }
+        }
+
+        private int _videoOcrDeviceIndex = 0;
+        public int VideoOcrDeviceIndex
+        {
+            get => _videoOcrDeviceIndex;
+            set { if (_videoOcrDeviceIndex != value) { _videoOcrDeviceIndex = value; OnPropertyChanged(); } }
+        }
+
+        private bool _enableOcrRegionDetection = true;
+        public bool EnableOcrRegionDetection
+        {
+            get => _enableOcrRegionDetection;
+            set { if (_enableOcrRegionDetection != value) { _enableOcrRegionDetection = value; OnPropertyChanged(); } }
+        }
+
+        private double _ocrConfidenceThreshold = 0.7;
+        public double OcrConfidenceThreshold
+        {
+            get => _ocrConfidenceThreshold;
+            set { if (_ocrConfidenceThreshold != value) { _ocrConfidenceThreshold = value; OnPropertyChanged(); } }
+        }
+
+        private int _ocrResultHistorySize = 100;
+        public int OcrResultHistorySize
+        {
+            get => _ocrResultHistorySize;
+            set { if (_ocrResultHistorySize != value) { _ocrResultHistorySize = value; OnPropertyChanged(); } }
+        }
+
         public event PropertyChangedEventHandler PropertyChanged;
         protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
         {

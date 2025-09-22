@@ -65,6 +65,21 @@ namespace P5S_ceviri
             services.AddSingleton<IOcrService>(sp =>
                 new OcrService(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
 
+            // Video OCR servisleri
+            services.AddSingleton<IVideoCaptureService>(sp =>
+                new VideoCaptureService(sp.GetRequiredService<ILogger>()));
+            services.AddSingleton<IOcrComparisonService>(sp =>
+                new OcrComparisonService(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
+            services.AddSingleton<IOcrAccuracyService>(sp =>
+                new OcrAccuracyService(sp.GetRequiredService<ILogger>()));
+            services.AddSingleton<IRealtimeVideoOcrService>(sp =>
+                new RealtimeVideoOcrService(
+                    sp.GetRequiredService<ILogger>(),
+                    sp.GetRequiredService<IVideoCaptureService>(),
+                    sp.GetRequiredService<IOcrComparisonService>(),
+                    sp.GetRequiredService<IOcrAccuracyService>(),
+                    sp.GetRequiredService<AppSettings>()));
+
             // Anomali tespit servisi
             services.AddSingleton<AnomalyDetector>(sp =>
                 new AnomalyDetector(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));

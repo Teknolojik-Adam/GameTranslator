@@ -1,0 +1,226 @@
+<Window x:Class="P5S_ceviri.VideoOcrWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Video OCR - Gerçek Zamanlı Metin Tanıma" Height="1053" Width="1200"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+
+    <Window.Resources>
+        <Style x:Key="HeaderStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Margin" Value="0,10,0,5"/>
+            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
+        </Style>
+
+        <Style x:Key="LabelStyle" TargetType="TextBlock">
+            <Setter Property="Margin" Value="0,5,0,2"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <Style x:Key="ButtonStyle" TargetType="Button">
+            <Setter Property="Margin" Value="5"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="MinWidth" Value="100"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Başlık -->
+        <Border Grid.Row="0" Background="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" Padding="10">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="🎥 Video OCR - Gerçek Zamanlı Metin Tanıma"
+                          FontSize="18" FontWeight="Bold"
+                          Foreground="White" VerticalAlignment="Center"/>
+                <TextBlock x:Name="StatusText" Text="Durduruldu"
+                          FontSize="14" Foreground="LightGray"
+                          Margin="20,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Ana İçerik -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Video ve Sonuçlar Paneli -->
+            <Grid Grid.Column="0" Margin="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Video Görüntüsü -->
+                <Border Grid.Row="0" BorderBrush="Gray" BorderThickness="2" CornerRadius="5">
+                    <Grid Background="Black">
+                        <Image x:Name="VideoDisplay" Stretch="Uniform"
+                              Width="640" Height="480"/>
+                        <TextBlock x:Name="VideoPlaceholder"
+                                  Text="Video akışı yok"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Foreground="Gray"
+                                  FontSize="16"/>
+                    </Grid>
+                </Border>
+
+                <!-- OCR Sonuçları -->
+                <GroupBox Grid.Row="1" Header="OCR Sonuçları" Margin="0,10,0,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Sonuç Başlığı -->
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
+                            <TextBlock Text="Motor:" Style="{StaticResource LabelStyle}"/>
+                            <TextBlock x:Name="EngineText" Text="Hiçbiri" Margin="5,0,20,0"/>
+                            <TextBlock Text="Güvenilirlik:" Style="{StaticResource LabelStyle}"/>
+                            <TextBlock x:Name="ConfidenceText" Text="%0" Margin="5,0,20,0"/>
+                            <TextBlock Text="Kare:" Style="{StaticResource LabelStyle}"/>
+                            <TextBlock x:Name="FrameText" Text="0" Margin="5,0,0,0"/>
+                        </StackPanel>
+
+                        <!-- Tanınan Metin -->
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="5">
+                            <Border BorderBrush="LightGray" BorderThickness="1" Background="White">
+                                <TextBlock x:Name="RecognizedTextBlock"
+                                          Text="Henüz tanınan metin yok..."
+                                          TextWrapping="Wrap"
+                                          FontFamily="Consolas"
+                                          FontSize="12"
+                                          Padding="10"/>
+                            </Border>
+                        </ScrollViewer>
+
+                        <!-- Doğruluk Puanı -->
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="5"
+                                   Visibility="{Binding ElementName=AccuracyPanel, Path=IsVisible}">
+                            <TextBlock Text="Doğruluk:" Style="{StaticResource LabelStyle}"/>
+                            <TextBlock x:Name="AccuracyText" Text="Yok" Margin="5,0,0,0"/>
+                        </StackPanel>
+                    </Grid>
+                </GroupBox>
+            </Grid>
+
+            <!-- Kontrol Paneli -->
+            <Grid Grid.Column="1" Margin="10">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+
+                        <!-- Video Ayarları -->
+                        <GroupBox Header="Video Ayarları" Margin="0,0,0,10">
+                            <StackPanel Margin="10">
+                                <TextBlock Text="Kameralar:" Style="{StaticResource LabelStyle}"/>
+                                <ComboBox x:Name="CameraComboBox" Margin="0,0,0,10"
+                                         SelectionChanged="CameraComboBox_SelectionChanged"/>
+
+                                <TextBlock Text="Kare Hızı:" Style="{StaticResource LabelStyle}"/>
+                                <Slider x:Name="FrameRateSlider" Minimum="1" Maximum="60" Value="30"
+                                       TickFrequency="5" IsSnapToTickEnabled="True"
+                                       ValueChanged="FrameRateSlider_ValueChanged"/>
+                                <TextBlock x:Name="FrameRateText" Text="30 FPS" HorizontalAlignment="Center"/>
+
+                                <TextBlock Text="Çözünürlük:" Style="{StaticResource LabelStyle}"/>
+                                <ComboBox x:Name="ResolutionComboBox" Margin="0,0,0,10"
+                                         SelectionChanged="ResolutionComboBox_SelectionChanged">
+                                    <ComboBoxItem Content="640x480" Tag="640,480"/>
+                                    <ComboBoxItem Content="800x600" Tag="800,600"/>
+                                    <ComboBoxItem Content="1024x768" Tag="1024,768"/>
+                                    <ComboBoxItem Content="1280x720" Tag="1280,720"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- OCR Ayarları -->
+                        <GroupBox Header="OCR Ayarları" Margin="0,0,0,10">
+                            <StackPanel Margin="10">
+                                <CheckBox x:Name="EnableComparisonCheckBox" Content="Motor Karşılaştırmasını Etkinleştir"
+                                         IsChecked="True" Margin="0,0,0,5"/>
+                                <CheckBox x:Name="EnableAccuracyScoringCheckBox" Content="Doğruluk Puanlamasını Etkinleştir"
+                                         Margin="0,0,0,5"/>
+                                <CheckBox x:Name="EnableRegionDetectionCheckBox" Content="Bölge Tespitini Etkinleştir"
+                                         IsChecked="True" Margin="0,0,0,5"/>
+
+                                <TextBlock Text="Güvenilirlik Eşiği:" Style="{StaticResource LabelStyle}"/>
+                                <Slider x:Name="ConfidenceThresholdSlider" Minimum="0" Maximum="1" Value="0.7"
+                                       TickFrequency="0.1" IsSnapToTickEnabled="True"
+                                       ValueChanged="ConfidenceThresholdSlider_ValueChanged"/>
+                                <TextBlock x:Name="ConfidenceThresholdText" Text="%70" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Referans Metin -->
+                        <GroupBox Header="Referans Metin (Doğruluk için)" Margin="0,0,0,10">
+                            <StackPanel Margin="10">
+                                <TextBlock Text="Beklenen Metin:" Style="{StaticResource LabelStyle}"/>
+                                <TextBox x:Name="GroundTruthTextBox" Height="60"
+                                        TextWrapping="Wrap" AcceptsReturn="True"
+                                        TextChanged="GroundTruthTextBox_TextChanged"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Kontrol Düğmeleri -->
+                        <GroupBox Header="Kontroller" Margin="0,0,0,10">
+                            <StackPanel Margin="10">
+                                <Button x:Name="StartButton" Content="Video OCR'ı Başlat"
+                                       Style="{StaticResource ButtonStyle}"
+                                       Click="StartButton_Click" Background="LightGreen"/>
+                                <Button x:Name="StopButton" Content="Video OCR'ı Durdur"
+                                       Style="{StaticResource ButtonStyle}"
+                                       Click="StopButton_Click" Background="LightCoral" IsEnabled="False"/>
+                                <Button x:Name="CaptureFrameButton" Content="Kare Yakala"
+                                       Style="{StaticResource ButtonStyle}"
+                                       Click="CaptureFrameButton_Click"/>
+                                <Button x:Name="GenerateReportButton" Content="Rapor Oluştur"
+                                       Style="{StaticResource ButtonStyle}"
+                                       Click="GenerateReportButton_Click"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- İstatistikler -->
+                        <GroupBox Header="İstatistikler" Margin="0,0,0,10">
+                            <StackPanel Margin="10">
+                                <TextBlock Text="İşlenen Kare Sayısı:" Style="{StaticResource LabelStyle}"/>
+                                <TextBlock x:Name="FramesProcessedText" Text="0" Margin="0,0,0,5"/>
+
+                                <TextBlock Text="Ortalama İşlem Süresi:" Style="{StaticResource LabelStyle}"/>
+                                <TextBlock x:Name="AvgProcessingTimeText" Text="0 ms" Margin="0,0,0,5"/>
+
+                                <TextBlock Text="En İyi Motor:" Style="{StaticResource LabelStyle}"/>
+                                <TextBlock x:Name="BestEngineText" Text="Hiçbiri" Margin="0,0,0,5"/>
+
+                                <TextBlock Text="Genel Doğruluk:" Style="{StaticResource LabelStyle}"/>
+                                <TextBlock x:Name="OverallAccuracyText" Text="Yok" Margin="0,0,0,5"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+
+        <!-- Durum Çubuğu -->
+        <StatusBar Grid.Row="2" Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusBarText" Text="Hazır"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock x:Name="PerformanceText" Text="Performans: Yok"/>
+            </StatusBarItem>
+        </StatusBar>
+
+    </Grid>
+</Window>
