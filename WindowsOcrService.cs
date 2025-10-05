@@ -2,15 +2,20 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading.Tasks;
 using Tesseract;
 using Windows.Globalization;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 using Windows.Storage.Streams;
+using System.Text.RegularExpressions;
+using OpenCvSharp.Extensions;
+using System.Drawing.Imaging;
+
 
 namespace P5S_ceviri
 {
@@ -34,19 +39,18 @@ namespace P5S_ceviri
                         _ocrEngine = OcrEngine.TryCreateFromLanguage(lang);
                     }
                 }
-
                 if (_ocrEngine != null)
                 {
                     _logger.LogInformation($"Dil için başlatılan Windows OCR Motoru: {_ocrEngine.RecognizerLanguage.DisplayName}");
                 }
                 else
                 {
-                    _logger.LogError("Windows OCR Altyapısı başlatılamadı. Lütfen Windows'ta desteklenen bir dil paketinin yüklü olduğundan ve görüntüleme dili olarak ayarlandığından emin olun.");
+                    _logger.LogError("Windows OCR Altyapısı başlatılamadı...");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError("Windows OCR Altyapısı başlatılamadı. Bu, gerekli bileşenler olmadan Windows güncell sürümlerinde olabilir.", ex);
+                _logger.LogError("Windows OCR Altyapısı başlatılamadı.", ex);
                 _ocrEngine = null;
             }
         }
@@ -54,18 +58,38 @@ namespace P5S_ceviri
         public async Task<string> RecognizeTextInRegionsAsync(Bitmap image, string language = "eng", PageSegMode psm = PageSegMode.Auto)
         {
             if (_ocrEngine == null || image == null) return string.Empty;
-
+            var allRecognizedText = new StringBuilder();
             try
             {
-                SoftwareBitmap softwareBitmap = await CreateSoftwareBitmapFromBitmap(image);
-                if (softwareBitmap == null)
+                using (Bitmap processedImage = PreprocessImage(image))
                 {
-                    _logger.LogWarning("SoftwareBitmap kaynak görüntüden oluşturulamadıSoftwareBitmap kaynak görüntüden oluşturulamadı.");
-                    return string.Empty;
+                    List<Rectangle> textRegions = FindTextRegions(processedImage);
+                    if (!textRegions.Any())
+                    {
+                        textRegions.Add(new Rectangle(0, 0, image.Width, image.Height));
+                        _logger.LogWarning("Hassas metin bölgesi bulunamadı, tüm görüntü işlenecek.");
+                    }
+                    foreach (var region in textRegions)
+                    {
+                        using (var croppedImage = CropImage(processedImage, region))
+                        {
+                            if (croppedImage == null) continue;
+                            SoftwareBitmap softwareBitmap = await CreateSoftwareBitmapFromBitmap(croppedImage);
+                            if (softwareBitmap == null)
+                            {
+                                _logger.LogWarning("SoftwareBitmap kaynak görüntüden oluşturulamadı.");
+                                continue;
+                            }
+                            OcrResult ocrResult = await _ocrEngine.RecognizeAsync(softwareBitmap);
+                            string rawOcrText = ocrResult.Text?.Trim() ?? string.Empty;
+                            if (!string.IsNullOrWhiteSpace(rawOcrText))
+                            {
+                                allRecognizedText.Append(rawOcrText).Append(" ");
+                            }
+                        }
+                    }
                 }
-
-                OcrResult ocrResult = await _ocrEngine.RecognizeAsync(softwareBitmap);
-                return ocrResult.Text?.Trim().Replace("", " ").Replace("", " ") ?? string.Empty;
+                return CleanOcrText(allRecognizedText.ToString());
             }
             catch (Exception ex)
             {
@@ -74,26 +98,41 @@ namespace P5S_ceviri
             }
         }
 
-        public Task<string> GetTextAdaptiveAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto)
-        {
-            return RecognizeTextInRegionsAsync(image, language, psm);
-        }
-
-        public Task<string> GetTextFromImage(Bitmap image, string language = "eng", bool invertColors = false)
-        {
-            return RecognizeTextInRegionsAsync(image, language);
-        }
+        public Task<string> GetTextAdaptiveAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto) => RecognizeTextInRegionsAsync(image, language, psm);
+        public Task<string> GetTextFromImage(Bitmap image, string language = "eng", bool invertColors = false) => RecognizeTextInRegionsAsync(image, language);
 
         public List<Rectangle> FindTextRegions(Bitmap sourceImage)
         {
             if (sourceImage == null) return new List<Rectangle>();
-            return new List<Rectangle> { new Rectangle(0, 0, sourceImage.Width, sourceImage.Height) };
+            using (Mat mat = BitmapConverter.ToMat(sourceImage))
+            using (Mat gray = new Mat())
+            {
+                Cv2.CvtColor(mat, gray, ColorConversionCodes.BGR2GRAY);
+           
+                using (Mat morphKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(15, 3)))
+                using (Mat grad = new Mat())
+                {
+                    Cv2.MorphologyEx(gray, grad, MorphTypes.Gradient, morphKernel);
+                    Cv2.Threshold(grad, grad, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+                  
+                    Cv2.FindContours(grad, out OpenCvSharp.Point[][] contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
+                    var textRegions = new List<Rectangle>();
+                   
+                    foreach (OpenCvSharp.Point[] contour in contours)
+                    {
+                      
+                        OpenCvSharp.Rect rect = Cv2.BoundingRect(contour);
+                        if (rect.Width > 10 && rect.Height > 5 && rect.Width < sourceImage.Width / 2)
+                        {
+                            textRegions.Add(new Rectangle(rect.X, rect.Y, rect.Width, rect.Height));
+                        }
+                    }
+                    return textRegions;
+                }
+            }
         }
 
-        public Bitmap IsolateTextByColor(Bitmap sourceImage)
-        {
-            return sourceImage;
-        }
+        public Bitmap IsolateTextByColor(Bitmap sourceImage) => sourceImage;
 
         [DllImport("user32.dll")] private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
@@ -104,57 +143,99 @@ namespace P5S_ceviri
             if (hWnd == IntPtr.Zero) return null;
             GetWindowRect(hWnd, out RECT rect);
             if (rect.Right - rect.Left <= 0 || rect.Bottom - rect.Top <= 0) return null;
-
             var bmp = new Bitmap(rect.Right - rect.Left, rect.Bottom - rect.Top, PixelFormat.Format32bppArgb);
             using (var gfx = Graphics.FromImage(bmp))
             {
                 IntPtr hdc = gfx.GetHdc();
-                PrintWindow(hWnd, hdc, 2); 
+                PrintWindow(hWnd, hdc, 2);
                 gfx.ReleaseHdc(hdc);
             }
             return bmp;
         }
 
-        public Bitmap CropImage(Bitmap image, Rectangle region)
-        {
-            if (image == null) return null;
-            return image.Clone(region, image.PixelFormat);
-        }
+        public Bitmap CropImage(Bitmap image, Rectangle region) => image?.Clone(region, image.PixelFormat);
 
         private async Task<SoftwareBitmap> CreateSoftwareBitmapFromBitmap(Bitmap bitmap)
         {
             if (bitmap == null) return null;
-
             using (var stream = new InMemoryRandomAccessStream())
             {
+              
                 bitmap.Save(stream.AsStreamForWrite(), System.Drawing.Imaging.ImageFormat.Bmp);
                 stream.Seek(0);
-
                 BitmapDecoder decoder = await BitmapDecoder.CreateAsync(stream);
                 SoftwareBitmap softwareBitmap = await decoder.GetSoftwareBitmapAsync();
-
                 if (softwareBitmap.BitmapPixelFormat != BitmapPixelFormat.Bgra8 || softwareBitmap.BitmapAlphaMode == BitmapAlphaMode.Straight)
                 {
                     softwareBitmap = SoftwareBitmap.Convert(softwareBitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
                 }
-
                 return softwareBitmap;
             }
         }
 
-        public Mat CreateEdgeMask(Mat imageMat)
+        public Bitmap PreprocessImage(Bitmap image)
         {
-            throw new NotImplementedException();
+            if (image == null) return null;
+            Bitmap processedBitmap = new Bitmap(image);
+            OptimizeImageForOcr(processedBitmap);
+            return processedBitmap;
         }
 
-        public Mat CreateContrastMask(Mat imageMat)
+        private void OptimizeImageForOcr(Bitmap bitmap)
         {
-            throw new NotImplementedException();
+            using (Mat src = BitmapConverter.ToMat(bitmap))
+            using (Mat gray = new Mat())
+            {
+                Cv2.CvtColor(src, gray, ColorConversionCodes.BGR2GRAY);
+                Cv2.EqualizeHist(gray, gray);
+                Cv2.Threshold(gray, gray, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+                Cv2.CvtColor(gray, src, ColorConversionCodes.GRAY2BGR);
+                BitmapConverter.ToBitmap(src, bitmap);
+            }
         }
 
-        public Scalar[] DetectTextColors(Mat hsvImage)
+        public string CleanOcrText(string ocrText)
         {
-            throw new NotImplementedException();
+            if (string.IsNullOrWhiteSpace(ocrText)) return string.Empty;
+            ocrText = ocrText.Trim();
+            ocrText = Regex.Replace(ocrText, @"\s+", " ");
+            ocrText = Regex.Replace(ocrText, @"\r\n|\r|\n", " ");
+            char[] punctuation = { '.', ',', ';', ':', '!', '?', '-', '_', '(', ')', '[', ']', '{', '}', '"', '\'' };
+            ocrText = new string(ocrText.Where(c => !punctuation.Contains(c)).ToArray());
+            ocrText = Regex.Replace(ocrText, @"[0-9]", "");
+            ocrText = Regex.Replace(ocrText, @"[^a-zA-Z\s]", "");
+            return ocrText;
+        }
+
+        public Mat CreateContrastMask(Mat sourceImage)
+        {
+            using (Mat gray = new Mat())
+            {
+                Cv2.CvtColor(sourceImage, gray, ColorConversionCodes.BGR2GRAY);
+                Mat mask = new Mat();
+                Cv2.AdaptiveThreshold(gray, mask, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.BinaryInv, 11, 2);
+                return mask;
+            }
+        }
+
+        public Mat CreateEdgeMask(Mat sourceImage)
+        {
+            using (Mat gray = new Mat())
+            {
+                Cv2.CvtColor(sourceImage, gray, ColorConversionCodes.BGR2GRAY);
+            
+                Cv2.Blur(gray, gray, new OpenCvSharp.Size(3, 3));
+                Mat edges = new Mat();
+                Cv2.Canny(gray, edges, 100, 200);
+                return edges;
+            }
+        }
+
+     
+        public Scalar[] DetectTextColors(Mat sourceImage)
+        {
+            _logger.LogWarning("DetectTextColors metodu henüz tam olarak uygulanmadı.");
+            return Array.Empty<Scalar>();
         }
     }
 }

@@ -132,7 +132,7 @@ namespace P5S_ceviri
         }
     }
 
-    // Cümle bölme ve birleştirme
+ 
     public class SentenceProcessor
     {
         private static readonly string[] SentenceEndings = { ".", "!", "?", "。", "！", "？" };
@@ -377,7 +377,7 @@ namespace P5S_ceviri
             // Önbelleği boyut sınırıyla yüklemek iççin
             var loadedCache = _cacheManager.LoadCache();
             _translationCache = new ConcurrentDictionary<string, string>(
-                loadedCache.Take(CacheSizeLimit).ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
+                loadedCache.AsEnumerable().Take(CacheSizeLimit).ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
                 StringComparer.OrdinalIgnoreCase
             );
 

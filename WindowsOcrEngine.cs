@@ -9,27 +9,41 @@ using Windows.Storage.Streams;
 
 namespace P5S_ceviri
 {
+  
     public class WindowsOcrEngine : IOcrEngine
     {
         private readonly ILogger _logger;
-        private readonly OcrEngine _ocrEngine;
+        private OcrEngine _ocrEngine;
+
+       
+        private Language _currentLanguage;
 
         public OcrEngineType EngineType => OcrEngineType.WindowsOcr;
 
         public WindowsOcrEngine(ILogger logger)
         {
             _logger = logger;
+            InitializeOcrEngine();
+        }
+
+        private void InitializeOcrEngine()
+        {
             try
             {
-               
+                // Varsayılan olarak kullanıcının sistem dilleriyle başlat
                 _ocrEngine = OcrEngine.TryCreateFromUserProfileLanguages();
-                if (_ocrEngine == null)
+                if (_ocrEngine != null)
+                {
+                    _currentLanguage = _ocrEngine.RecognizerLanguage;
+                }
+                else
                 {
                     _logger.LogWarning("Windows OCR motoru kullanıcının dil ayarlarıyla başlatılamadı. İngilizce'ye (en-US) fallback yapılıyor.");
                     var lang = new Language("en-US");
                     if (OcrEngine.IsLanguageSupported(lang))
                     {
                         _ocrEngine = OcrEngine.TryCreateFromLanguage(lang);
+                        _currentLanguage = lang;
                     }
                 }
 
@@ -39,20 +53,50 @@ namespace P5S_ceviri
                 }
                 else
                 {
-                    
                     _logger.LogError("Windows OCR motoru başlatılamadı. Lütfen Windows'ta desteklenen bir dil paketinin yüklü olduğundan emin olun.");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError("Windows OCR motoru başlatılırken kritik bir hata oluştu. Bu, gerekli Windows bileşenlerinin eksik olduğu anlamına gelebilir.", ex);
+                _logger.LogError("Windows OCR motoru başlatılırken kritik bir hata oluştu.", ex);
                 _ocrEngine = null;
+            }
+        }
+
+
+        public async Task<bool> LoadLanguageAsync(string languageCode)
+        {
+
+            try
+            {
+                var lang = new Language(languageCode);
+                if (!OcrEngine.IsLanguageSupported(lang))
+                {
+                    _logger.LogWarning($"Desteklenmeyen dil: {languageCode}");
+                    return false;
+                }
+
+                var newOcrEngine = OcrEngine.TryCreateFromLanguage(lang);
+                if (newOcrEngine != null)
+                {
+                    _ocrEngine = newOcrEngine;
+                    _currentLanguage = lang;
+                    _logger.LogInformation($"OCR motoru yeni dile ayarlandı: {_ocrEngine.RecognizerLanguage.DisplayName}");
+                    return true;
+                }
+
+                _logger.LogWarning($"Dil paketi yüklenemedi: {languageCode}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Dil paketi yüklenirken hata oluştu: {languageCode}", ex);
+                return false;
             }
         }
 
         public async Task<string> RecognizeTextAsync(Bitmap image, string language)
         {
-            
             if (_ocrEngine == null)
             {
                 _logger.LogWarning("Windows OCR motoru kullanılamıyor, tanıma işlemi atlandı.");
@@ -62,7 +106,16 @@ namespace P5S_ceviri
 
             try
             {
-                // Windows OCR API'si resmi dönüştürmek için
+
+                if (_currentLanguage == null || language != _currentLanguage.LanguageTag)
+                {
+                    bool languageLoaded = await LoadLanguageAsync(language);
+                    if (!languageLoaded)
+                    {
+                        _logger.LogWarning($"İstenen dil '{language}' yüklenemediği için varsayılan dil '{_currentLanguage?.DisplayName}' ile devam ediliyor.");
+                    }
+                }
+
                 using (SoftwareBitmap softwareBitmap = await CreateSoftwareBitmapFromBitmap(image))
                 {
                     if (softwareBitmap == null)
@@ -71,10 +124,7 @@ namespace P5S_ceviri
                         return string.Empty;
                     }
 
-                    // OCR işlemini gerçekleştir.
                     OcrResult ocrResult = await _ocrEngine.RecognizeAsync(softwareBitmap);
-
-                    // Sonucu temizleyip döndür.
                     return ocrResult.Text?.Trim().Replace("\n", " ").Replace("  ", " ") ?? string.Empty;
                 }
             }
@@ -85,29 +135,20 @@ namespace P5S_ceviri
             }
         }
 
-      
         private async Task<SoftwareBitmap> CreateSoftwareBitmapFromBitmap(Bitmap bitmap)
         {
             if (bitmap == null) return null;
 
             using (var stream = new InMemoryRandomAccessStream())
             {
-                // Bitmap'i bir bellek akışına BMP formatında kaydet.
                 bitmap.Save(stream.AsStreamForWrite(), System.Drawing.Imaging.ImageFormat.Bmp);
                 stream.Seek(0);
-
-                // Bellek akışından bir BitmapDecoder oluştur.
                 BitmapDecoder decoder = await BitmapDecoder.CreateAsync(stream);
-
-                // Decoder'dan SoftwareBitmap'i al.
                 SoftwareBitmap softwareBitmap = await decoder.GetSoftwareBitmapAsync();
-
-                // OCR motorunun en iyi şekilde çalışması için piksel formatını ve alfa modunu ayarla.
                 if (softwareBitmap.BitmapPixelFormat != BitmapPixelFormat.Bgra8 || softwareBitmap.BitmapAlphaMode == BitmapAlphaMode.Straight)
                 {
                     softwareBitmap = SoftwareBitmap.Convert(softwareBitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
                 }
-
                 return softwareBitmap;
             }
         }
