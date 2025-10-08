@@ -3,7 +3,6 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:P5S_ceviri"
         mc:Ignorable="d"
         Title="Anlık Oyun Çeviri Aracı" 
         Height="946" 
@@ -257,18 +256,17 @@
             <StackPanel x:Name="HotkeySettingsPanel" Margin="10,0,6,0" Height="160">
                 <StackPanel Orientation="Horizontal" Margin="0,5">
                     <Label Content="OCR Kısayolu:" Style="{StaticResource ThemedLabel}" Width="100"/>
-                    <local:HotkeyInputControl x:Name="hotkeyOcr" Width="150" Margin="5,0" 
-                                      Hotkey="{Binding ToggleOcrHotkey, Mode=TwoWay}"/>
+                    <TextBox x:Name="hotkeyOcr" Width="150" Margin="5,0"  Text="{Binding ToggleOcrHotkey, Mode=TwoWay}" IsReadOnly="True"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,5">
                     <Label Content="Çeviri Penceresi:" Style="{StaticResource ThemedLabel}" Width="100"/>
-                    <local:HotkeyInputControl x:Name="hotkeyTranslateWindow" Width="150" Margin="5,0" 
-                                      Hotkey="{Binding ToggleTranslateWindowHotkey, Mode=TwoWay}"/>
+                    <TextBox x:Name="hotkeyTranslateWindow" Width="150" Margin="5,0" 
+                             Text="{Binding ToggleTranslateWindowHotkey, Mode=TwoWay}" IsReadOnly="True"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,5">
                     <Label Content="Servis Değiştir:" Style="{StaticResource ThemedLabel}" Width="100"/>
-                    <local:HotkeyInputControl x:Name="hotkeySwitchService" Width="150" Margin="5,0" 
-                                      Hotkey="{Binding SwitchTranslationServiceHotkey, Mode=TwoWay}"/>
+                    <TextBox x:Name="hotkeySwitchService" Width="150" Margin="5,0" 
+                             Text="{Binding SwitchTranslationServiceHotkey, Mode=TwoWay}" IsReadOnly="True"/>
                 </StackPanel>
             </StackPanel>
         </GroupBox>

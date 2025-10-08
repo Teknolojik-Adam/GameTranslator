@@ -9,16 +9,18 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Tesseract;
-using CvPoint = OpenCvSharp.Point; // OpenCV Point'ı için alias
+using CvPoint = OpenCvSharp.Point;
 
 namespace P5S_ceviri
 {
     public class OcrService : IOcrService
     {
         #region Win32 Imports and Constants
+    
         [DllImport("user32.dll")] private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
         [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
         #endregion
 
         private readonly ILogger _logger;
@@ -44,18 +46,14 @@ namespace P5S_ceviri
             }
             else
             {
-                _logger.LogError($"EAST model bulunamadı: {Path.GetFullPath(EastModelPath)}. Metin algılama yapılamayacak.");
+                _logger.LogError($"EAST model bulunamadı: {Path.GetFullPath(EastModelPath)}. Gelişmiş metin algılama yapılamayacak.");
                 _eastNet = null;
             }
         }
 
         public async Task<string> GetTextFromImage(Bitmap image, string language, bool invertColors = false)
         {
-            // Ön işleme: Süper çözünürlük ve skew correction
-            using (var processedImage = PreprocessImageForOcr(image))
-            {
-                return await GetTextAdaptiveAsync(processedImage, language);
-            }
+            return await RecognizeTextInRegionsAsync(image, language);
         }
 
         public async Task<string> GetTextAdaptiveAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto)
@@ -73,56 +71,58 @@ namespace P5S_ceviri
         {
             if (image == null) return string.Empty;
 
-            // Metin algılama yöntemine göre optimizasyon
-            if (_appSettings.TextDetectionMethod == TextDetectionMethod.None)
+            using (var processedImage = PreprocessImageForOcr(image))
             {
-                // Tam ekran modunda doğrudan OCR yap
-                return await GetTextAdaptiveAsync(image, language, psm);
+                if (processedImage == null) return string.Empty;
+
+                if (_appSettings.TextDetectionMethod == TextDetectionMethod.None)
+                {
+                    return await GetTextAdaptiveAsync(processedImage, language, psm);
+                }
+
+                var regions = FindTextRegions(processedImage);
+                if (!regions.Any())
+                {
+                    _logger.LogWarning("Metin bölgesi algılanamadı. Tam görüntü taranıyor.");
+                    return await GetTextAdaptiveAsync(processedImage, language, psm);
+                }
+
+                _logger.LogInformation($"{regions.Count} adet metin bölgesi bulundu.");
+
+                var tasks = regions.Select(region => RecognizeTextInSingleRegionAsync(processedImage, region, language, psm));
+                var recognizedTexts = await Task.WhenAll(tasks);
+
+                return string.Join(" ", recognizedTexts.Where(t => !string.IsNullOrWhiteSpace(t)));
             }
-
-            var regions = FindTextRegions(image);
-            if (!regions.Any())
-            {
-                _logger.LogWarning("Metin bölgesi algılanamadı. Tam görüntü taranıyor.");
-                return await GetTextAdaptiveAsync(image, language, psm);
-            }
-
-            // Paralel bölge işleme
-            var tasks = regions.Select(region => RecognizeTextInSingleRegionAsync(image, region, language, psm));
-            var recognizedTexts = await Task.WhenAll(tasks);
-
-            return string.Join(" ", recognizedTexts.Where(t => !string.IsNullOrWhiteSpace(t)));
         }
 
         private async Task<string> RecognizeTextInSingleRegionAsync(Bitmap sourceImage, System.Drawing.Rectangle region, string language, PageSegMode psm)
         {
             using (var regionImage = CropImage(sourceImage, region))
             {
+                if (regionImage == null) return string.Empty;
                 return await GetTextAdaptiveAsync(regionImage, language, psm);
             }
         }
 
         public List<System.Drawing.Rectangle> FindTextRegions(Bitmap sourceImage)
         {
-            // Kullanıcı tercihi yoksa tam ekran tara
             if (_appSettings.TextDetectionMethod == TextDetectionMethod.None)
             {
                 return new List<System.Drawing.Rectangle> { new System.Drawing.Rectangle(0, 0, sourceImage.Width, sourceImage.Height) };
             }
 
-            // EAST modeli kullanılacaksa
             if (_appSettings.TextDetectionMethod == TextDetectionMethod.East)
             {
                 if (_eastNet == null || sourceImage == null)
                 {
-                    _logger?.LogWarning("EAST modeli yüklenmedi, tam ekran taranacak.");
+                    _logger.LogWarning("EAST modeli yüklenmedi, tam ekran taranacak.");
                     return new List<System.Drawing.Rectangle> { new System.Drawing.Rectangle(0, 0, sourceImage.Width, sourceImage.Height) };
                 }
 
                 return FindTextRegionsWithEast(sourceImage);
             }
 
-            // OpenCV ile genel metin algılama
             if (_appSettings.TextDetectionMethod == TextDetectionMethod.OpenCV)
             {
                 return FindTextRegionsWithOpenCV(sourceImage);
@@ -139,7 +139,7 @@ namespace P5S_ceviri
                 int newH = (int)(src.Height / 32.0) * 32;
                 if (newW <= 0 || newH <= 0)
                 {
-                    _logger?.LogWarning($"Resim boyutu ({src.Width}x{src.Height}) EAST modeli için çok küçük.");
+                    _logger.LogWarning($"Resim boyutu ({src.Width}x{src.Height}) EAST modeli için çok küçük.");
                     return new List<System.Drawing.Rectangle>();
                 }
                 double rW = (double)src.Width / newW;
@@ -166,7 +166,6 @@ namespace P5S_ceviri
                                 vertices[j].Y = vertices[j].Y * (float)rH;
                             }
                             var boundingBox = Cv2.BoundingRect(vertices);
-                            // OpenCV Rect'i System.Drawing Rectangle'a dönüştür
                             int x = Math.Max(0, boundingBox.X);
                             int y = Math.Max(0, boundingBox.Y);
                             int width = Math.Min(sourceImage.Width - x, boundingBox.Width);
@@ -179,7 +178,6 @@ namespace P5S_ceviri
                             if (width > 10 && height > 5)
                                 finalRects.Add(new System.Drawing.Rectangle(x, y, width, height));
                         }
-                        foreach (var mat in output) mat.Dispose();
                         return finalRects;
                     }
                 }
@@ -192,40 +190,31 @@ namespace P5S_ceviri
             using (Mat gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
             using (Mat binary = ApplyDynamicThresholding(gray))
             {
-                // Gürültü azaltma
                 Mat denoised = new Mat();
                 Cv2.MedianBlur(binary, denoised, 3);
 
-                // Morfolojik işlemler
                 Mat kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new OpenCvSharp.Size(3, 3));
                 Cv2.MorphologyEx(denoised, denoised, MorphTypes.Open, kernel);
                 Cv2.MorphologyEx(denoised, denoised, MorphTypes.Close, kernel);
 
-                // Kontur bulma
-                Cv2.FindContours(denoised, out var contours, out _, RetrievalModes.External,
-                    ContourApproximationModes.ApproxSimple);
+                Cv2.FindContours(denoised, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
 
                 var regions = new List<System.Drawing.Rectangle>();
                 foreach (var contour in contours)
                 {
-                    // OpenCV Rect'i System.Drawing Rectangle'a dönüştür
                     var cvRect = Cv2.BoundingRect(contour);
                     var rect = new System.Drawing.Rectangle(cvRect.X, cvRect.Y, cvRect.Width, cvRect.Height);
 
-                    // Filtreleme: çok küçük veya çok büyük alanları çıkar
                     if (rect.Width > 20 && rect.Height > 10 &&
                         rect.Width < src.Width * 0.9 && rect.Height < src.Height * 0.9)
                     {
-                        // En-boy oranı kontrolü (metinler genelde yatay)
                         double aspectRatio = (double)rect.Width / rect.Height;
                         if (aspectRatio > 1.5 || aspectRatio < 0.67)
                         {
-                            // Kontur alanını kontrol et
                             double area = Cv2.ContourArea(contour);
                             double boundingArea = rect.Width * rect.Height;
                             double solidity = area / boundingArea;
 
-                            // Doldurma oranı yüksekse (metinler genelde dolgudur)
                             if (solidity > 0.3)
                             {
                                 regions.Add(rect);
@@ -247,33 +236,22 @@ namespace P5S_ceviri
 
             if (_appSettings.EnableDynamicThresholding)
             {
-                // Görüntü kalitesini analiz et
                 double mean = Cv2.Mean(grayImage).Val0;
                 double stdDev = CalculateStandardDeviation(grayImage);
 
-                // Görüntü koşullarına göre eşikleme yöntemi seç
-                if (stdDev < 30) // Düşük kontrastlı görüntü
+                if (stdDev < 30)
                 {
-                    // Global eşikleme
                     Cv2.Threshold(grayImage, binary, 0, 255, ThresholdTypes.Otsu | ThresholdTypes.Binary);
                 }
-                else if (stdDev > 80) // Yüksek kontrastlı görüntü
+                else if (stdDev > 80)
                 {
-                    // Adaptif eşikleme
                     int blockSize = _appSettings.AdaptiveThresholdBlockSize;
                     int C = _appSettings.AdaptiveThresholdC;
-
-                    // Blok boyutunun tek sayı olduğundan emin ol
                     if (blockSize % 2 == 0) blockSize++;
-
-                    Cv2.AdaptiveThreshold(grayImage, binary, 255,
-                        AdaptiveThresholdTypes.GaussianC,
-                        ThresholdTypes.Binary,
-                        blockSize, C);
+                    Cv2.AdaptiveThreshold(grayImage, binary, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, blockSize, C);
                 }
-                else // Orta kontrastlı görüntü
+                else
                 {
-                    // Hibrit yaklaşım
                     Mat globalBinary = new Mat();
                     Mat adaptiveBinary = new Mat();
 
@@ -283,12 +261,8 @@ namespace P5S_ceviri
                     int C = _appSettings.AdaptiveThresholdC;
                     if (blockSize % 2 == 0) blockSize++;
 
-                    Cv2.AdaptiveThreshold(grayImage, adaptiveBinary, 255,
-                        AdaptiveThresholdTypes.GaussianC,
-                        ThresholdTypes.Binary,
-                        blockSize, C);
+                    Cv2.AdaptiveThreshold(grayImage, adaptiveBinary, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, blockSize, C);
 
-                    // İki sonucu birleştir
                     Cv2.BitwiseOr(globalBinary, adaptiveBinary, binary);
 
                     globalBinary.Dispose();
@@ -297,15 +271,11 @@ namespace P5S_ceviri
             }
             else
             {
-                // Standart adaptif eşikleme
                 int blockSize = _appSettings.AdaptiveThresholdBlockSize;
                 int C = _appSettings.AdaptiveThresholdC;
                 if (blockSize % 2 == 0) blockSize++;
 
-                Cv2.AdaptiveThreshold(grayImage, binary, 255,
-                    AdaptiveThresholdTypes.GaussianC,
-                    ThresholdTypes.Binary,
-                    blockSize, C);
+                Cv2.AdaptiveThreshold(grayImage, binary, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, blockSize, C);
             }
 
             return binary;
@@ -370,23 +340,17 @@ namespace P5S_ceviri
         }
 
         public Bitmap CropImage(Bitmap image, System.Drawing.Rectangle region) => image.Clone(region, image.PixelFormat);
-        /// OCR için görüntüyü ön işleme tabi tutar (süper çözünürlük, skew correction)
+
         private Bitmap PreprocessImageForOcr(Bitmap originalImage)
         {
             if (originalImage == null) return null;
-
             Bitmap processedImage = originalImage;
-
             try
             {
-                // 1. Süper çözünürlük uygula (küçük görüntüler için)
                 if (_appSettings.EnableSuperResolution && ShouldApplySuperResolution(originalImage))
                 {
                     processedImage = ApplySuperResolution(processedImage);
-                    _logger?.LogInformation($"Süper çözünürlük uygulandı: {originalImage.Width}x{originalImage.Height} -> {processedImage.Width}x{processedImage.Height}");
                 }
-
-                // 2. Skew correction uygula
                 if (_appSettings.EnableSkewCorrection)
                 {
                     float skewAngle = DetectSkewAngle(processedImage);
@@ -395,81 +359,56 @@ namespace P5S_ceviri
                         var correctedImage = CorrectSkew(processedImage, skewAngle);
                         if (processedImage != originalImage) processedImage.Dispose();
                         processedImage = correctedImage;
-                        _logger?.LogInformation($"Skew correction uygulandı: {skewAngle:F2}°");
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger?.LogError("Görüntü ön işleme sırasında hata oluştu", ex);
+                _logger.LogError("Görüntü ön işleme sırasında hata oluştu", ex);
                 if (processedImage != originalImage) processedImage.Dispose();
-                return originalImage;
+                return new Bitmap(originalImage); 
             }
-
             return processedImage;
         }
-        /// Süper çözünürlük uygulanıp uygulanmayacağını belirler
-        private bool ShouldApplySuperResolution(Bitmap image)
-        {
-            return image.Width < _appSettings.MinImageSizeForSuperResolution ||
-                   image.Height < _appSettings.MinImageSizeForSuperResolution;
-        }
-        /// Süper çözünürlük uygular
+
+        private bool ShouldApplySuperResolution(Bitmap image) => image.Width < _appSettings.MinImageSizeForSuperResolution || image.Height < _appSettings.MinImageSizeForSuperResolution;
         private Bitmap ApplySuperResolution(Bitmap image)
         {
             if (image == null) return null;
-
             using (Mat src = BitmapConverter.ToMat(image))
             {
                 var upscaled = new Mat();
-                Cv2.Resize(src, upscaled, new OpenCvSharp.Size(0, 0), _appSettings.SuperResolutionScale, _appSettings.SuperResolutionScale,
-                    InterpolationFlags.Cubic);
-
-                // Gürültü azaltma
+                Cv2.Resize(src, upscaled, new OpenCvSharp.Size(0, 0), _appSettings.SuperResolutionScale, _appSettings.SuperResolutionScale, InterpolationFlags.Cubic);
                 Mat denoised = new Mat();
                 Cv2.BilateralFilter(upscaled, denoised, 9, 75, 75);
-
+                upscaled.Dispose();
                 return BitmapConverter.ToBitmap(denoised);
             }
         }
-        /// Görüntüdeki skew açısını tespit eder
+
+
         private float DetectSkewAngle(Bitmap image)
         {
             if (image == null) return 0f;
-
             using (Mat src = BitmapConverter.ToMat(image))
             using (Mat gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
             using (Mat binary = new Mat())
             {
-                // Binary görüntü oluştur
                 Cv2.Threshold(gray, binary, 0, 255, ThresholdTypes.Otsu | ThresholdTypes.Binary);
-
-                // Morfolojik işlemler
                 Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(3, 3));
                 Cv2.MorphologyEx(binary, binary, MorphTypes.Close, kernel);
-
-                // Konturları bul
-                Cv2.FindContours(binary, out var contours, out _, RetrievalModes.External,
-                    ContourApproximationModes.ApproxSimple);
-
+                kernel.Dispose();
+                Cv2.FindContours(binary, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
                 if (contours.Length == 0) return 0f;
-
-                // En büyük konturu bul
-                var largestContour = contours.OrderByDescending(contour => Cv2.ContourArea(contour)).First();
-
-                // Minimum alan dikdörtgeni
+                var largestContour = contours.OrderByDescending(c => Cv2.ContourArea(c)).First();
                 var rect = Cv2.MinAreaRect(largestContour);
                 float angle = rect.Angle;
-
-                // Açıyı normalize et (-45 ile +45 arasında)
                 if (angle < -45) angle += 90;
                 if (angle > 45) angle -= 90;
-
-                kernel.Dispose();
                 return angle;
             }
         }
-        /// Skew correction uygular
+
         private Bitmap CorrectSkew(Bitmap image, float angle)
         {
             if (image == null || Math.Abs(angle) < 0.1f) return image;
@@ -479,13 +418,11 @@ namespace P5S_ceviri
                 var center = new OpenCvSharp.Point2f(src.Width / 2.0f, src.Height / 2.0f);
                 var rotationMatrix = Cv2.GetRotationMatrix2D(center, -angle, 1.0);
 
-                // Yeni boyutları hesapla
                 var cos = Math.Abs(rotationMatrix.At<double>(0, 0));
                 var sin = Math.Abs(rotationMatrix.At<double>(0, 1));
                 var newWidth = (int)(src.Height * sin + src.Width * cos);
                 var newHeight = (int)(src.Height * cos + src.Width * sin);
 
-                // Merkezi ayarla
                 rotationMatrix.Set(0, 2, rotationMatrix.At<double>(0, 2) + (newWidth / 2.0) - center.X);
                 rotationMatrix.Set(1, 2, rotationMatrix.At<double>(1, 2) + (newHeight / 2.0) - center.Y);
 
@@ -513,8 +450,8 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger?.LogError("Renk filtresi uygulanırken hata oluştu, orijinal görüntü döndürülüyor", ex);
-                return sourceImage; // Hata durumunda orijinal görüntüyü döndür
+                _logger.LogError("Renk filtresi uygulanırken hata oluştu, orijinal görüntü döndürülüyor", ex);
+                return sourceImage;
             }
         }
 
@@ -525,23 +462,20 @@ namespace P5S_ceviri
             {
                 Cv2.CvtColor(src, hsv, ColorConversionCodes.BGR2HSV);
 
-                // Gelişmiş metin rengi algılama
                 Scalar[] textColors = DetectTextColors(hsv);
 
                 if (textColors == null || textColors.Length == 0)
                 {
-                    _logger?.LogWarning("Metin rengi bulunamadı, orijinal görüntü döndürülüyor");
+                    _logger.LogWarning("Metin rengi bulunamadı, orijinal görüntü döndürülüyor");
                     return sourceImage;
                 }
 
-                // Her metin rengi için maske oluştur
                 using (Mat combinedMask = new Mat())
                 {
                     bool firstMask = true;
                     for (int i = 0; i < textColors.Length; i++)
                     {
                         var color = textColors[i];
-                        // Daha geniş tolerans aralığı kullan
                         Scalar lower = new Scalar(
                             Math.Max(0, color.Val0 - 30),
                             Math.Max(0, color.Val1 - 80),
@@ -567,7 +501,6 @@ namespace P5S_ceviri
                         }
                     }
 
-                    // Maskeyi uygula
                     using (Mat result = new Mat())
                     {
                         Cv2.BitwiseAnd(src, src, result, combinedMask);
@@ -577,61 +510,106 @@ namespace P5S_ceviri
             }
         }
 
-        private Scalar[] FindDominantColors(Mat hsvImage)
+        public Scalar[] DetectTextColors(Mat hsvImage)
         {
             try
             {
-                // Basit ve güvenilir renk algılama yöntemi
-                using (Mat gray = hsvImage.CvtColor(ColorConversionCodes.HSV2BGR).CvtColor(ColorConversionCodes.BGR2GRAY))
+                Scalar[] dominantColors = FindDominantColors(hsvImage);
+
+                if (dominantColors == null || dominantColors.Length == 0)
                 {
-                    // Histogram hesapla
-                    Mat hist = new Mat();
-                    int[] histSize = { 256 };
-                    Rangef[] ranges = { new Rangef(0, 256) };
-                    Mat[] channels = { gray };
-                    Cv2.CalcHist(channels, new int[] { 0 }, null, hist, 1, histSize, ranges);
-
-                    // En yüksek değerli renkleri bul
-                    List<Scalar> dominantColors = new List<Scalar>();
-
-                    // Beyaz ve sarı renkleri varsayılan olarak ekle (metin renkleri)
-                    dominantColors.Add(new Scalar(0, 0, 200)); // Beyaz benzeri
-                    dominantColors.Add(new Scalar(30, 255, 255)); // Sarı benzeri
-
-                    // Histogramdan en yüksek değerli renkleri bul
-                    for (int i = 0; i < 2; i++) // En fazla 2 ek renk
+                    _logger.LogWarning("Dominant renk bulunamadı, varsayılan metin renkleri kullanılıyor");
+                    return new Scalar[]
                     {
-                        double minVal, maxVal;
-                        CvPoint minLoc, maxLoc;
-                        Cv2.MinMaxLoc(hist, out minVal, out maxVal, out minLoc, out maxLoc);
+                        new Scalar(0, 0, 200),
+                        new Scalar(30, 255, 255),
+                        new Scalar(0, 0, 150)
+                    };
+                }
 
-                        if (maxVal > 100) // Yeterince yaygın olan renkler
-                        {
-                            int intensity = maxLoc.X;
-                            // Yoğunluğu HSV'ye dönüştür
-                            dominantColors.Add(new Scalar(0, 0, intensity));
+                var textColors = new List<Scalar>();
+                foreach (var color in dominantColors)
+                {
+                    bool isTextColor = false;
 
-                            // Bu rengi histogramdan kaldır
-                            hist.Set<float>(intensity, 0, 0);
-                        }
-                        else
-                        {
-                            break;
-                        }
+                    if (color.Val2 > 120)
+                    {
+                        isTextColor = true;
+                    }
+                    else if (color.Val2 > 80 && color.Val1 > 50)
+                    {
+                        isTextColor = true;
+                    }
+                    else if (color.Val1 < 30 && color.Val2 > 100)
+                    {
+                        isTextColor = true;
                     }
 
-                    return dominantColors.ToArray();
+                    if (isTextColor)
+                    {
+                        textColors.Add(color);
+                        _logger.LogInformation($"Metin rengi tespit edildi: H={color.Val0:F1}, S={color.Val1:F1}, V={color.Val2:F1}");
+                    }
+                }
+
+                if (textColors.Count == 0)
+                {
+                    _logger.LogWarning("Hiçbir metin rengi tespit edilemedi, varsayılan renkler kullanılıyor");
+                    return new Scalar[]
+                    {
+                        new Scalar(0, 0, 200),
+                        new Scalar(30, 255, 255)
+                    };
+                }
+
+                return textColors.ToArray();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Metin rengi algılama sırasında hata oluştu", ex);
+                return new Scalar[]
+                {
+                    new Scalar(0, 0, 200),
+                    new Scalar(30, 255, 255)
+                };
+            }
+        }
+
+        private Scalar[] FindDominantColors(Mat hsvImage, int k = 3)
+        {
+            try
+            {
+              
+                Mat reshaped = hsvImage.Reshape(1, hsvImage.Rows * hsvImage.Cols);
+                Mat floatData = new Mat();
+                reshaped.ConvertTo(floatData, MatType.CV_32F);
+
+               
+                using (Mat labels = new Mat())
+                using (Mat centers = new Mat())
+                {
+                    var criteria = new TermCriteria(CriteriaTypes.Eps | CriteriaTypes.MaxIter, 100, 0.2);
+                    Cv2.Kmeans(floatData, k, labels, criteria, 3, KMeansFlags.PpCenters, centers);
+
+                    
+                    Scalar[] dominantColors = new Scalar[Math.Min(k, centers.Rows)];
+                    for (int i = 0; i < dominantColors.Length; i++)
+                    {
+                        dominantColors[i] = new Scalar(
+                            centers.At<float>(i, 0),
+                            centers.At<float>(i, 1),
+                            centers.At<float>(i, 2)
+                        );
+                    }
+
+                    floatData.Dispose();
+                    return dominantColors;
                 }
             }
             catch (Exception ex)
             {
-                _logger?.LogError("Renk algılama sırasında hata oluştu", ex);
-                // Varsayılan renkler döndür
-                return new Scalar[]
-                {
-                    new Scalar(0, 0, 200), // Beyaz benzeri
-                    new Scalar(30, 255, 255) // Sarı benzeri
-                };
+                _logger.LogError("Dominant renk bulma sırasında hata oluştu", ex);
+                return null;
             }
         }
 
@@ -641,109 +619,39 @@ namespace P5S_ceviri
             using (Mat hsv = new Mat())
             {
                 Cv2.CvtColor(src, hsv, ColorConversionCodes.BGR2HSV);
-                Scalar lowerWhite = new Scalar(0, 0, 180);
-                Scalar upperWhite = new Scalar(255, 50, 255);
-                Scalar lowerYellow = new Scalar(20, 100, 100);
-                Scalar upperYellow = new Scalar(30, 255, 255);
-                using (Mat whiteMask = new Mat())
-                using (Mat yellowMask = new Mat())
-                using (Mat combinedMask = new Mat())
-                using (Mat result = new Mat())
+
+                
+                Scalar lower = new Scalar(
+                    _appSettings.HueMin,
+                    _appSettings.SaturationMin,
+                    _appSettings.ValueMin
+                );
+                Scalar upper = new Scalar(
+                    _appSettings.HueMax,
+                    _appSettings.SaturationMax,
+                    _appSettings.ValueMax
+                );
+
+                using (Mat mask = new Mat())
                 {
-                    Cv2.InRange(hsv, lowerWhite, upperWhite, whiteMask);
-                    Cv2.InRange(hsv, lowerYellow, upperYellow, yellowMask);
-                    Cv2.BitwiseOr(whiteMask, yellowMask, combinedMask);
-                    Cv2.BitwiseAnd(src, src, result, combinedMask);
-                    return BitmapConverter.ToBitmap(result);
+                    Cv2.InRange(hsv, lower, upper, mask);
+
+                    using (Mat result = new Mat())
+                    {
+                        Cv2.BitwiseAnd(src, src, result, mask);
+                        return BitmapConverter.ToBitmap(result);
+                    }
                 }
             }
         }
 
-        /// Gelişmiş metin rengi algılama
-        public Scalar[] DetectTextColors(Mat hsvImage)
-        {
-            try
-            {
-                // Histogram analizi
-                Scalar[] dominantColors = FindDominantColors(hsvImage);
-
-                if (dominantColors == null || dominantColors.Length == 0)
-                {
-                    _logger?.LogWarning("Dominant renk bulunamadı, varsayılan metin renkleri kullanılıyor");
-                    // Varsayılan metin renkleri (beyaz, sarı, açık gri)
-                    return new Scalar[]
-                    {
-                        new Scalar(0, 0, 200),    // Beyaz benzeri
-                        new Scalar(30, 255, 255), // Sarı benzeri
-                        new Scalar(0, 0, 150)     // Açık gri benzeri
-                    };
-                }
-
-                // Metin rengi kriterleri
-                var textColors = new List<Scalar>();
-                foreach (var color in dominantColors)
-                {
-                    // Gelişmiş metin rengi kriterleri
-                    bool isTextColor = false;
-
-                    // Yüksek parlaklık (Val2) - metin genelde parlak renklerde
-                    if (color.Val2 > 120)
-                    {
-                        isTextColor = true;
-                    }
-                    // Orta parlaklık ama yüksek doygunluk (Val1) - renkli metinler
-                    else if (color.Val2 > 80 && color.Val1 > 50)
-                    {
-                        isTextColor = true;
-                    }
-                    // Düşük doygunluk ama yüksek parlaklık - gri tonlarında metin
-                    else if (color.Val1 < 30 && color.Val2 > 100)
-                    {
-                        isTextColor = true;
-                    }
-
-                    if (isTextColor)
-                    {
-                        textColors.Add(color);
-                        _logger?.LogInformation($"Metin rengi tespit edildi: H={color.Val0:F1}, S={color.Val1:F1}, V={color.Val2:F1}");
-                    }
-                }
-
-                // Hiç metin rengi bulunamazsa varsayılan renkleri döndür
-                if (textColors.Count == 0)
-                {
-                    _logger?.LogWarning("Hiçbir metin rengi tespit edilemedi, varsayılan renkler kullanılıyor");
-                    return new Scalar[]
-                    {
-                        new Scalar(0, 0, 200),    // Beyaz benzeri
-                        new Scalar(30, 255, 255)  // Sarı benzeri
-                    };
-                }
-
-                return textColors.ToArray();
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogError("Metin rengi algılama sırasında hata oluştu", ex);
-                // Hata durumunda varsayılan renkler
-                return new Scalar[]
-                {
-                    new Scalar(0, 0, 200),    // Beyaz benzeri
-                    new Scalar(30, 255, 255)  // Sarı benzeri
-                };
-            }
-        }
-        /// Kontrast tabanlı maske oluşturur
-        public Mat CreateContrastMask(Mat src)
+        private Mat CreateContrastMask(Mat src)
         {
             using (Mat gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
             {
-                // Adaptif eşikleme
                 Mat binary = new Mat();
-                Cv2.AdaptiveThreshold(gray, binary, 255, AdaptiveThresholdTypes.GaussianC,
-                    ThresholdTypes.Binary, 11, 2);
+                Cv2.AdaptiveThreshold(gray, binary, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, 11, 2);
 
-                // Gürültü azaltma
                 Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
                 Cv2.MorphologyEx(binary, binary, MorphTypes.Open, kernel);
                 kernel.Dispose();
@@ -752,20 +660,16 @@ namespace P5S_ceviri
             }
         }
 
-        /// Edge tabanlı maske oluşturur
-        public Mat CreateEdgeMask(Mat src)
+        private Mat CreateEdgeMask(Mat src)
         {
             using (Mat gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
             using (Mat blurred = new Mat())
             {
-                // Gürültü azaltma
                 Cv2.GaussianBlur(gray, blurred, new OpenCvSharp.Size(3, 3), 0);
 
-                // Canny edge detection
                 Mat edges = new Mat();
                 Cv2.Canny(blurred, edges, 50, 150);
 
-                // Edge'leri genişlet
                 Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
                 Cv2.Dilate(edges, edges, kernel);
                 kernel.Dispose();

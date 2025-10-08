@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Net.Http;
+using System.Threading;
 
 namespace P5S_ceviri
 {
@@ -16,17 +17,17 @@ namespace P5S_ceviri
 
             // Temel servisler
             services.AddSingleton<ILogger, ConsoleLogger>();
-            services.AddSingleton<SettingsManager>(sp => 
+            services.AddSingleton<SettingsManager>(sp =>
                 new SettingsManager(sp.GetRequiredService<ILogger>()));
-            services.AddSingleton<AppSettings>(sp => 
+            services.AddSingleton<AppSettings>(sp =>
                 sp.GetRequiredService<SettingsManager>().LoadSettings());
 
             // İşlem ve bellek servisleri
-            services.AddSingleton<IProcessService>(sp => 
+            services.AddSingleton<IProcessService>(sp =>
                 new ProcessService(sp.GetRequiredService<ILogger>()));
-            services.AddSingleton<IMemoryService>(sp => 
+            services.AddSingleton<IMemoryService>(sp =>
                 new MemoryService(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
-            services.AddSingleton<EnhancedMemoryService>(sp => 
+            services.AddSingleton<EnhancedMemoryService>(sp =>
                 new EnhancedMemoryService(sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
             services.AddSingleton<IGameRecipeService, GameRecipeService>();
 
@@ -39,6 +40,7 @@ namespace P5S_ceviri
                 var baseService = new AdvancedTranslationService(
                     sp.GetRequiredService<HttpClient>(),
                     logger);
+
 
                 var optimizedService = new PerformanceOptimizedTranslationService(
                     baseService,
@@ -58,8 +60,6 @@ namespace P5S_ceviri
             });
 
             // OCR servisleri
-            services.AddSingleton<IOcrEngine, WindowsOcrEngine>();
-            services.AddSingleton<IOcrEngine, TesseractOcrEngine>();
             services.AddSingleton<WindowsOcrService>(sp =>
                 new WindowsOcrService(sp.GetRequiredService<ILogger>()));
             services.AddSingleton<IOcrService>(sp =>
@@ -102,7 +102,16 @@ namespace P5S_ceviri
                 return client;
             });
 
+            services.AddSingleton<SettingsAutoSaveTimer>(sp =>
+                new SettingsAutoSaveTimer(
+                    sp.GetRequiredService<SettingsManager>(),
+                    sp.GetRequiredService<AppSettings>(),
+                    sp.GetRequiredService<ILogger>() 
+                ));
+
             _serviceProvider = services.BuildServiceProvider();
+
+            _serviceProvider.GetRequiredService<SettingsAutoSaveTimer>();
         }
 
         public static T GetService<T>() where T : class
@@ -116,8 +125,45 @@ namespace P5S_ceviri
 
         public static void Cleanup()
         {
+            // IDisposable olan tüm singleton servislerin (Timer, HttpClient )
+            // kaynaklarını serbest bırakması için.
             _serviceProvider?.Dispose();
             _serviceProvider = null;
+        }
+    }
+
+    public class SettingsAutoSaveTimer : IDisposable
+    {
+        private readonly SettingsManager _settingsManager;
+        private readonly AppSettings _appSettings;
+        private readonly ILogger _logger;
+        private Timer _timer;
+
+        public SettingsAutoSaveTimer(SettingsManager settingsManager, AppSettings appSettings, ILogger logger)
+        {
+            _settingsManager = settingsManager;
+            _appSettings = appSettings;
+            _logger = logger;
+            _timer = new Timer(AutoSaveCallback, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+        }
+
+        private void AutoSaveCallback(object state)
+        {
+            try
+            {
+                // Değişiklikleri kaydet.
+                _settingsManager.SaveSettings(_appSettings);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Ayarların otomatik kaydedilmesi sırasında bir hata oluştu.", ex);
+            }
+        }
+
+        public void Dispose()
+        {
+            // Uygulama kapanırken Timer'ı düzgün bir şekilde sonlandırmak için.
+            _timer?.Dispose();
         }
     }
 }

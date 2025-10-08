@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Input;
 
 namespace P5S_ceviri
@@ -12,11 +12,14 @@ namespace P5S_ceviri
         private readonly ILogger _logger;
         private readonly string _settingsFilePath;
         private readonly object _lockObject = new object();
+       
+
         public SettingsManager(ILogger logger)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _settingsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
         }
+
         public AppSettings LoadSettings()
         {
             lock (_lockObject)
@@ -62,6 +65,7 @@ namespace P5S_ceviri
                 return new AppSettings();
             }
         }
+
         public void SaveSettings(AppSettings settings)
         {
             if (settings == null)
@@ -73,6 +77,8 @@ namespace P5S_ceviri
             {
                 try
                 {
+                   
+
                     var options = new JsonSerializerOptions
                     {
                         WriteIndented = true,
@@ -82,7 +88,7 @@ namespace P5S_ceviri
                         }
                     };
                     string jsonString = JsonSerializer.Serialize(settings, options);
-                    // Yedekleme
+
                     if (File.Exists(_settingsFilePath))
                     {
                         string backupPath = _settingsFilePath + ".backup";
@@ -94,7 +100,6 @@ namespace P5S_ceviri
                 catch (Exception ex)
                 {
                     _logger.LogError($"Ayarlar kaydedilemedi: '{_settingsFilePath}'. Hata: {ex.Message}", ex);
-                    // Yedekten geri yükleme denemesi
                     try
                     {
                         string backupPath = _settingsFilePath + ".backup";
@@ -111,8 +116,8 @@ namespace P5S_ceviri
                 }
             }
         }
-    }
 
+    }
     public class HotkeyJsonConverter : JsonConverter<Hotkey>
     {
         public override Hotkey Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
@@ -122,6 +127,7 @@ namespace P5S_ceviri
             if (reader.TokenType == JsonTokenType.String)
             {
                 var value = reader.GetString();
+                System.Diagnostics.Debug.WriteLine($"HotkeyJsonConverter.Read çağrıldı: {value}");
                 var parts = value.Split(new[] { " + " }, StringSplitOptions.None);
                 if (parts.Length < 2)
                     return null;
@@ -139,11 +145,14 @@ namespace P5S_ceviri
                 }
                 if (Enum.TryParse<Key>(parts[parts.Length - 1], out key))
                 {
-                    return new Hotkey(modifiers, key);
+                    var hotkey = new Hotkey(modifiers, key);
+                    System.Diagnostics.Debug.WriteLine($"HotkeyJsonConverter.Read sonucu: {hotkey}");
+                    return hotkey;
                 }
             }
             return null;
         }
+
         public override void Write(Utf8JsonWriter writer, Hotkey value, JsonSerializerOptions options)
         {
             if (value == null)
@@ -151,7 +160,10 @@ namespace P5S_ceviri
                 writer.WriteNullValue();
                 return;
             }
-            writer.WriteStringValue(value.ToString());
+            string hotkeyString = value.ToString();
+            writer.WriteStringValue(hotkeyString);
+            // Debug için log ekle
+            System.Diagnostics.Debug.WriteLine($"HotkeyJsonConverter.Write çağrıldı: {hotkeyString}");
         }
     }
 }

@@ -39,28 +39,28 @@ namespace P5S_ceviri
                 if (File.Exists("frozen_east_text_detection.pb"))
                 {
                     _dnnModels[DnnModelType.EAST] = CvDnn.ReadNet("frozen_east_text_detection.pb");
-                    _logger?.LogInformation("EAST DNN modeli yüklendi");
+                    _logger?.LogInformation("EAST DNN modeli başarıyla yüklendi");
                 }
 
-                // CRNN modeli (varsa)
+                // CRNN modeli
                 if (File.Exists("crnn_model.pb"))
                 {
                     _dnnModels[DnnModelType.CRNN] = CvDnn.ReadNet("crnn_model.pb");
-                    _logger?.LogInformation("CRNN DNN modeli yüklendi");
+                    _logger?.LogInformation("CRNN DNN modeli başarıyla yüklendi");
                 }
 
-                // PaddleOCR modeli (varsa)
+                // PaddleOCR modeli
                 if (File.Exists("paddleocr_model.pb"))
                 {
                     _dnnModels[DnnModelType.PaddleOCR] = CvDnn.ReadNet("paddleocr_model.pb");
-                    _logger?.LogInformation("PaddleOCR DNN modeli yüklendi");
+                    _logger?.LogInformation("PaddleOCR DNN modeli başarıyla yüklendi");
                 }
 
                 // Custom model
                 if (!string.IsNullOrEmpty(_appSettings.CustomDnnModelPath) && File.Exists(_appSettings.CustomDnnModelPath))
                 {
                     _dnnModels[DnnModelType.Custom] = CvDnn.ReadNet(_appSettings.CustomDnnModelPath);
-                    _logger?.LogInformation($"Custom DNN modeli yüklendi: {_appSettings.CustomDnnModelPath}");
+                    _logger?.LogInformation($"Özel DNN modeli başarıyla yüklendi: {_appSettings.CustomDnnModelPath}");
                 }
             }
             catch (Exception ex)
@@ -91,52 +91,52 @@ namespace P5S_ceviri
 
             try
             {
-                // 1. Karakter tanıma iyileştirmesi
+                //  Karakter tanıma iyileştirmesi
                 if (_appSettings.EnableTextCorrection)
                 {
                     var correctedText = CorrectCharacterRecognition(rawText);
                     if (correctedText != rawText)
                     {
                         result.ProcessedText = correctedText;
-                        result.Improvements.Add("Karakter tanıma iyileştirildi");
+                        result.Improvements.Add("Karakter tanıma başarıyla iyileştirildi");
                         result.Confidence += 0.1;
                     }
                 }
 
-                // 2. Bağlam analizi
+                // Bağlam analizi
                 if (_appSettings.EnableContextAnalysis && !string.IsNullOrEmpty(context))
                 {
                     var contextImproved = AnalyzeContext(result.ProcessedText, context);
                     if (contextImproved != result.ProcessedText)
                     {
                         result.ProcessedText = contextImproved;
-                        result.Improvements.Add("Bağlam analizi uygulandı");
+                        result.Improvements.Add("Bağlam analizi başarıyla uygulandı");
                         result.Confidence += 0.15;
                     }
                 }
 
-                // 3. Oyun terminolojisi düzeltmesi
+                //  Oyun terminolojisi düzeltmesi
                 var terminologyImproved = CorrectGameTerminology(result.ProcessedText);
                 if (terminologyImproved != result.ProcessedText)
                 {
                     result.ProcessedText = terminologyImproved;
-                    result.Improvements.Add("Oyun terminolojisi düzeltildi");
+                    result.Improvements.Add("Oyun terminolojisi başarıyla düzeltildi");
                     result.Confidence += 0.1;
                 }
 
-                // 4. DNN tabanlı metin iyileştirmesi
+                //  DNN tabanlı metin iyileştirmesi
                 if (image != null && _dnnModels.ContainsKey(_appSettings.SelectedDnnModel))
                 {
                     var dnnImproved = ProcessWithDnn(result.ProcessedText, image);
                     if (dnnImproved != result.ProcessedText)
                     {
                         result.ProcessedText = dnnImproved;
-                        result.Improvements.Add($"DNN modeli ({_appSettings.SelectedDnnModel}) uygulandı");
+                        result.Improvements.Add($"DNN modeli ({_appSettings.SelectedDnnModel}) başarıyla uygulandı");
                         result.Confidence += 0.2;
                     }
                 }
 
-                // 5. Geçmiş öğrenme
+                //  Geçmiş öğrenme
                 LearnFromHistory(result.ProcessedText);
 
                 // Güven skorunu sınırla
@@ -152,7 +152,7 @@ namespace P5S_ceviri
                     OriginalText = rawText,
                     ProcessedText = rawText,
                     Confidence = 0.5,
-                    Improvements = new List<string> { "ML işleme hatası" }
+                    Improvements = new List<string> { "ML işleme sırasında hata oluştu" }
                 };
             }
         }
@@ -322,23 +322,23 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger?.LogError($"DNN modeli ({_appSettings.SelectedDnnModel}) işleme hatası", ex);
+                _logger?.LogError($"DNN modeli ({_appSettings.SelectedDnnModel}) işleme sırasında hata oluştu", ex);
                 return text;
             }
         }
         /// EAST modeli ile işleme
         private string ProcessWithEastModel(string text, Mat image, Net model)
         {
-            // EAST modeli metin tespiti için kullanılır, burada metin iyileştirmesi yapılabilir
+            
             if (image != null)
             {
-                // Metin bölgelerini tespit et ve doğrula
+                // Metin bölgelerini tespit et ve doğrulamak için
                 var textRegions = DetectTextRegionsWithEast(image, model);
                 
                 // Tespit edilen bölgelerle metni karşılaştır
                 if (textRegions.Count > 0)
                 {
-                    // Metin güvenilirliğini artır
+                    // Metin güvenilirliğini artırmak için
                     return $"[EAST-Validated] {text}";
                 }
             }
@@ -352,11 +352,11 @@ namespace P5S_ceviri
             // CRNN modeli metin tanıma için kullanılır
             if (image != null)
             {
-                // Görüntüyü CRNN için hazırla
+                // Görüntüyü CRNN için hazırlamak için
                 var blob = CvDnn.BlobFromImage(image, 1.0/255.0, new OpenCvSharp.Size(100, 32), new Scalar(0, 0, 0), true, false);
                 model.SetInput(blob);
                 
-                // Forward pass
+              
                 var output = new Mat();
                 model.Forward((IEnumerable<Mat>)output);
                 
@@ -423,7 +423,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger?.LogError("EAST metin bölgesi tespiti hatası", ex);
+                _logger?.LogError("EAST metin bölgesi tespiti sırasında hata oluştu", ex);
             }
             
             return regions;
@@ -540,7 +540,7 @@ namespace P5S_ceviri
                 TotalTextsProcessed = _recentTexts.Count,
                 UniqueWordsLearned = _wordFrequency.Count,
                 DnnModelsLoaded = _dnnModels.Count,
-                AverageConfidence = _recentTexts.Count > 0 ? 0.85 : 0.0 // Basitleştirilmiş
+                AverageConfidence = _recentTexts.Count > 0 ? 0.85 : 0.0 
             };
         }
         /// ML geçmişini temizler
@@ -548,7 +548,7 @@ namespace P5S_ceviri
         {
             _recentTexts.Clear();
             _wordFrequency.Clear();
-            _logger?.LogInformation("ML geçmişi temizlendi");
+            _logger?.LogInformation("ML geçmişi başarıyla temizlendi");
         }
     }
 

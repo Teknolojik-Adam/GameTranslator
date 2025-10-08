@@ -456,6 +456,49 @@ namespace P5S_ceviri
             set { if (_ocrResultHistorySize != value) { _ocrResultHistorySize = value; OnPropertyChanged(); } }
         }
 
+        // Manual Color Isolation Settings (HSV values)
+        private double _hueMin = 0;
+        public double HueMin
+        {
+            get => _hueMin;
+            set { if (_hueMin != value) { _hueMin = value; OnPropertyChanged(); } }
+        }
+
+        private double _hueMax = 180;
+        public double HueMax
+        {
+            get => _hueMax;
+            set { if (_hueMax != value) { _hueMax = value; OnPropertyChanged(); } }
+        }
+
+        private double _saturationMin = 0;
+        public double SaturationMin
+        {
+            get => _saturationMin;
+            set { if (_saturationMin != value) { _saturationMin = value; OnPropertyChanged(); } }
+        }
+
+        private double _saturationMax = 255;
+        public double SaturationMax
+        {
+            get => _saturationMax;
+            set { if (_saturationMax != value) { _saturationMax = value; OnPropertyChanged(); } }
+        }
+
+        private double _valueMin = 200;
+        public double ValueMin
+        {
+            get => _valueMin;
+            set { if (_valueMin != value) { _valueMin = value; OnPropertyChanged(); } }
+        }
+
+        private double _valueMax = 255;
+        public double ValueMax
+        {
+            get => _valueMax;
+            set { if (_valueMax != value) { _valueMax = value; OnPropertyChanged(); } }
+        }
+
         public event PropertyChangedEventHandler PropertyChanged;
         protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
         {

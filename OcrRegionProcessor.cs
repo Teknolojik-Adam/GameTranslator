@@ -27,7 +27,6 @@ namespace P5S_ceviri
         private Bitmap _previousImage;
         private bool _disposed = false;
 
-
         public OcrRegionProcessor(IOcrService ocrService, ITranslationService translationService, string ocrLanguage, string targetLanguage, double changeThreshold = 0.01, int mergeTolerance = 15)
         {
             _ocrService = ocrService ?? throw new ArgumentNullException(nameof(ocrService));
@@ -38,12 +37,11 @@ namespace P5S_ceviri
             _mergeTolerance = mergeTolerance;
         }
 
-
         public async Task<List<RegionProcessResult>> ProcessChangedRegionsAsync(Bitmap currentImage)
         {
             var results = new List<RegionProcessResult>();
-            
-            if (currentImage == null) 
+
+            if (currentImage == null)
                 return results;
 
             if (_previousImage == null)
@@ -54,7 +52,7 @@ namespace P5S_ceviri
 
             try
             {
-                // Değişen bölgeleri filtreleme
+                // Değişen bölgeleri filtrele
                 var changedRegions = _ocrService
                     .FindTextRegions(currentImage)
                     .Where(r => IsRegionChanged(_previousImage, currentImage, r))
@@ -80,7 +78,7 @@ namespace P5S_ceviri
                             if (!string.IsNullOrWhiteSpace(recognized))
                             {
                                 string translated = await _translationService.TranslateAsync(recognized, _targetLanguage, null);
-                                
+
                                 var result = new RegionProcessResult
                                 {
                                     Region = region,
@@ -88,8 +86,12 @@ namespace P5S_ceviri
                                     TranslatedText = translated,
                                     ProcessedAt = DateTime.Now
                                 };
-                                
-                                results.Add(result);
+
+                                lock (results)
+                                {
+                                    results.Add(result);
+                                }
+
                                 OnOcrRegionProcessed(region, recognized, translated);
                             }
                         }
@@ -98,7 +100,7 @@ namespace P5S_ceviri
                     {
                         OnOcrRegionProcessError(region, ex);
                     }
-                });
+                }).ToList();
 
                 await Task.WhenAll(tasks);
 
@@ -167,9 +169,9 @@ namespace P5S_ceviri
                 return Cv2.CountNonZero(diff) > (region.Width * region.Height * _changeThreshold);
             }
         }
+
         protected virtual void OnOcrRegionProcessed(Rectangle region, string recognizedText, string translatedText)
         {
-            // OCR bölgesi başarıyla işlendiğinde çağrılır
             if (!string.IsNullOrWhiteSpace(recognizedText) && !string.IsNullOrWhiteSpace(translatedText))
             {
                 Console.WriteLine($"[Bölge: {region}] \"{recognizedText}\" → \"{translatedText}\"");
@@ -184,7 +186,6 @@ namespace P5S_ceviri
         {
             Console.WriteLine($"[Hata - Bölge: {region}] {exception.Message}");
         }
-
 
         public void Dispose()
         {

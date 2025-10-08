@@ -270,6 +270,7 @@ namespace P5S_ceviri
             {
                 var selectedTheme = ThemeManager.GetThemeFromString(_appSettings.Theme);
                 ThemeManager.ChangeTheme(selectedTheme);
+                ThemeManager.SaveThemeSettings(selectedTheme);
             }
             else if (e.PropertyName == nameof(AppSettings.RamTickIntervalMs))
             {
@@ -1358,9 +1359,10 @@ namespace P5S_ceviri
                 {
                     string themeString = selectedItem.Tag.ToString();
                     var selectedTheme = ThemeManager.GetThemeFromString(themeString);
-                    // Temayı değiştir
+                    // Temayı değiştir ve kaydet
                     ThemeManager.ChangeTheme(selectedTheme);
-                    // Ayarlara kaydet
+                    ThemeManager.SaveThemeSettings(selectedTheme);
+                    // Ayarlara da kaydet
                     _appSettings.Theme = themeString;
                     _settingsManager.SaveSettings(_appSettings);
                     // Log kaydet
@@ -1561,19 +1563,19 @@ namespace P5S_ceviri
         private void CmbOcrLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (cmbOcrLanguage.SelectedItem is string selectedLang)
-            {
-                _appSettings.OcrLanguage = selectedLang;
-                _settingsManager.SaveSettings(_appSettings);
-            }
+        {
+            _appSettings.OcrLanguage = selectedLang;
+            _settingsManager.SaveSettings(_appSettings);
+        }
         }
 
         private void CmbTargetLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (cmbTargetLanguage.SelectedItem is string selectedLang)
-            {
-                _appSettings.TargetLanguage = selectedLang;
-                _settingsManager.SaveSettings(_appSettings);
-            }
+        {
+            _appSettings.TargetLanguage = selectedLang;
+            _settingsManager.SaveSettings(_appSettings);
+        }
         }
 
         private void ChkEnableColorFilter_Click(object sender, RoutedEventArgs e)

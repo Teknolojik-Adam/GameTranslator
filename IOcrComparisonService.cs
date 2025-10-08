@@ -72,7 +72,7 @@ namespace P5S_ceviri
         public double AverageConfidence { get; set; }
         public double AverageProcessingTime { get; set; }
         public double BestConfidence { get; set; }
-        public double WorstConfidence { get; set; }
+        public double WorstConfidence { get; set; } = 1.0;
         public int Wins { get; set; } // Number of times this engine was best
         public double WinRate { get; set; }
     }

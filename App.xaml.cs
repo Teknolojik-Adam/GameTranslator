@@ -47,18 +47,12 @@ namespace P5S_ceviri
         {
             try
             {
-                // ServiceContainer'dan ayarları al
-                var settingsManager = ServiceContainer.GetService<SettingsManager>();
-                var appSettings = ServiceContainer.GetService<AppSettings>();
-
-                // Kullanıcının tema tercihini al
-                var selectedTheme = ThemeManager.GetThemeFromString(appSettings.Theme);
-
-                // Temayı uygula
-                ThemeManager.ChangeTheme(selectedTheme);
+                // Tema ayarlarını dosyadan yükle
+                ThemeManager.LoadThemeSettings();
             }
             catch (Exception ex)
             {
+                // Hata durumunda varsayılan temayı uygula
                 ThemeManager.ChangeTheme(ThemeManager.Theme.Light);
                 MessageBox.Show($"Tema başlatma hatası: {ex.Message}\nVarsayılan tema kullanılıyor.",
                     "Tema Hatası", MessageBoxButton.OK, MessageBoxImage.Warning);

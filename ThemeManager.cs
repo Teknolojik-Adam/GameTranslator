@@ -1,7 +1,11 @@
 using System;
+using System.IO;
+using System.Text.Json;
 using System.Windows;
-using System.Windows.Media;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace P5S_ceviri
 {
@@ -15,6 +19,7 @@ namespace P5S_ceviri
 
         private const string LIGHT_THEME_URI = "Themes/LightTheme.xaml";
         private const string DARK_THEME_URI = "Themes/DarkTheme.xaml";
+        private const string THEME_SETTINGS_PATH = "theme_settings.json";
 
         public static void ChangeTheme(Theme theme)
         {
@@ -30,16 +35,18 @@ namespace P5S_ceviri
                     Source = new Uri(themeUri, UriKind.Relative)
                 };
 
-             
                 Application.Current.Resources.MergedDictionaries.Add(themeResource);
 
                 // Tüm pencerelere yeni temayı uygula
                 ApplyThemeToWindows();
+
+                // Temayı kaydet
+                SaveThemeSettings(theme);
             }
             catch (Exception ex)
             {
                 // Hata durumunda varsayılan temaya geri dön
-                MessageBox.Show($"Tema değiştirme sırasında hata oluştu: {ex.Message}", "Tema Hatası", 
+                MessageBox.Show($"Tema değiştirme sırasında hata oluştu: {ex.Message}", "Tema Hatası",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
@@ -50,7 +57,7 @@ namespace P5S_ceviri
             {
                 return result;
             }
-            return Theme.Light; 
+            return Theme.Light;
         }
 
         public static string GetStringFromTheme(Theme theme)
@@ -60,12 +67,11 @@ namespace P5S_ceviri
 
         private static void ClearThemeResources()
         {
-           
             for (int i = Application.Current.Resources.MergedDictionaries.Count - 1; i >= 0; i--)
             {
                 var dictionary = Application.Current.Resources.MergedDictionaries[i];
-                if (dictionary.Source != null && 
-                    (dictionary.Source.ToString().Contains("LightTheme.xaml") || 
+                if (dictionary.Source != null &&
+                    (dictionary.Source.ToString().Contains("LightTheme.xaml") ||
                      dictionary.Source.ToString().Contains("DarkTheme.xaml")))
                 {
                     Application.Current.Resources.MergedDictionaries.RemoveAt(i);
@@ -117,7 +123,7 @@ namespace P5S_ceviri
             for (int i = 0; i < childCount; i++)
             {
                 var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
-                
+
                 // Kontrol tipine göre ilgili stili uygula
                 ApplyControlTheme(child);
 
@@ -130,7 +136,7 @@ namespace P5S_ceviri
         {
             string styleKey = null;
             string typeName = control.GetType().Name;
-            
+
             switch (typeName)
             {
                 case "Button":
@@ -162,12 +168,85 @@ namespace P5S_ceviri
                     break;
             }
 
-            if (!string.IsNullOrEmpty(styleKey) && 
+            if (!string.IsNullOrEmpty(styleKey) &&
                 Application.Current.Resources[styleKey] is Style style &&
                 control is FrameworkElement element)
             {
                 // Stili uygula
                 element.Style = style;
+            }
+        }
+
+        public static void LoadThemeSettings()
+        {
+            try
+            {
+                // Önce dosyadan tema ayarlarını yüklemeyi dene
+                if (File.Exists(THEME_SETTINGS_PATH))
+                {
+                    string json = File.ReadAllText(THEME_SETTINGS_PATH);
+                    var theme = JsonSerializer.Deserialize<Theme>(json);
+                    ChangeTheme(theme);
+                    return;
+                }
+
+                // Dosya yoksa AppSettings'ten tema bilgisini al
+                try
+                {
+                    var appSettings = ServiceContainer.GetService<AppSettings>();
+                    if (appSettings != null)
+                    {
+                        var selectedTheme = GetThemeFromString(appSettings.Theme);
+                        ChangeTheme(selectedTheme);
+                        return;
+                    }
+                }
+                catch
+                {
+                    // ServiceContainer henüz hazır değilse devam et
+                }
+
+                // Her iki yöntem de başarısızsa varsayılan temayı kullan
+                ChangeTheme(Theme.Light);
+            }
+            catch (Exception ex)
+            {
+                // Hata durumunda varsayılan temaya geri dön
+                ChangeTheme(Theme.Light);
+                MessageBox.Show($"Tema ayarları yüklenirken hata oluştu: {ex.Message}", "Tema Hatası",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        public static void SaveThemeSettings(Theme theme)
+        {
+            try
+            {
+                // Dosyaya kaydet
+                string json = JsonSerializer.Serialize(theme);
+                File.WriteAllText(THEME_SETTINGS_PATH, json);
+
+                // AppSettings'e de kaydet (eğer mevcut ise)
+                try
+                {
+                    var appSettings = ServiceContainer.GetService<AppSettings>();
+                    var settingsManager = ServiceContainer.GetService<SettingsManager>();
+                    if (appSettings != null && settingsManager != null)
+                    {
+                        appSettings.Theme = GetStringFromTheme(theme);
+                        settingsManager.SaveSettings(appSettings);
+                    }
+                }
+                catch
+                {
+                    // ServiceContainer henüz hazır değilse sadece dosyaya kaydet
+                }
+            }
+            catch (Exception ex)
+            {
+                // Hata durumunda uyarı
+                MessageBox.Show($"Tema ayarları kaydedilirken hata oluştu: {ex.Message}", "Tema Hatası",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
     }
