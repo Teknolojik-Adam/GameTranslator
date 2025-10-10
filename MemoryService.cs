@@ -10,7 +10,7 @@ using System.Windows.Interop;
 
 namespace P5S_ceviri
 {
-    public class MemoryService : IMemoryService
+    public class MemoryService : IMemoryService, IDisposable
     {
         #region Windows API Imports (P/Invoke)
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -40,12 +40,24 @@ namespace P5S_ceviri
         private readonly object _lockObject = new object(); 
         private const uint PROCESS_VM_READ = 0x0010;
         private const uint PROCESS_QUERY_INFORMATION = 0x0400;
-        
-       
+        private const int MAX_CACHE_ENTRIES = 1000;
         private const int MAX_READ_SIZE = 1024 * 1024; // 1MB maksimum okuma boyutu
         private const int MIN_PROCESS_ID = 4; 
         private const long MAX_VALID_ADDRESS = 0x7FFFFFFFFFFF; 
         private const long MIN_VALID_ADDRESS = 0x10000;
+
+        #region Cache Classes
+        private class CacheEntry<T>
+        {
+            public T Value { get; set; }
+            public int AccessCount { get; set; }
+        }
+        #endregion
+
+        #region Cache Fields
+        private readonly Dictionary<PathInfo, CacheEntry<IntPtr>> _addressCache = new Dictionary<PathInfo, CacheEntry<IntPtr>>();
+        private readonly Dictionary<(IntPtr, int), CacheEntry<byte[]>> _memoryCache = new Dictionary<(IntPtr, int), CacheEntry<byte[]>>();
+        #endregion
 
         public MemoryService(ILogger logger, AppSettings appSettings)
         {
@@ -175,6 +187,9 @@ namespace P5S_ceviri
 
             lock (_lockObject)
             {
+                // Önbellekleri temizle
+                ClearAllCaches();
+                
                 Dispose(); 
 
                 try
@@ -356,6 +371,124 @@ namespace P5S_ceviri
             }
         }
 
+        #region Cache Methods
+        public IntPtr ResolveAddressFromPathCached(Process process, PathInfo path)
+        {
+            if (path == null) return IntPtr.Zero;
+
+            lock (_lockObject)
+            {
+                if (_addressCache.TryGetValue(path, out var cachedEntry))
+                {
+                    cachedEntry.AccessCount++;
+                    _logger?.LogInformation($"Önbellekten adres alındı: 0x{cachedEntry.Value.ToInt64():X} (Erişim sayısı: {cachedEntry.AccessCount})");
+                    return cachedEntry.Value;
+                }
+
+                IntPtr resolvedAddress = ResolveAddressFromPath(process, path);
+                if (resolvedAddress != IntPtr.Zero)
+                {
+                    if (_addressCache.Count >= MAX_CACHE_ENTRIES)
+                    {
+                        var lru = _addressCache.OrderBy(kvp => kvp.Value.AccessCount).First();
+                        _addressCache.Remove(lru.Key);
+                        _logger?.LogInformation($"Adres önbelleği dolu. En az kullanılan giriş kaldırıldı (Erişim sayısı: {lru.Value.AccessCount})");
+                    }
+                    _addressCache[path] = new CacheEntry<IntPtr> { Value = resolvedAddress, AccessCount = 1 };
+                    _logger?.LogInformation($"Adres önbelleğe eklendi: 0x{resolvedAddress.ToInt64():X}");
+                }
+                return resolvedAddress;
+            }
+        }
+
+        public byte[] ReadBytesCached(IntPtr address, int length)
+        {
+            var key = (address, length);
+            lock (_lockObject)
+            {
+                if (_memoryCache.TryGetValue(key, out var cachedEntry))
+                {
+                    cachedEntry.AccessCount++;
+                    _logger?.LogInformation($"Önbellekten bellek verisi alındı: 0x{address.ToInt64():X} ({length} byte, Erişim sayısı: {cachedEntry.AccessCount})");
+                    return cachedEntry.Value;
+                }
+            }
+
+            byte[] buffer = ReadBytes(address, length);
+
+            if (buffer.Length > 0)
+            {
+                lock (_lockObject)
+                {
+                    if (_memoryCache.Count >= MAX_CACHE_ENTRIES)
+                    {
+                        var lru = _memoryCache.OrderBy(kvp => kvp.Value.AccessCount).First();
+                        _memoryCache.Remove(lru.Key);
+                        _logger?.LogInformation($"Bellek önbelleği dolu. En az kullanılan giriş kaldırıldı (Erişim sayısı: {lru.Value.AccessCount})");
+                    }
+                    _memoryCache[key] = new CacheEntry<byte[]> { Value = buffer, AccessCount = 1 };
+                    _logger?.LogInformation($"Bellek verisi önbelleğe eklendi: 0x{address.ToInt64():X} ({length} byte)");
+                }
+            }
+            return buffer;
+        }
+
+        public List<KeyValuePair<PathInfo, IntPtr>> GetMostFrequentAddresses(int topN = 10)
+        {
+            lock (_lockObject)
+            {
+                var result = _addressCache
+                    .OrderByDescending(kvp => kvp.Value.AccessCount)
+                    .Take(topN)
+                    .Select(kvp => new KeyValuePair<PathInfo, IntPtr>(kvp.Key, kvp.Value.Value))
+                    .ToList();
+                
+                _logger?.LogInformation($"En sık kullanılan {result.Count} adres listelendi");
+                return result;
+            }
+        }
+
+        public void ClearAddressCache()
+        {
+            lock (_lockObject)
+            {
+                int count = _addressCache.Count;
+                _addressCache.Clear();
+                _logger?.LogInformation($"Adres önbelleği temizlendi ({count} giriş)");
+            }
+        }
+
+        public void ClearMemoryCache()
+        {
+            lock (_lockObject)
+            {
+                int count = _memoryCache.Count;
+                _memoryCache.Clear();
+                _logger?.LogInformation($"Bellek önbelleği temizlendi ({count} giriş)");
+            }
+        }
+
+        public void ClearAllCaches()
+        {
+            lock (_lockObject)
+            {
+                int addressCount = _addressCache.Count;
+                int memoryCount = _memoryCache.Count;
+                _addressCache.Clear();
+                _memoryCache.Clear();
+                _logger?.LogInformation($"Tüm önbellekler temizlendi (Adres: {addressCount}, Bellek: {memoryCount})");
+            }
+        }
+
+        public (int AddressCacheCount, int MemoryCacheCount) GetCacheStatistics()
+        {
+            lock (_lockObject)
+            {
+                return (_addressCache.Count, _memoryCache.Count);
+            }
+        }
+        #endregion
+
         public void Dispose()
         {
             Dispose(true);
@@ -370,6 +503,9 @@ namespace P5S_ceviri
                 {
                     lock (_lockObject)
                     {
+                        // Önbellekleri temizle
+                        ClearAllCaches();
+
                         if (_processHandle != IntPtr.Zero)
                         {
                             try
@@ -387,7 +523,6 @@ namespace P5S_ceviri
                             }
                         }
 
-                        
                         if (_attachedProcess != null)
                         {
                             try

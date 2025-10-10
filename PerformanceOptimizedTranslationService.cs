@@ -11,6 +11,7 @@ namespace P5S_ceviri
     {
         private readonly ITranslationService _baseService;
         private readonly ILogger _logger;
+        private readonly TranslationCacheManager _cacheManager;
         private readonly ConcurrentDictionary<string, Task<string>> _ongoingTranslations;
         private readonly int _maxConcurrentTranslations;
         private readonly int _batchSize;
@@ -65,6 +66,12 @@ namespace P5S_ceviri
             _ongoingTranslations = new ConcurrentDictionary<string, Task<string>>();
             _concurrencySemaphore = new SemaphoreSlim(_maxConcurrentTranslations, _maxConcurrentTranslations);
             _smartCache = new ConcurrentDictionary<string, CacheEntry>();
+
+            // TranslationCacheManager'ı başlat
+            _cacheManager = new TranslationCacheManager(_logger);
+            
+            // Zamanı dolmuş önbellek girdilerini temizle
+            _cacheManager.ExpireEntries();
 
             _logger.LogInformation($"PerformanceOptimizedTranslationService başlatıldı. Base Servis: {_baseService.GetType().Name}, Maksimum eşzamanlı çeviri: {_maxConcurrentTranslations}");
 
@@ -312,6 +319,15 @@ namespace P5S_ceviri
         {
             result = null;
 
+            // Önce TranslationCacheManager'dan kontrol et
+            result = _cacheManager.GetTranslation(cacheKey);
+            if (!string.IsNullOrEmpty(result))
+            {
+                _logger.LogInformation($"TranslationCacheManager'dan çeviri alındı");
+                return true;
+            }
+
+            // Sonra smart cache'den kontrol et
             if (_smartCache.TryGetValue(cacheKey, out var cacheEntry))
             {
                 cacheEntry.LastAccessTime = DateTime.UtcNow;
@@ -326,25 +342,36 @@ namespace P5S_ceviri
 
         private void AddToCache(string cacheKey, string translatedText)
         {
-            if (string.IsNullOrEmpty(translatedText) || _smartCache.Count >= _maxCacheSize)
+            if (string.IsNullOrEmpty(translatedText))
                 return;
 
-            var cacheEntry = new CacheEntry
-            {
-                TranslatedText = translatedText,
-                LastAccessTime = DateTime.UtcNow,
-                AccessCount = 1,
-                CreationTime = DateTime.UtcNow,
-                Size = CalculateStringSize(translatedText)
-            };
+            // TranslationCacheManager'a kaydet (kalıcı önbellek)
+            _cacheManager.AddTranslation(cacheKey, translatedText);
+            _logger.LogInformation($"Çeviri TranslationCacheManager'a kaydedildi");
 
-            _smartCache[cacheKey] = cacheEntry;
+            // Smart cache'e de ekle (hızlı erişim için)
+            if (_smartCache.Count < _maxCacheSize)
+            {
+                var cacheEntry = new CacheEntry
+                {
+                    TranslatedText = translatedText,
+                    LastAccessTime = DateTime.UtcNow,
+                    AccessCount = 1,
+                    CreationTime = DateTime.UtcNow,
+                    Size = CalculateStringSize(translatedText)
+                };
+
+                _smartCache[cacheKey] = cacheEntry;
+            }
         }
 
         private void CleanupCache(object state)
         {
             try
             {
+                // TranslationCacheManager'dan eski önbellekleri temizle
+                _cacheManager?.ExpireEntries();
+
                 if (_smartCache.Count <= _maxCacheSize * _cacheCleanupThreshold)
                     return;
 
@@ -359,7 +386,7 @@ namespace P5S_ceviri
                     _smartCache.TryRemove(entry.Key, out _);
                 }
 
-                _logger.LogInformation($"Önbellek temizlendi. {entriesToRemove.Count} öğe kaldırıldı. Yeni boyut: {_smartCache.Count}");
+                _logger.LogInformation($"Smart önbellek temizlendi. {entriesToRemove.Count} öğe kaldırıldı. Yeni boyut: {_smartCache.Count}");
 
                 UpdateStats(stats => stats.CacheCleanupCount++);
             }
@@ -503,8 +530,16 @@ namespace P5S_ceviri
             {
                 if (disposing)
                 {
+                    _logger.LogInformation("PerformanceOptimizedTranslationService kapatılıyor...");
+
+                    // Zamanı dolmuş önbellek girdilerini temizle
+                    _cacheManager?.ExpireEntries();
+
+                    // Timer'ları durdur
                     _batchTimer?.Dispose();
                     _cacheCleanupTimer?.Dispose();
+
+                    // Semaphore'u temizle
                     _concurrencySemaphore?.Dispose();
 
                     lock (_batchLock)
@@ -521,6 +556,8 @@ namespace P5S_ceviri
                         ongoing.ContinueWith(t => t.Exception?.Handle(ex => false));
                     }
                     _ongoingTranslations.Clear();
+
+                    _logger.LogInformation($"PerformanceOptimizedTranslationService kapatıldı. Toplam çeviri: {_totalTranslations}");
                 }
                 _disposed = true;
             }

@@ -345,6 +345,24 @@ namespace P5S_ceviri
 
     #endregion
 
+    public class TranslationCompletedEventArgs : EventArgs
+    {
+        public string OriginalText { get; set; }
+        public string TranslatedText { get; set; }
+        public string TargetLanguage { get; set; }
+        public DateTime TranslationTime { get; set; }
+        public double Confidence { get; set; }
+        public string ErrorMessage { get; set; }
+    }
+
+    public class TranslationProgressEventArgs : EventArgs
+    {
+        public int ProgressPercentage { get; set; }
+        public string CurrentSentence { get; set; }
+        public int TotalSentences { get; set; }
+        public int CompletedSentences { get; set; }
+    }
+
     public class AdvancedTranslationService : ITranslationService, IBatchTranslationService, IDisposable
     {
         private readonly HttpClient _httpClient;
@@ -365,6 +383,10 @@ namespace P5S_ceviri
 
         public List<StrategyInfo> AvailableStrategies { get; }
 
+        // Event'ler
+        public event EventHandler<TranslationCompletedEventArgs> TranslationCompleted;
+        public event EventHandler<TranslationProgressEventArgs> TranslationProgress;
+
         public AdvancedTranslationService(HttpClient httpClient, ILogger logger)
         {
             _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
@@ -373,6 +395,9 @@ namespace P5S_ceviri
             
             _contextManager = new TranslationContextManager();
             _cacheManager = new TranslationCacheManager(_logger);
+
+            // Zamanı dolmuş önbellek girdilerini temizle
+            _cacheManager.ExpireEntries();
 
             // Önbelleği boyut sınırıyla yüklemek iççin
             var loadedCache = _cacheManager.LoadCache();
@@ -450,10 +475,19 @@ namespace P5S_ceviri
                     {
                         string cacheKey = GenerateCacheKey(sentence, normalizedTarget);
 
-                        // Önbellekten kontrol et
-                        if (_translationCache.TryGetValue(cacheKey, out var cachedTranslation))
+                        // TranslationCacheManager'dan önbelleği kontrol et
+                        var cachedTranslation = _cacheManager.GetTranslation(cacheKey);
+                        if (!string.IsNullOrEmpty(cachedTranslation))
                         {
                             translatedSentences.Add(cachedTranslation);
+                            _logger.LogInformation($"Önbellekten çeviri alındı: {sentence.Substring(0, Math.Min(30, sentence.Length))}...");
+                            return;
+                        }
+
+                        // ConcurrentDictionary'den de kontrol et (eski önbellek)
+                        if (_translationCache.TryGetValue(cacheKey, out var cachedTranslation2))
+                        {
+                            translatedSentences.Add(cachedTranslation2);
                             return;
                         }
 
@@ -482,9 +516,14 @@ namespace P5S_ceviri
                                 }
                             }
 
-                            // Önbelleğe ekle ve sonuca ekle
+                            // TranslationCacheManager'a kaydet
+                            _cacheManager.AddTranslation(cacheKey, translatedSentence);
+                            
+                            // Hem yeni hem eski önbelleğe ekle
                             _translationCache[cacheKey] = translatedSentence;
                             translatedSentences.Add(translatedSentence);
+                            
+                            _logger.LogInformation($"Çeviri önbelleğe eklendi: {sentence.Substring(0, Math.Min(30, sentence.Length))}...");
                         }
                         else
                         {
@@ -630,13 +669,56 @@ namespace P5S_ceviri
 
         public void SaveCacheToDisk()
         {
-            _cacheManager.SaveCache(new Dictionary<string, string>(_translationCache));
+            try
+            {
+                // TranslationCacheManager'a çevirileri kaydet
+                _cacheManager.SaveCache(new Dictionary<string, string>(_translationCache));
+                _logger.LogInformation($"{_translationCache.Count} adet çeviri diske kaydedildi");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Önbellek kaydedilirken hata oluştu", ex);
+            }
+        }
+
+        public void ClearExpiredCache()
+        {
+            try
+            {
+                _cacheManager.ExpireEntries();
+                
+                // Eski önbelleği yeniden yükle
+                var freshCache = _cacheManager.LoadCache();
+                
+                // ConcurrentDictionary'yi güncelle
+                _translationCache.Clear();
+                foreach (var kvp in freshCache)
+                {
+                    _translationCache[kvp.Key] = kvp.Value;
+                }
+                
+                _logger.LogInformation($"Eski önbellek temizlendi. Kalan çeviri sayısı: {_translationCache.Count}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Önbellek temizleme sırasında hata oluştu", ex);
+            }
         }
 
         public void ClearTranslationContext()
         {
             _contextManager.ClearHistory();
             _logger.LogInformation("Çeviri geçmişi temizlendi.");
+        }
+
+        protected virtual void OnTranslationCompleted(TranslationCompletedEventArgs e)
+        {
+            TranslationCompleted?.Invoke(this, e);
+        }
+
+        protected virtual void OnTranslationProgress(TranslationProgressEventArgs e)
+        {
+            TranslationProgress?.Invoke(this, e);
         }
 
         public async Task<string[]> TranslateBatchAsync(string[] texts, string targetLanguage, Type strategyType = null)
@@ -680,6 +762,84 @@ namespace P5S_ceviri
             return results;
         }
 
+        public async Task<string[]> TranslateBatchAsyncWithProgress(string[] texts, string targetLanguage, Type strategyType = null, IProgress<int> progress = null)
+        {
+            if (texts == null || texts.Length == 0)
+                return new string[0];
+
+            if (string.IsNullOrWhiteSpace(targetLanguage))
+                targetLanguage = "tr";
+
+            var results = new string[texts.Length];
+            int completedCount = 0;
+
+            // Tüm metinleri paralel olarak işle
+            var tasks = new Task[texts.Length];
+            for (int i = 0; i < texts.Length; i++)
+            {
+                int index = i;
+                tasks[i] = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var translatedText = await TranslateAsync(texts[index], targetLanguage, strategyType);
+                        results[index] = translatedText ?? texts[index];
+
+                        // Başarılı çeviri event'i
+                        OnTranslationCompleted(new TranslationCompletedEventArgs
+                        {
+                            OriginalText = texts[index],
+                            TranslatedText = translatedText,
+                            TargetLanguage = targetLanguage,
+                            TranslationTime = DateTime.UtcNow,
+                            Confidence = string.IsNullOrEmpty(translatedText) ? 0.0 : 1.0
+                        });
+
+                        // İlerleme güncelle
+                        int completed = Interlocked.Increment(ref completedCount);
+                        int progressPercentage = (int)((double)completed / texts.Length * 100);
+                        
+                        OnTranslationProgress(new TranslationProgressEventArgs
+                        {
+                            ProgressPercentage = progressPercentage,
+                            CurrentSentence = texts[index],
+                            TotalSentences = texts.Length,
+                            CompletedSentences = completed
+                        });
+                        
+                        progress?.Report(progressPercentage);
+                    }
+                    catch (Exception ex)
+                    {
+                        results[index] = texts[index];
+
+                        // Hata event'i
+                        OnTranslationCompleted(new TranslationCompletedEventArgs
+                        {
+                            OriginalText = texts[index],
+                            TranslatedText = texts[index],
+                            TargetLanguage = targetLanguage,
+                            TranslationTime = DateTime.UtcNow,
+                            Confidence = 0.0,
+                            ErrorMessage = ex.Message
+                        });
+
+                        _logger.LogError($"Toplu çeviri {index} indeksindeki metin için başarısız oldu: {ex.Message}", ex);
+
+                        // İlerleme güncelle (hata durumunda da)
+                        int completed = Interlocked.Increment(ref completedCount);
+                        int progressPercentage = (int)((double)completed / texts.Length * 100);
+                        progress?.Report(progressPercentage);
+                    }
+                });
+            }
+
+            // Tüm çevirilerin tamamlanmasını bekle
+            await Task.WhenAll(tasks);
+
+            return results;
+        }
+
         public void Dispose()
         {
             Dispose(true);
@@ -692,8 +852,15 @@ namespace P5S_ceviri
             {
                 if (disposing)
                 {
+                    // Zamanı dolmuş önbellek girdilerini temizle
+                    _cacheManager?.ExpireEntries();
+                    
+                    // Önbelleği kaydet
                     SaveCacheToDisk();
+                    
                     _httpClient?.Dispose();
+                    
+                    _logger.LogInformation("AdvancedTranslationService kapatıldı ve önbellek kaydedildi");
                 }
                 _disposed = true;
             }

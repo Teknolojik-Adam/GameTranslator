@@ -26,7 +26,7 @@ namespace P5S_ceviri
 
         public WindowsOcrService(ILogger logger)
         {
-            _logger = logger;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             try
             {
                 _ocrEngine = OcrEngine.TryCreateFromUserProfileLanguages();

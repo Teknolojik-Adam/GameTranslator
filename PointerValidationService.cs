@@ -29,15 +29,20 @@ namespace P5S_ceviri
         public string ErrorMessage { get; set; }
     }
 
-    public class PointerValidationService
+    public class PointerValidationService : IDisposable
     {
         private readonly IMemoryService _memoryService;
         private readonly ILogger _logger;
+        private readonly AppSettings _appSettings;
+        private readonly Dictionary<PointerPath, PointerValidationResult> _validationCache = new Dictionary<PointerPath, PointerValidationResult>();
+        private readonly object _cacheLockObject = new object();
+        private bool _disposed = false;
 
-        public PointerValidationService(IMemoryService memoryService, ILogger logger)
+        public PointerValidationService(IMemoryService memoryService, ILogger logger, AppSettings appSettings)
         {
             _memoryService = memoryService ?? throw new ArgumentNullException(nameof(memoryService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
         }
 
         public async Task<List<PointerValidationResult>> ValidatePointersAsync(Process process, List<PointerPath> paths, string expectedText = null)
@@ -50,17 +55,21 @@ namespace P5S_ceviri
                 return results;
             }
 
-            foreach (var path in paths)
-            {
-                var result = await ValidateSinglePointerAsync(process, path, expectedText);
-                results.Add(result);
-            }
+            // Paralel validasyon için Task.WhenAll kullan
+            var tasks = paths.Select(path => ValidateSinglePointerAsync(process, path, expectedText));
+            results.AddRange(await Task.WhenAll(tasks));
 
             return results.OrderByDescending(r => r.Score).ToList();
         }
 
         public async Task<PointerValidationResult> ValidateSinglePointerAsync(Process process, PointerPath path, string expectedText)
         {
+            if (_disposed)
+            {
+                _logger.LogWarning("PointerValidationService dispose edilmiş durumda. İşlem reddedildi.");
+                return new PointerValidationResult { Path = path, ErrorMessage = "Servis dispose edilmiş durumda." };
+            }
+
             var result = new PointerValidationResult
             {
                 Path = path,
@@ -71,6 +80,16 @@ namespace P5S_ceviri
             var stopwatch = Stopwatch.StartNew();
             try
             {
+                // Önbellekten kontrol et
+                lock (_cacheLockObject)
+                {
+                    if (_validationCache.TryGetValue(path, out var cachedResult))
+                    {
+                        _logger.LogInformation($"Pointer yolu önbellekten alındı: {path}");
+                        return cachedResult;
+                    }
+                }
+
                 var pathInfo = new PathInfo
                 {
                     BaseAddressModule = path.ModuleName,
@@ -78,7 +97,7 @@ namespace P5S_ceviri
                     PointerOffsets = path.Offsets
                 };
 
-                var resolvedAddress = _memoryService.ResolveAddressFromPath(process, pathInfo);
+                var resolvedAddress = _memoryService.ResolveAddressFromPathCached(process, pathInfo);
                 if (resolvedAddress == IntPtr.Zero)
                 {
                     result.ErrorMessage = "Adres çözümlenemedi";
@@ -115,6 +134,15 @@ namespace P5S_ceviri
                     result.IsValid = true;
                     result.Score = 50;
                 }
+
+                // Önbelleğe kaydet
+                lock (_cacheLockObject)
+                {
+                    _validationCache[path] = result;
+                }
+
+                _logger.LogInformation($"Pointer doğrulama tamamlandı: {path}. Sonuç: {result.IsValid}, Puan: {result.Score}");
+                return result;
             }
             catch (Exception ex)
             {
@@ -122,13 +150,18 @@ namespace P5S_ceviri
                 result.ResponseTime = stopwatch.Elapsed;
                 result.ErrorMessage = $"Doğrulama hatası: {ex.Message}";
                 _logger.LogError($"Pointer doğrulama hatası: {ex.Message}", ex);
+                return result;
             }
-
-            return result;
         }
 
         public async Task<PointerStabilityResult> TestPointerStabilityAsync(Process process, PointerPath path, int testDurationSeconds = 15, int sampleIntervalMs = 500)
         {
+            if (_disposed)
+            {
+                _logger.LogWarning("PointerValidationService dispose edilmiş durumda. İşlem reddedildi.");
+                return new PointerStabilityResult { Path = path, Message = "Servis dispose edilmiş durumda." };
+            }
+
             _logger.LogInformation($"Pointer kararlılık testi başlatıldı. Süre: {testDurationSeconds}s, Aralık: {sampleIntervalMs}ms");
 
             var samples = new List<StabilitySample>();
@@ -146,7 +179,7 @@ namespace P5S_ceviri
                         PointerOffsets = path.Offsets
                     };
 
-                    var address = _memoryService.ResolveAddressFromPath(process, pathInfo);
+                    var address = _memoryService.ResolveAddressFromPathCached(process, pathInfo);
                     sample.Address = address;
 
                     if (address != IntPtr.Zero)
@@ -177,10 +210,10 @@ namespace P5S_ceviri
 
             var validSamples = samples.Where(s => s.IsSuccessful).ToList();
             int uniqueAddresses = validSamples.Select(s => s.Address).Distinct().Count();
-            double addressConsistency = validSamples.Any() ? (uniqueAddresses == 1 ? 100.0 : 0.0) : 0.0;
+            double addressConsistency = validSamples.Any() ? (double)uniqueAddresses / validSamples.Count * 100 : 0.0;
 
             int uniqueValues = validSamples.Select(s => s.Value).Distinct().Count();
-            double valueConsistency = validSamples.Any() ? 100.0 * (1.0 - ((double)(uniqueValues - 1) / validSamples.Count)) : 0.0;
+            double valueConsistency = validSamples.Any() ? (double)uniqueValues / validSamples.Count * 100 : 0.0;
 
             double stabilityScore = (successRate * 0.5) + (addressConsistency * 0.3) + (valueConsistency * 0.2);
             bool isStable = stabilityScore >= 80;
@@ -197,7 +230,83 @@ namespace P5S_ceviri
                 StabilityScore = stabilityScore
             };
 
+            _logger.LogInformation($"Pointer kararlılık testi tamamlandı. {path}: {result.Message}");
             return result;
+        }
+
+        public List<PointerPath> GetRegisteredPointerPaths()
+        {
+            if (_disposed)
+            {
+                _logger.LogWarning("PointerValidationService dispose edilmiş durumda. İşlem reddedildi.");
+                return new List<PointerPath>();
+            }
+
+            lock (_cacheLockObject)
+            {
+                return _validationCache.Keys.ToList();
+            }
+        }
+
+        public void InvalidatePointerCache(PointerPath path)
+        {
+            if (_disposed)
+            {
+                _logger.LogWarning("PointerValidationService dispose edilmiş durumda. İşlem reddedildi.");
+                return;
+            }
+
+            lock (_cacheLockObject)
+            {
+                if (_validationCache.ContainsKey(path))
+                {
+                    _validationCache.Remove(path);
+                    _logger.LogInformation($"Pointer yolunun önbelleği silindi: {path}");
+                }
+            }
+        }
+
+        public void ClearPointerCache()
+        {
+            if (_disposed)
+            {
+                _logger.LogWarning("PointerValidationService dispose edilmiş durumda. İşlem reddedildi.");
+                return;
+            }
+
+            lock (_cacheLockObject)
+            {
+                int count = _validationCache.Count;
+                _validationCache.Clear();
+                _logger.LogInformation($"Tüm pointer yolunun önbelleği temizlendi ({count} adet).");
+            }
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    lock (_cacheLockObject)
+                    {
+                        _validationCache.Clear();
+                    }
+                    _logger.LogInformation("PointerValidationService kapatıldı");
+                }
+                _disposed = true;
+            }
+        }
+
+        ~PointerValidationService()
+        {
+            Dispose(false);
         }
     }
 }

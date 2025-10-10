@@ -1,5 +1,8 @@
+using System;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Windows.Input;
 
 namespace P5S_ceviri
@@ -27,6 +30,8 @@ namespace P5S_ceviri
 
     public class AppSettings : INotifyPropertyChanged
     {
+        private const string SettingsFileName = "app_settings.json";
+        private readonly ILogger _logger;
         private OcrEngineType _ocrEngine = OcrEngineType.Tesseract;
         public OcrEngineType OcrEngine
         {
@@ -59,14 +64,14 @@ namespace P5S_ceviri
         public int AdaptiveThresholdBlockSize
         {
             get => _adaptiveThresholdBlockSize;
-            set { if (_adaptiveThresholdBlockSize != value) { _adaptiveThresholdBlockSize = value; OnPropertyChanged(); } }
+            set { if (_adaptiveThresholdBlockSize != value) { ValidatePositiveInteger(value); _adaptiveThresholdBlockSize = value; OnPropertyChanged(); } }
         }
 
         private int _adaptiveThresholdC = 2;
         public int AdaptiveThresholdC
         {
             get => _adaptiveThresholdC;
-            set { if (_adaptiveThresholdC != value) { _adaptiveThresholdC = value; OnPropertyChanged(); } }
+            set { if (_adaptiveThresholdC != value) { ValidatePositiveInteger(value); _adaptiveThresholdC = value; OnPropertyChanged(); } }
         }
 
         private string _lastProcessName = "";
@@ -115,7 +120,7 @@ namespace P5S_ceviri
         public float SkewCorrectionThreshold
         {
             get => _skewCorrectionThreshold;
-            set { if (_skewCorrectionThreshold != value) { _skewCorrectionThreshold = value; OnPropertyChanged(); } }
+            set { if (_skewCorrectionThreshold != value) { ValidateSkewCorrectionThreshold(value); _skewCorrectionThreshold = value; OnPropertyChanged(); } }
         }
 
         private bool _enableHandwritingMode = false;
@@ -136,14 +141,14 @@ namespace P5S_ceviri
         public float SuperResolutionScale
         {
             get => _superResolutionScale;
-            set { if (_superResolutionScale != value) { _superResolutionScale = value; OnPropertyChanged(); } }
+            set { if (_superResolutionScale != value) { ValidatePositiveFloat(value); _superResolutionScale = value; OnPropertyChanged(); } }
         }
 
         private int _minImageSizeForSuperResolution = 50;
         public int MinImageSizeForSuperResolution
         {
             get => _minImageSizeForSuperResolution;
-            set { if (_minImageSizeForSuperResolution != value) { _minImageSizeForSuperResolution = value; OnPropertyChanged(); } }
+            set { if (_minImageSizeForSuperResolution != value) { ValidatePositiveInteger(value); _minImageSizeForSuperResolution = value; OnPropertyChanged(); } }
         }
 
         private Hotkey _toggleOcrHotkey = new Hotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.O);
@@ -171,14 +176,14 @@ namespace P5S_ceviri
         public int PointerSearchMaxDepth
         {
             get => _pointerSearchMaxDepth;
-            set { if (_pointerSearchMaxDepth != value) { _pointerSearchMaxDepth = value; OnPropertyChanged(); } }
+            set { if (_pointerSearchMaxDepth != value) { ValidatePositiveInteger(value); _pointerSearchMaxDepth = value; OnPropertyChanged(); } }
         }
 
         private int _stringReadLength = 256;
         public int StringReadLength
         {
             get => _stringReadLength;
-            set { if (_stringReadLength != value) { _stringReadLength = value; OnPropertyChanged(); } }
+            set { if (_stringReadLength != value) { ValidatePositiveInteger(value); _stringReadLength = value; OnPropertyChanged(); } }
         }
 
         private bool _showPreviousTranslationsLabel = true;
@@ -199,14 +204,14 @@ namespace P5S_ceviri
         public int OcrTickIntervalMs
         {
             get => _ocrTickIntervalMs;
-            set { if (_ocrTickIntervalMs != value) { _ocrTickIntervalMs = value; OnPropertyChanged(); } }
+            set { if (_ocrTickIntervalMs != value) { ValidatePositiveInteger(value); _ocrTickIntervalMs = value; OnPropertyChanged(); } }
         }
 
         private int _ramTickIntervalMs = 300;
         public int RamTickIntervalMs
         {
             get => _ramTickIntervalMs;
-            set { if (_ramTickIntervalMs != value) { _ramTickIntervalMs = value; OnPropertyChanged(); } }
+            set { if (_ramTickIntervalMs != value) { ValidatePositiveInteger(value); _ramTickIntervalMs = value; OnPropertyChanged(); } }
         }
 
         private bool _requireStableOcr = false;
@@ -227,21 +232,21 @@ namespace P5S_ceviri
         public int MaxConcurrentTranslations
         {
             get => _maxConcurrentTranslations;
-            set { if (_maxConcurrentTranslations != value) { _maxConcurrentTranslations = value; OnPropertyChanged(); } }
+            set { if (_maxConcurrentTranslations != value) { ValidatePositiveInteger(value); _maxConcurrentTranslations = value; OnPropertyChanged(); } }
         }
 
         private int _batchSize = 20;
         public int BatchSize
         {
             get => _batchSize;
-            set { if (_batchSize != value) { _batchSize = value; OnPropertyChanged(); } }
+            set { if (_batchSize != value) { ValidatePositiveInteger(value); _batchSize = value; OnPropertyChanged(); } }
         }
 
         private int _batchCollectionWindowMs = 100;
         public int BatchCollectionWindowMs
         {
             get => _batchCollectionWindowMs;
-            set { if (_batchCollectionWindowMs != value) { _batchCollectionWindowMs = value; OnPropertyChanged(); } }
+            set { if (_batchCollectionWindowMs != value) { ValidatePositiveInteger(value); _batchCollectionWindowMs = value; OnPropertyChanged(); } }
         }
 
         private bool _enableBatchProcessing = true;
@@ -262,21 +267,21 @@ namespace P5S_ceviri
         public int RealtimeBatchThresholdMs
         {
             get => _realtimeBatchThresholdMs;
-            set { if (_realtimeBatchThresholdMs != value) { _realtimeBatchThresholdMs = value; OnPropertyChanged(); } }
+            set { if (_realtimeBatchThresholdMs != value) { ValidatePositiveInteger(value); _realtimeBatchThresholdMs = value; OnPropertyChanged(); } }
         }
 
         private int _cacheSizeLimit = 10000;
         public int CacheSizeLimit
         {
             get => _cacheSizeLimit;
-            set { if (_cacheSizeLimit != value) { _cacheSizeLimit = value; OnPropertyChanged(); } }
+            set { if (_cacheSizeLimit != value) { ValidatePositiveInteger(value); _cacheSizeLimit = value; OnPropertyChanged(); } }
         }
 
         private int _cacheCleanupIntervalMinutes = 30;
         public int CacheCleanupIntervalMinutes
         {
             get => _cacheCleanupIntervalMinutes;
-            set { if (_cacheCleanupIntervalMinutes != value) { _cacheCleanupIntervalMinutes = value; OnPropertyChanged(); } }
+            set { if (_cacheCleanupIntervalMinutes != value) { ValidatePositiveInteger(value); _cacheCleanupIntervalMinutes = value; OnPropertyChanged(); } }
         }
 
         private bool _enableSmartCache = true;
@@ -290,14 +295,14 @@ namespace P5S_ceviri
         public double CacheCleanupThreshold
         {
             get => _cacheCleanupThreshold;
-            set { if (_cacheCleanupThreshold != value) { _cacheCleanupThreshold = value; OnPropertyChanged(); } }
+            set { if (_cacheCleanupThreshold != value) { ValidateCacheCleanupThreshold(value); _cacheCleanupThreshold = value; OnPropertyChanged(); } }
         }
 
         private int _translationBatchSize = 20;
         public int TranslationBatchSize
         {
             get => _translationBatchSize;
-            set { if (_translationBatchSize != value) { _translationBatchSize = value; OnPropertyChanged(); } }
+            set { if (_translationBatchSize != value) { ValidatePositiveInteger(value); _translationBatchSize = value; OnPropertyChanged(); } }
         }
 
         // Son kullanılan ayarlar
@@ -333,7 +338,7 @@ namespace P5S_ceviri
         public double AnomalyDetectionThreshold
         {
             get => _anomalyDetectionThreshold;
-            set { if (_anomalyDetectionThreshold != value) { _anomalyDetectionThreshold = value; OnPropertyChanged(); } }
+            set { if (_anomalyDetectionThreshold != value) { ValidateAnomalyDetectionThreshold(value); _anomalyDetectionThreshold = value; OnPropertyChanged(); } }
         }
 
         private bool _logAnomalies = true;
@@ -375,7 +380,7 @@ namespace P5S_ceviri
         public double MlConfidenceThreshold
         {
             get => _mlConfidenceThreshold;
-            set { if (_mlConfidenceThreshold != value) { _mlConfidenceThreshold = value; OnPropertyChanged(); } }
+            set { if (_mlConfidenceThreshold != value) { ValidateMlConfidenceThreshold(value); _mlConfidenceThreshold = value; OnPropertyChanged(); } }
         }
 
         private string _customDnnModelPath = "";
@@ -397,21 +402,21 @@ namespace P5S_ceviri
         public int VideoOcrFrameRate
         {
             get => _videoOcrFrameRate;
-            set { if (_videoOcrFrameRate != value) { _videoOcrFrameRate = value; OnPropertyChanged(); } }
+            set { if (_videoOcrFrameRate != value) { ValidatePositiveInteger(value); _videoOcrFrameRate = value; OnPropertyChanged(); } }
         }
 
         private int _videoOcrWidth = 640;
         public int VideoOcrWidth
         {
             get => _videoOcrWidth;
-            set { if (_videoOcrWidth != value) { _videoOcrWidth = value; OnPropertyChanged(); } }
+            set { if (_videoOcrWidth != value) { ValidatePositiveInteger(value); _videoOcrWidth = value; OnPropertyChanged(); } }
         }
 
         private int _videoOcrHeight = 480;
         public int VideoOcrHeight
         {
             get => _videoOcrHeight;
-            set { if (_videoOcrHeight != value) { _videoOcrHeight = value; OnPropertyChanged(); } }
+            set { if (_videoOcrHeight != value) { ValidatePositiveInteger(value); _videoOcrHeight = value; OnPropertyChanged(); } }
         }
 
         private bool _enableOcrComparison = true;
@@ -446,14 +451,14 @@ namespace P5S_ceviri
         public double OcrConfidenceThreshold
         {
             get => _ocrConfidenceThreshold;
-            set { if (_ocrConfidenceThreshold != value) { _ocrConfidenceThreshold = value; OnPropertyChanged(); } }
+            set { if (_ocrConfidenceThreshold != value) { ValidateOcrConfidenceThreshold(value); _ocrConfidenceThreshold = value; OnPropertyChanged(); } }
         }
 
         private int _ocrResultHistorySize = 100;
         public int OcrResultHistorySize
         {
             get => _ocrResultHistorySize;
-            set { if (_ocrResultHistorySize != value) { _ocrResultHistorySize = value; OnPropertyChanged(); } }
+            set { if (_ocrResultHistorySize != value) { ValidatePositiveInteger(value); _ocrResultHistorySize = value; OnPropertyChanged(); } }
         }
 
         // Manual Color Isolation Settings (HSV values)
@@ -461,48 +466,224 @@ namespace P5S_ceviri
         public double HueMin
         {
             get => _hueMin;
-            set { if (_hueMin != value) { _hueMin = value; OnPropertyChanged(); } }
+            set { if (_hueMin != value) { ValidateHue(value); _hueMin = value; OnPropertyChanged(); } }
         }
 
         private double _hueMax = 180;
         public double HueMax
         {
             get => _hueMax;
-            set { if (_hueMax != value) { _hueMax = value; OnPropertyChanged(); } }
+            set { if (_hueMax != value) { ValidateHue(value); _hueMax = value; OnPropertyChanged(); } }
         }
 
         private double _saturationMin = 0;
         public double SaturationMin
         {
             get => _saturationMin;
-            set { if (_saturationMin != value) { _saturationMin = value; OnPropertyChanged(); } }
+            set { if (_saturationMin != value) { ValidateSaturation(value); _saturationMin = value; OnPropertyChanged(); } }
         }
 
         private double _saturationMax = 255;
         public double SaturationMax
         {
             get => _saturationMax;
-            set { if (_saturationMax != value) { _saturationMax = value; OnPropertyChanged(); } }
+            set { if (_saturationMax != value) { ValidateSaturation(value); _saturationMax = value; OnPropertyChanged(); } }
         }
 
         private double _valueMin = 200;
         public double ValueMin
         {
             get => _valueMin;
-            set { if (_valueMin != value) { _valueMin = value; OnPropertyChanged(); } }
+            set { if (_valueMin != value) { ValidateValue(value); _valueMin = value; OnPropertyChanged(); } }
         }
 
         private double _valueMax = 255;
         public double ValueMax
         {
             get => _valueMax;
-            set { if (_valueMax != value) { _valueMax = value; OnPropertyChanged(); } }
+            set { if (_valueMax != value) { ValidateValue(value); _valueMax = value; OnPropertyChanged(); } }
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
         protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        public AppSettings(ILogger logger)
+        {
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            // NOT: Ayarlar SettingsManager tarafından yükleniyor
+            // LoadSettingsFromDisk() burada çağrılmıyor (çift yükleme önleme)
+        }
+
+        public void SaveSettingsToDisk()
+        {
+            try
+            {
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                string jsonString = JsonSerializer.Serialize(this, options);
+                File.WriteAllText(SettingsFileName, jsonString);
+                _logger.LogInformation($"Ayarlar '{SettingsFileName}' dosyasına başarıyla kaydedildi.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Ayarlar kaydedilirken hata oluştu", ex);
+            }
+        }
+
+        public void ResetToDefaults()
+        {
+            _ocrEngine = OcrEngineType.Tesseract;
+            _textDetectionMethod = TextDetectionMethod.East;
+            _enableAutoColorDetection = true;
+            _enableDynamicThresholding = true;
+            _adaptiveThresholdBlockSize = 11;
+            _adaptiveThresholdC = 2;
+            _lastProcessName = "";
+            _theme = "Light";
+            _targetLanguage = "tr";
+            _ocrLanguage = "eng";
+            _enableOcrColorFilter = true;
+            _enableSkewCorrection = true;
+            _skewCorrectionThreshold = 0.5f;
+            _enableHandwritingMode = false;
+            _enableSuperResolution = false;
+            _superResolutionScale = 2.0f;
+            _minImageSizeForSuperResolution = 50;
+            _toggleOcrHotkey = new Hotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.O);
+            _toggleTranslateWindowHotkey = new Hotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.T);
+            _switchTranslationServiceHotkey = new Hotkey(ModifierKeys.Control | ModifierKeys.Shift, Key.S);
+            _pointerSearchMaxDepth = 4;
+            _stringReadLength = 256;
+            _showPreviousTranslationsLabel = true;
+            _showPreviousTranslations = false;
+            _ocrTickIntervalMs = 500;
+            _ramTickIntervalMs = 300;
+            _requireStableOcr = false;
+            _requireStableRam = false;
+            _maxConcurrentTranslations = 10;
+            _batchSize = 20;
+            _batchCollectionWindowMs = 100;
+            _enableBatchProcessing = true;
+            _enableRealtimeBatchProcessing = true;
+            _realtimeBatchThresholdMs = 200;
+            _cacheSizeLimit = 10000;
+            _cacheCleanupIntervalMinutes = 30;
+            _enableSmartCache = true;
+            _cacheCleanupThreshold = 0.8;
+            _translationBatchSize = 20;
+            _lastUsedTranslationService = "";
+            _lastOcrState = false;
+            _lastRamState = false;
+            _enableAnomalyDetection = true;
+            _anomalyDetectionThreshold = 0.7;
+            _logAnomalies = true;
+            _selectedDnnModel = DnnModelType.EAST;
+            _enableMachineLearning = true;
+            _enableTextCorrection = true;
+            _enableContextAnalysis = true;
+            _mlConfidenceThreshold = 0.8;
+            _customDnnModelPath = "";
+            _enableVideoOcr = false;
+            _videoOcrFrameRate = 30;
+            _videoOcrWidth = 640;
+            _videoOcrHeight = 480;
+            _enableOcrComparison = true;
+            _enableOcrAccuracyScoring = false;
+            _videoOcrDeviceIndex = 0;
+            _enableOcrRegionDetection = true;
+            _ocrConfidenceThreshold = 0.7;
+            _ocrResultHistorySize = 100;
+            _hueMin = 0;
+            _hueMax = 180;
+            _saturationMin = 0;
+            _saturationMax = 255;
+            _valueMin = 200;
+            _valueMax = 255;
+
+            SaveSettingsToDisk();
+            _logger.LogInformation("Varsayılan ayarlar yüklendi ve kaydedildi.");
+        }
+
+        private void ValidatePositiveInteger(int value)
+        {
+            if (value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Değer pozitif bir tamsayı olmalıdır.");
+            }
+        }
+
+        private void ValidatePositiveFloat(float value)
+        {
+            if (value <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Değer pozitif bir ondalıklı sayı olmalıdır.");
+            }
+        }
+
+        private void ValidateSkewCorrectionThreshold(float value)
+        {
+            if (value < 0 || value > 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Değer 0 ile 1 arasında olmalıdır.");
+            }
+        }
+
+        private void ValidateCacheCleanupThreshold(double value)
+        {
+            if (value < 0 || value > 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Değer 0 ile 1 arasında olmalıdır.");
+            }
+        }
+
+        private void ValidateAnomalyDetectionThreshold(double value)
+        {
+            if (value < 0 || value > 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Değer 0 ile 1 arasında olmalıdır.");
+            }
+        }
+
+        private void ValidateMlConfidenceThreshold(double value)
+        {
+            if (value < 0 || value > 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Değer 0 ile 1 arasında olmalıdır.");
+            }
+        }
+
+        private void ValidateOcrConfidenceThreshold(double value)
+        {
+            if (value < 0 || value > 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Değer 0 ile 1 arasında olmalıdır.");
+            }
+        }
+
+        private void ValidateHue(double value)
+        {
+            if (value < 0 || value > 180)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Değer 0 ile 180 arasında olmalıdır.");
+            }
+        }
+
+        private void ValidateSaturation(double value)
+        {
+            if (value < 0 || value > 255)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Değer 0 ile 255 arasında olmalıdır.");
+            }
+        }
+
+        private void ValidateValue(double value)
+        {
+            if (value < 0 || value > 255)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "Değer 0 ile 255 arasında olmalıdır.");
+            }
         }
     }
 }

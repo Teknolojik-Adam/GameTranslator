@@ -27,7 +27,7 @@ namespace P5S_ceviri
 
         public VideoCaptureService(ILogger logger)
         {
-            _logger = logger;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task<bool> StartCaptureAsync(int deviceIndex = 0)
@@ -36,7 +36,7 @@ namespace P5S_ceviri
             {
                 if (IsCapturing)
                 {
-                    _logger.LogWarning("Video yakalama zaten çalýþýyor");
+                    _logger.LogWarning("Video yakalama zaten ï¿½alï¿½ï¿½ï¿½yor");
                     return true;
                 }
 
@@ -44,22 +44,22 @@ namespace P5S_ceviri
 
                 if (!_videoCapture.IsOpened())
                 {
-                    _logger.LogError($"Video yakalama cihazý {deviceIndex} açýlamadý");
-                    OnVideoError($"Video yakalama cihazý {deviceIndex} açýlamadý");
+                    _logger.LogError($"Video yakalama cihazï¿½ {deviceIndex} aï¿½ï¿½lamadï¿½");
+                    OnVideoError($"Video yakalama cihazï¿½ {deviceIndex} aï¿½ï¿½lamadï¿½");
                     return false;
                 }
 
-                // Video yakalama ayarlarýný yapýlandýr
+                // Video yakalama ayarlarï¿½nï¿½ yapï¿½landï¿½r
                 _videoCapture.Set(VideoCaptureProperties.FrameWidth, VideoWidth);
                 _videoCapture.Set(VideoCaptureProperties.FrameHeight, VideoHeight);
                 _videoCapture.Set(VideoCaptureProperties.Fps, FrameRate);
 
-                // Ayarlarý doðrula
+                // Ayarlarï¿½ doï¿½rula
                 var actualWidth = (int)_videoCapture.Get(VideoCaptureProperties.FrameWidth);
                 var actualHeight = (int)_videoCapture.Get(VideoCaptureProperties.FrameHeight);
                 var actualFps = _videoCapture.Get(VideoCaptureProperties.Fps);
 
-                _logger.LogInformation($"Video yakalama baþlatýldý - Cihaz: {deviceIndex}, Çözünürlük: {actualWidth}x{actualHeight}, FPS: {actualFps}");
+                _logger.LogInformation($"Video yakalama baï¿½latï¿½ldï¿½ - Cihaz: {deviceIndex}, ï¿½ï¿½zï¿½nï¿½rlï¿½k: {actualWidth}x{actualHeight}, FPS: {actualFps}");
 
                 IsCapturing = true;
                 _cancellationTokenSource = new CancellationTokenSource();
@@ -69,8 +69,8 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError("Video yakalama baþlatýlamadý", ex);
-                OnVideoError("Video yakalama baþlatýlamadý", ex);
+                _logger.LogError("Video yakalama baï¿½latï¿½lamadï¿½", ex);
+                OnVideoError("Video yakalama baï¿½latï¿½lamadï¿½", ex);
                 return false;
             }
         }
@@ -105,8 +105,8 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError("Video yakalama durdurulurken hata oluþtu", ex);
-                OnVideoError("Video yakalama durdurulurken hata oluþtu", ex);
+                _logger.LogError("Video yakalama durdurulurken hata oluï¿½tu", ex);
+                OnVideoError("Video yakalama durdurulurken hata oluï¿½tu", ex);
             }
         }
 
@@ -131,7 +131,7 @@ namespace P5S_ceviri
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError("Tek bir kare yakalanýrken hata oluþtu", ex);
+                    _logger.LogError("Tek bir kare yakalanï¿½rken hata oluï¿½tu", ex);
                 }
 
                 return null;
@@ -144,7 +144,7 @@ namespace P5S_ceviri
 
             try
             {
-                // 0-9 arasý cihazlarý test et
+                // 0-9 arasï¿½ cihazlarï¿½ test et
                 for (int i = 0; i < 10; i++)
                 {
                     using (var testCapture = new VideoCapture(i))
@@ -159,7 +159,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError("Mevcut video cihazlarý algýlanýrken hata oluþtu", ex);
+                _logger.LogError("Mevcut video cihazlarï¿½ algï¿½lanï¿½rken hata oluï¿½tu", ex);
             }
 
             return devices.ToArray();
@@ -188,19 +188,19 @@ namespace P5S_ceviri
                         }
                     }
 
-                    // Kare hýzýný kontrol et
+                    // Kare hï¿½zï¿½nï¿½ kontrol et
                     var delay = 1000 / FrameRate;
                     await Task.Delay(delay, cancellationToken);
                 }
             }
             catch (OperationCanceledException)
             {
-                // Yakalama durdurulurken beklenen bir durum
+                
             }
             catch (Exception ex)
             {
-                _logger.LogError("Video yakalama döngüsünde hata oluþtu", ex);
-                OnVideoError("Video yakalama döngüsünde hata oluþtu", ex);
+                _logger.LogError("Video yakalama dï¿½ngï¿½sï¿½nde hata oluï¿½tu", ex);
+                OnVideoError("Video yakalama dï¿½ngï¿½sï¿½nde hata oluï¿½tu", ex);
             }
         }
 

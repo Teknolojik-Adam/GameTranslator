@@ -47,14 +47,28 @@ namespace P5S_ceviri
         {
             try
             {
-                // Tema ayarlarını dosyadan yükle
+                // ThemeManager'ı kullanarak tema ayarlarını yükle
                 ThemeManager.LoadThemeSettings();
+
+                //AppSettings'den tema bilgisini al
+                try
+                {
+                    var appSettings = ServiceContainer.GetService<AppSettings>();
+                    if (appSettings != null && !string.IsNullOrEmpty(appSettings.Theme))
+                    {
+                        var theme = ThemeManager.GetThemeFromString(appSettings.Theme);
+                        ThemeManager.ChangeTheme(theme);
+                    }
+                }
+                catch
+                {
+                    // Eğer AppSettings yüklenemezse, varsayılan tema yüklenir
+                    ThemeManager.LoadThemeSettings();
+                }
             }
             catch (Exception ex)
             {
-                // Hata durumunda varsayılan temayı uygula
-                ThemeManager.ChangeTheme(ThemeManager.Theme.Light);
-                MessageBox.Show($"Tema başlatma hatası: {ex.Message}\nVarsayılan tema kullanılıyor.",
+                MessageBox.Show($"Tema başlatma hatası: {ex.Message}",
                     "Tema Hatası", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }

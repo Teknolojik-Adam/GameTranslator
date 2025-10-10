@@ -12,19 +12,23 @@ namespace P5S_ceviri
     {
         Task<PathInfo> GetRecipeForProcessAsync(Process process);
         void SaveOrUpdateRecipe(GameRecipe newRecipe);
+        void ReloadRecipes();
+        void ClearCache();
     }
 
-    public class GameRecipeService : IGameRecipeService
+    public class GameRecipeService : IGameRecipeService, IDisposable
     {
         private readonly ILogger _logger;
         private const string RecipesFileName = "game_recipes.json";
         private readonly Dictionary<string, PathInfo> _recipeCache;
+        private FileSystemWatcher _fileWatcher;
 
         public GameRecipeService(ILogger logger)
         {
-            _logger = logger;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _recipeCache = new Dictionary<string, PathInfo>(StringComparer.OrdinalIgnoreCase);
             LoadRecipesToCache();
+            SetupFileWatcher();
         }
 
         private void LoadRecipesToCache()
@@ -33,7 +37,7 @@ namespace P5S_ceviri
             {
                 if (!File.Exists(RecipesFileName))
                 {
-                    _logger.LogInformation($" '{RecipesFileName}' dosya bulunamadı. Önbellek boş olacak..");
+                    _logger.LogInformation($"'{RecipesFileName}' dosyası bulunamadı. Önbellek boş olacak.");
                     return;
                 }
 
@@ -47,10 +51,7 @@ namespace P5S_ceviri
                 {
                     if (string.IsNullOrWhiteSpace(recipe.ProcessName) || recipe.PathInfo == null) continue;
 
-                    var processKey = recipe.ProcessName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-                        ? recipe.ProcessName.Substring(0, recipe.ProcessName.Length - 4)
-                        : recipe.ProcessName;
-
+                    var processKey = NormalizeProcessName(recipe.ProcessName);
                     if (!_recipeCache.ContainsKey(processKey))
                     {
                         _recipeCache.Add(processKey, recipe.PathInfo);
@@ -60,39 +61,54 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError($" dosyası yüklenemiyor: {RecipesFileName}", ex);
+                _logger.LogError($"'{RecipesFileName}' dosyası yüklenirken hata oluştu", ex);
             }
+        }
+
+        private string NormalizeProcessName(string processName)
+        {
+            if (string.IsNullOrWhiteSpace(processName))
+                return processName;
+
+            return processName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                ? processName.Substring(0, processName.Length - 4)
+                : processName;
         }
 
         public void SaveOrUpdateRecipe(GameRecipe newRecipe)
         {
-            if (newRecipe == null || string.IsNullOrWhiteSpace(newRecipe.ProcessName))
+            if (newRecipe == null || string.IsNullOrWhiteSpace(newRecipe.ProcessName) || newRecipe.PathInfo == null)
             {
-                _logger.LogWarning("Geçersiz bir dosya kaydetmeye çalıştın.");
+                _logger.LogWarning("Geçersiz bir öneri kaydetmeye çalışıldı.");
                 return;
             }
 
-            string jsonString = File.Exists(RecipesFileName) ? File.ReadAllText(RecipesFileName) : "[]";
-            var recipes = JsonSerializer.Deserialize<List<GameRecipe>>(jsonString) ?? new List<GameRecipe>();
-
-            var existingRecipe = recipes.FirstOrDefault(r => r.ProcessName.Equals(newRecipe.ProcessName, StringComparison.OrdinalIgnoreCase));
-            if (existingRecipe != null)
+            try
             {
-                existingRecipe.PathInfo = newRecipe.PathInfo;
-                _logger.LogInformation($"Güncellenmiş  '{newRecipe.ProcessName}'.");
+                string jsonString = File.Exists(RecipesFileName) ? File.ReadAllText(RecipesFileName) : "[]";
+                var recipes = JsonSerializer.Deserialize<List<GameRecipe>>(jsonString) ?? new List<GameRecipe>();
+
+                var existingRecipe = recipes.FirstOrDefault(r => r.ProcessName.Equals(newRecipe.ProcessName, StringComparison.OrdinalIgnoreCase));
+                if (existingRecipe != null)
+                {
+                    existingRecipe.PathInfo = newRecipe.PathInfo;
+                    _logger.LogInformation($"'{newRecipe.ProcessName}' öneri güncellendi.");
+                }
+                else
+                {
+                    recipes.Add(newRecipe);
+                    _logger.LogInformation($"'{newRecipe.ProcessName}' öneri eklendi.");
+                }
+
+                var processKey = NormalizeProcessName(newRecipe.ProcessName);
+                _recipeCache[processKey] = newRecipe.PathInfo;
+
+                SaveRecipesToFile(recipes);
             }
-            else
+            catch (Exception ex)
             {
-                recipes.Add(newRecipe);
-                _logger.LogInformation($"eklendi '{newRecipe.ProcessName}'.");
+                _logger.LogError($"öneri kaydedilirken hata oluştu", ex);
             }
-
-            var processKey = newRecipe.ProcessName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-                ? newRecipe.ProcessName.Substring(0, newRecipe.ProcessName.Length - 4)
-                : newRecipe.ProcessName;
-            _recipeCache[processKey] = newRecipe.PathInfo;
-
-            SaveRecipesToFile(recipes);
         }
 
         private void SaveRecipesToFile(List<GameRecipe> recipes)
@@ -102,11 +118,11 @@ namespace P5S_ceviri
                 var options = new JsonSerializerOptions { WriteIndented = true };
                 string jsonString = JsonSerializer.Serialize(recipes, options);
                 File.WriteAllText(RecipesFileName, jsonString);
-                _logger.LogInformation($"Recipes saved to '{RecipesFileName}' Başarili.");
+                _logger.LogInformation($"öneri '{RecipesFileName}' dosyasına başarıyla kaydedildi.");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"dosya kaydedilemedi", ex);
+                _logger.LogError($"öneri '{RecipesFileName}' dosyasına kaydedilirken hata oluştu", ex);
             }
         }
 
@@ -114,14 +130,78 @@ namespace P5S_ceviri
         {
             if (process == null) return Task.FromResult<PathInfo>(null);
 
-            if (_recipeCache.TryGetValue(process.ProcessName, out var pathInfo))
+            if (_recipeCache.TryGetValue(NormalizeProcessName(process.ProcessName), out var pathInfo))
             {
-                _logger.LogInformation($"Önbellekte bulundu '{process.ProcessName}'.");
+                _logger.LogInformation($"'{process.ProcessName}' öneri önbellekte bulundu.");
                 return Task.FromResult(pathInfo);
             }
 
-            _logger.LogWarning($"bulunamadı '{process.ProcessName}'. Lütfen kontrol edin'{RecipesFileName}'.");
+            _logger.LogWarning($"'{process.ProcessName}' öneri bulunamadı. Lütfen kontrol edin '{RecipesFileName}'.");
             return Task.FromResult<PathInfo>(null);
+        }
+
+        private void SetupFileWatcher()
+        {
+            try
+            {
+                if (!File.Exists(RecipesFileName))
+                {
+                    _logger.LogWarning($"'{RecipesFileName}' dosyası bulunamadı, dosya izleyici ayarlanamadı.");
+                    return;
+                }
+
+                string fullPath = Path.GetFullPath(RecipesFileName);
+                string directory = Path.GetDirectoryName(fullPath);
+                string fileName = Path.GetFileName(fullPath);
+
+                _fileWatcher = new FileSystemWatcher(directory, fileName)
+                {
+                    NotifyFilter = NotifyFilters.LastWrite
+                };
+                _fileWatcher.Changed += OnRecipesFileChanged;
+                _fileWatcher.EnableRaisingEvents = true;
+                _logger.LogInformation($"'{RecipesFileName}' dosyası izleniyor.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Dosya izleyici ayarlanırken hata oluştu", ex);
+            }
+        }
+
+        private void OnRecipesFileChanged(object sender, FileSystemEventArgs e)
+        {
+            if (e.ChangeType == WatcherChangeTypes.Changed)
+            {
+                _logger.LogInformation($"'{RecipesFileName}' dosyası değişti, önbellek yenileniyor...");
+                System.Threading.Thread.Sleep(100); // Dosya yazımının tamamlanmasını bekle
+                LoadRecipesToCache();
+            }
+        }
+
+        public void ReloadRecipes()
+        {
+            _logger.LogInformation($"'{RecipesFileName}' dosyası elle yenileniyor...");
+            LoadRecipesToCache();
+        }
+
+        public void ClearCache()
+        {
+            lock (_recipeCache)
+            {
+                _recipeCache.Clear();
+                _logger.LogInformation("Öneri önbelleği temizlendi.");
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_fileWatcher != null)
+            {
+                _fileWatcher.Changed -= OnRecipesFileChanged;
+                _fileWatcher.Dispose();
+                _fileWatcher = null;
+            }
+            _logger.LogInformation("Dosya izleyici durduruldu ve kaynaklar serbest bırakıldı.");
         }
     }
 }

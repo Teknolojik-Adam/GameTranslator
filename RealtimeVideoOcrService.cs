@@ -40,11 +40,11 @@ namespace P5S_ceviri
             IOcrAccuracyService ocrAccuracyService,
             AppSettings appSettings)
         {
-            _logger = logger;
-            _videoCaptureService = videoCaptureService;
-            _ocrComparisonService = ocrComparisonService;
-            _ocrAccuracyService = ocrAccuracyService;
-            _appSettings = appSettings;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _videoCaptureService = videoCaptureService ?? throw new ArgumentNullException(nameof(videoCaptureService));
+            _ocrComparisonService = ocrComparisonService ?? throw new ArgumentNullException(nameof(ocrComparisonService));
+            _ocrAccuracyService = ocrAccuracyService ?? throw new ArgumentNullException(nameof(ocrAccuracyService));
+            _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
 
            
             _videoCaptureService.FrameCaptured += OnFrameCaptured;
@@ -60,34 +60,34 @@ namespace P5S_ceviri
             {
                 if (IsRunning)
                 {
-                    _logger.LogWarning("Gerçek zamanlý video OCR zaten çalýþýyor");
+                    _logger.LogWarning("Gerï¿½ek zamanlï¿½ video OCR zaten ï¿½alï¿½ï¿½ï¿½yor");
                     return true;
                 }
 
-                _logger.LogInformation("Gerçek zamanlý video OCR hizmeti baþlatýlýyor...");
+                _logger.LogInformation("Gerï¿½ek zamanlï¿½ video OCR hizmeti baï¿½latï¿½lï¿½yor...");
 
-                // Video yakalamayý baþlat
+                // Video yakalamayï¿½ baï¿½lat
                 var captureStarted = await _videoCaptureService.StartCaptureAsync(deviceIndex);
                 if (!captureStarted)
                 {
-                    _logger.LogError("Video yakalama baþlatýlamadý");
+                    _logger.LogError("Video yakalama baï¿½latï¿½lamadï¿½");
                     return false;
                 }
 
-                // Ýþleme görevini baþlat
+                // ï¿½ï¿½leme gï¿½revini baï¿½lat
                 _cancellationTokenSource = new CancellationTokenSource();
                 _processingTask = ProcessFramesAsync(_cancellationTokenSource.Token);
 
                 IsRunning = true;
                 _frameNumber = 0;
 
-                _logger.LogInformation("Gerçek zamanlý video OCR hizmeti baþarýyla baþlatýldý");
+                _logger.LogInformation("Gerï¿½ek zamanlï¿½ video OCR hizmeti baï¿½arï¿½yla baï¿½latï¿½ldï¿½");
                 return true;
             }
             catch (Exception ex)
             {
-                _logger.LogError("Gerçek zamanlý video OCR hizmeti baþlatýlamadý", ex);
-                OnOcrError("Gerçek zamanlý video OCR hizmeti baþlatýlamadý", ex);
+                _logger.LogError("Gerï¿½ek zamanlï¿½ video OCR hizmeti baï¿½latï¿½lamadï¿½", ex);
+                OnOcrError("Gerï¿½ek zamanlï¿½ video OCR hizmeti baï¿½latï¿½lamadï¿½", ex);
                 return false;
             }
         }
@@ -101,29 +101,29 @@ namespace P5S_ceviri
                     return;
                 }
 
-                _logger.LogInformation("Gerçek zamanlý video OCR hizmeti durduruluyor...");
+                _logger.LogInformation("Gerï¿½ek zamanlï¿½ video OCR hizmeti durduruluyor...");
 
                 IsRunning = false;
 
-                // Ýþleme görevini durdur
+                // ï¿½ï¿½leme gï¿½revini durdur
                 _cancellationTokenSource?.Cancel();
                 if (_processingTask != null)
                 {
                     await _processingTask;
                 }
 
-                // Video yakalamayý durdur
+                // Video yakalamayï¿½ durdur
                 await _videoCaptureService.StopCaptureAsync();
 
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
 
-                _logger.LogInformation("Gerçek zamanlý video OCR hizmeti durduruldu");
+                _logger.LogInformation("Gerï¿½ek zamanlï¿½ video OCR hizmeti durduruldu");
             }
             catch (Exception ex)
             {
-                _logger.LogError("Gerçek zamanlý video OCR hizmeti durdurulurken hata oluþtu", ex);
-                OnOcrError("Gerçek zamanlý video OCR hizmeti durdurulurken hata oluþtu", ex);
+                _logger.LogError("Gerï¿½ek zamanlï¿½ video OCR hizmeti durdurulurken hata oluï¿½tu", ex);
+                OnOcrError("Gerï¿½ek zamanlï¿½ video OCR hizmeti durdurulurken hata oluï¿½tu", ex);
             }
         }
 
@@ -148,7 +148,7 @@ namespace P5S_ceviri
 
                 if (EnableComparison)
                 {
-                    // En iyi sonucu almak için karþýlaþtýrma yap
+                    // En iyi sonucu almak iï¿½in karï¿½ï¿½laï¿½tï¿½rma yap
                     var comparisonResult = await _ocrComparisonService.CompareEnginesAsync(frame, _appSettings.OcrLanguage);
                     result.ComparisonResult = comparisonResult;
                     result.UsedEngine = comparisonResult.BestEngine;
@@ -167,14 +167,14 @@ namespace P5S_ceviri
                 }
                 else
                 {
-                    // Tek motor kullan (mevcut uygulama ayarý)
+                    // Tek motor kullan (mevcut uygulama ayarï¿½)
                     var ocrService = new OcrService(_logger, _appSettings);
                     result.RecognizedText = await ocrService.GetTextFromImage(frame, _appSettings.OcrLanguage);
                     result.UsedEngine = _appSettings.OcrEngine;
                     result.Confidence = CalculateSimpleConfidence(result.RecognizedText, frame);
                 }
 
-                // Referans metin mevcutsa doðruluk puanýný hesapla
+                // Referans metin mevcutsa doï¿½ruluk puanï¿½nï¿½ hesapla
                 if (EnableAccuracyScoring && !string.IsNullOrEmpty(_groundTruth))
                 {
                     result.AccuracyScore = await _ocrAccuracyService.CalculateAccuracyWithImageAsync(
@@ -184,9 +184,9 @@ namespace P5S_ceviri
                 stopwatch.Stop();
                 result.ProcessingTime = stopwatch.Elapsed;
 
-                // Son sonuçlar kuyruðuna ekle
+                // Son sonuï¿½lar kuyruï¿½una ekle
                 _recentResults.Enqueue(result);
-                while (_recentResults.Count > 100) // Yalnýzca son 100 sonucu sakla
+                while (_recentResults.Count > 100) // Yalnï¿½zca son 100 sonucu sakla
                 {
                     _recentResults.TryDequeue(out _);
                 }
@@ -197,8 +197,8 @@ namespace P5S_ceviri
             catch (Exception ex)
             {
                 stopwatch.Stop();
-                _logger.LogError($"Kare iþlenirken hata oluþtu {frameNum}", ex);
-                OnOcrError($"Kare iþlenirken hata oluþtu {frameNum}", ex, frameNum);
+                _logger.LogError($"Kare iï¿½lenirken hata oluï¿½tu {frameNum}", ex);
+                OnOcrError($"Kare iï¿½lenirken hata oluï¿½tu {frameNum}", ex, frameNum);
                 return null;
             }
         }
@@ -234,16 +234,16 @@ namespace P5S_ceviri
         public void SetGroundTruth(string groundTruth)
         {
             _groundTruth = groundTruth ?? "";
-            _logger.LogInformation($"Referans metin ayarlandý: {(_groundTruth.Length > 50 ? _groundTruth.Substring(0, 50) + "..." : _groundTruth)}");
+            _logger.LogInformation($"Referans metin ayarlandï¿½: {(_groundTruth.Length > 50 ? _groundTruth.Substring(0, 50) + "..." : _groundTruth)}");
         }
 
         private async Task ProcessFramesAsync(CancellationToken cancellationToken)
         {
             try
-            { // Asýl iþleme OnFrameCaptured içinde gerçekleþir
+            { // Asï¿½l iï¿½leme OnFrameCaptured iï¿½inde gerï¿½ekleï¿½ir
                 while (!cancellationToken.IsCancellationRequested && IsRunning)
                 {
-                    // Bu metot, kareler yakalandýðýnda çaðrýlýr
+                    // Bu metot, kareler yakalandï¿½ï¿½ï¿½nda ï¿½aï¿½rï¿½lï¿½r
                    
                     await Task.Delay(100, cancellationToken);
                 }
@@ -254,8 +254,8 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError("Video OCR iþleme döngüsünde hata oluþtu", ex);
-                OnOcrError("Video OCR iþleme döngüsünde hata oluþtu", ex);
+                _logger.LogError("Video OCR iï¿½leme dï¿½ngï¿½sï¿½nde hata oluï¿½tu", ex);
+                OnOcrError("Video OCR iï¿½leme dï¿½ngï¿½sï¿½nde hata oluï¿½tu", ex);
             }
         }
 
@@ -270,15 +270,15 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Yakalanan kare iþlenirken hata oluþtu {e.FrameNumber}", ex);
-                OnOcrError($"Yakalanan kare iþlenirken hata oluþtu {e.FrameNumber}", ex, e.FrameNumber);
+                _logger.LogError($"Yakalanan kare iï¿½lenirken hata oluï¿½tu {e.FrameNumber}", ex);
+                OnOcrError($"Yakalanan kare iï¿½lenirken hata oluï¿½tu {e.FrameNumber}", ex, e.FrameNumber);
             }
         }
 
         private void OnVideoError(object sender, VideoErrorEventArgs e)
         {
-            _logger.LogError($"Video hatasý: {e.ErrorMessage}", e.Exception);
-            OnOcrError($"Video hatasý: {e.ErrorMessage}", e.Exception);
+            _logger.LogError($"Video hatasï¿½: {e.ErrorMessage}", e.Exception);
+            OnOcrError($"Video hatasï¿½: {e.ErrorMessage}", e.Exception);
         }
 
         private void OnComparisonCompleted(object sender, OcrComparisonCompletedEventArgs e)
@@ -293,11 +293,11 @@ namespace P5S_ceviri
 
             double confidence = 0.5;
 
-            // Metin uzunluðu faktörü
+            // Metin uzunluï¿½u faktï¿½rï¿½
             if (recognizedText.Length > 10) confidence += 0.2;
             else if (recognizedText.Length > 5) confidence += 0.1;
 
-            // Görüntü boyutu faktörü
+            // Gï¿½rï¿½ntï¿½ boyutu faktï¿½rï¿½
             if (image != null)
             {
                 var imageArea = image.Width * image.Height;
@@ -305,7 +305,7 @@ namespace P5S_ceviri
                 else if (imageArea > 50000) confidence += 0.05;
             }
 
-            // Karakter çeþitliliði
+            // Karakter ï¿½eï¿½itliliï¿½i
             var uniqueChars = recognizedText.Distinct().Count();
             var diversity = (double)uniqueChars / recognizedText.Length;
             confidence += diversity * 0.2;

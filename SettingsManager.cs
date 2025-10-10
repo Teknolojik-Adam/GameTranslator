@@ -32,7 +32,7 @@ namespace P5S_ceviri
                         if (string.IsNullOrWhiteSpace(json))
                         {
                             _logger.LogWarning($"Ayar dosyası boş: '{_settingsFilePath}'. Varsayılan ayarlar kullanılacak.");
-                            return new AppSettings();
+                            return new AppSettings(_logger);
                         }
                         var options = new JsonSerializerOptions
                         {
@@ -62,7 +62,7 @@ namespace P5S_ceviri
                 {
                     _logger.LogError($"Ayarlar yüklenirken hata oluştu: '{_settingsFilePath}'. Hata: {ex.Message}", ex);
                 }
-                return new AppSettings();
+                return new AppSettings(_logger);
             }
         }
 
@@ -124,33 +124,57 @@ namespace P5S_ceviri
         {
             if (reader.TokenType == JsonTokenType.Null)
                 return null;
-            if (reader.TokenType == JsonTokenType.String)
+
+            if (reader.TokenType != JsonTokenType.String)
+                return null;
+
+            try
             {
                 var value = reader.GetString();
-                System.Diagnostics.Debug.WriteLine($"HotkeyJsonConverter.Read çağrıldı: {value}");
-                var parts = value.Split(new[] { " + " }, StringSplitOptions.None);
+                if (string.IsNullOrWhiteSpace(value))
+                    return null;
+
+                var parts = value.Split(new[] { " + " }, StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 2)
                     return null;
+
                 var modifiers = ModifierKeys.None;
-                var key = Key.None;
+                
+                // Son kısım key, geri kalanlar modifier
                 for (int i = 0; i < parts.Length - 1; i++)
                 {
-                    switch (parts[i])
+                    switch (parts[i].Trim())
                     {
-                        case "Ctrl": modifiers |= ModifierKeys.Control; break;
-                        case "Shift": modifiers |= ModifierKeys.Shift; break;
-                        case "Alt": modifiers |= ModifierKeys.Alt; break;
-                        case "Win": modifiers |= ModifierKeys.Windows; break;
+                        case "Ctrl":
+                        case "Control":
+                            modifiers |= ModifierKeys.Control;
+                            break;
+                        case "Shift":
+                            modifiers |= ModifierKeys.Shift;
+                            break;
+                        case "Alt":
+                            modifiers |= ModifierKeys.Alt;
+                            break;
+                        case "Win":
+                        case "Windows":
+                            modifiers |= ModifierKeys.Windows;
+                            break;
                     }
                 }
-                if (Enum.TryParse<Key>(parts[parts.Length - 1], out key))
+
+                // Son kısım key değeri
+                var keyString = parts[parts.Length - 1].Trim();
+                if (Enum.TryParse<Key>(keyString, true, out var key))
                 {
-                    var hotkey = new Hotkey(modifiers, key);
-                    System.Diagnostics.Debug.WriteLine($"HotkeyJsonConverter.Read sonucu: {hotkey}");
-                    return hotkey;
+                    return new Hotkey(modifiers, key);
                 }
+
+                return null;
             }
-            return null;
+            catch
+            {
+                return null;
+            }
         }
 
         public override void Write(Utf8JsonWriter writer, Hotkey value, JsonSerializerOptions options)
@@ -160,10 +184,16 @@ namespace P5S_ceviri
                 writer.WriteNullValue();
                 return;
             }
-            string hotkeyString = value.ToString();
-            writer.WriteStringValue(hotkeyString);
-            // Debug için log ekle
-            System.Diagnostics.Debug.WriteLine($"HotkeyJsonConverter.Write çağrıldı: {hotkeyString}");
+
+            try
+            {
+                string hotkeyString = value.ToString();
+                writer.WriteStringValue(hotkeyString);
+            }
+            catch
+            {
+                writer.WriteNullValue();
+            }
         }
     }
 }

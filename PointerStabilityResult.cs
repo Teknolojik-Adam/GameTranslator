@@ -12,7 +12,5 @@ namespace P5S_ceviri
         public double AddressConsistency { get; set; }
         public double ValueConsistency { get; set; }
         public double StabilityScore { get; set; }
-
-        
     }
 }

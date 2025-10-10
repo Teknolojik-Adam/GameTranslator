@@ -172,6 +172,7 @@
     <Compile Include="AppSettings.cs" />
     <Compile Include="ConsoleLogger.cs" />
     <Compile Include="GameRecipe.cs" />
+    <Compile Include="IconManager.cs" />
     <Compile Include="ILogger.cs" />
     <Compile Include="IMemoryService.cs" />
     <Compile Include="InputDialog.xaml.cs">

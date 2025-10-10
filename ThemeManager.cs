@@ -203,10 +203,10 @@ namespace P5S_ceviri
                 }
                 catch
                 {
-                    // ServiceContainer henüz hazır değilse devam et
+                  
                 }
 
-                // Her iki yöntem de başarısızsa varsayılan temayı kullan
+              
                 ChangeTheme(Theme.Light);
             }
             catch (Exception ex)
@@ -239,7 +239,7 @@ namespace P5S_ceviri
                 }
                 catch
                 {
-                    // ServiceContainer henüz hazır değilse sadece dosyaya kaydet
+                   
                 }
             }
             catch (Exception ex)

@@ -24,8 +24,8 @@ namespace P5S_ceviri
 
         public OcrComparisonService(ILogger logger, AppSettings appSettings)
         {
-            _logger = logger;
-            _appSettings = appSettings;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
             _ocrEngines = new Dictionary<OcrEngineType, IOcrEngine>
             {
                 { OcrEngineType.Tesseract, new TesseractOcrEngine(logger, appSettings) },

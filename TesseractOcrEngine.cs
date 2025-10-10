@@ -22,11 +22,11 @@ namespace P5S_ceviri
             _appSettings = appSettings;
         }
 
-        public async Task<string> RecognizeTextAsync(Bitmap image, string language)
+        public async Task<string> RecognizeTextAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto)
         {
             if (image == null) return string.Empty;
 
-            var adaptiveResult = await TryRecognizeWithStrategy(image, language, PageSegMode.Auto, Preprocess_AdaptiveThreshold);
+            var adaptiveResult = await TryRecognizeWithStrategy(image, language, psm, Preprocess_AdaptiveThreshold);
             _logger.LogInformation($"[Tesseract-Adaptif] Sonuç: '{adaptiveResult.Text}', Güvenilirlik: {adaptiveResult.Confidence:P}");
 
             if (adaptiveResult.Confidence > 0.70)

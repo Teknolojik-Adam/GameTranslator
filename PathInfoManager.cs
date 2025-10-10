@@ -2,20 +2,31 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Reflection;
 using System.Windows.Media.Imaging;
 
 namespace P5S_ceviri
 {
-    public class ProcessInfo
+    public class ProcessInfo : IDisposable
     {
-        public Process Process { get; }
-        public string ProcessName => Process.ProcessName;
+        private readonly Process _process;
+        private readonly ILogger _logger;
         private BitmapImage _iconImage;
+        private bool _disposed = false;
+
+        public Process Process => _process;
+        public string ProcessName => _process?.ProcessName ?? "Unknown";
 
         public BitmapImage IconImage
         {
             get
             {
+                if (_disposed)
+                {
+                    _logger?.LogWarning("ProcessInfo dispose edilmiş durumda. IconImage döndürülemiyor.");
+                    return new BitmapImage();
+                }
+
                 if (_iconImage == null)
                 {
                     _iconImage = CreateIconImage();
@@ -24,9 +35,10 @@ namespace P5S_ceviri
             }
         }
 
-        public ProcessInfo(Process process)
+        public ProcessInfo(Process process, ILogger logger = null)
         {
-            Process = process ?? throw new ArgumentNullException(nameof(process));
+            _process = process ?? throw new ArgumentNullException(nameof(process));
+            _logger = logger;
         }
 
         private BitmapImage CreateIconImage()
@@ -34,9 +46,9 @@ namespace P5S_ceviri
             BitmapImage bitmapImage = null;
             try
             {
-                if (Process.MainModule?.FileName != null)
+                if (_process.MainModule?.FileName != null)
                 {
-                    using (Icon ico = Icon.ExtractAssociatedIcon(Process.MainModule.FileName))
+                    using (Icon ico = Icon.ExtractAssociatedIcon(_process.MainModule.FileName))
                     {
                         if (ico != null)
                         {
@@ -51,16 +63,87 @@ namespace P5S_ceviri
                                 bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
                                 bitmapImage.EndInit();
                                 bitmapImage.Freeze();
+
+                                _logger?.LogInformation($"Process ikonu oluşturuldu: {_process.MainModule.FileName}");
                             }
+                        }
+                        else
+                        {
+                            _logger?.LogWarning($"Icon oluşturulamadı, varsayılan icon döndürüldü: {_process.MainModule.FileName}");
+                            bitmapImage = GetDefaultIcon();
                         }
                     }
                 }
+                else
+                {
+                    _logger?.LogWarning($"MainModule bulunamadı, varsayılan icon döndürüldü: {_process.ProcessName}");
+                    bitmapImage = GetDefaultIcon();
+                }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-               
+                _logger?.LogError($"Icon çıkarma hatası: {_process.MainModule?.FileName}", ex);
+                bitmapImage = GetDefaultIcon();
             }
+
             return bitmapImage ?? new BitmapImage();
+        }
+
+        private BitmapImage GetDefaultIcon()
+        {
+            try
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+                using (var stream = assembly.GetManifestResourceStream("P5S_ceviri.Resources.default_icon.png"))
+                {
+                    if (stream != null)
+                    {
+                        var bitmapImage = new BitmapImage();
+                        bitmapImage.BeginInit();
+                        bitmapImage.StreamSource = stream;
+                        bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+                        bitmapImage.EndInit();
+                        bitmapImage.Freeze();
+                        _logger?.LogInformation("Varsayılan icon döndürüldü.");
+                        return bitmapImage;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Varsayılan icon çıkarma hatası", ex);
+            }
+            
+            return new BitmapImage();
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    _iconImage = null;
+                    _logger?.LogInformation($"ProcessInfo temizlendi: {_process.ProcessName}");
+                }
+                _disposed = true;
+            }
+        }
+
+        ~ProcessInfo()
+        {
+            Dispose(false);
+        }
+
+        public override string ToString()
+        {
+            return $"{ProcessName} (PID: {_process.Id})";
         }
     }
 }

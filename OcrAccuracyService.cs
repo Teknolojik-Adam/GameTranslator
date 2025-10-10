@@ -13,7 +13,7 @@ namespace P5S_ceviri
 
         public OcrAccuracyService(ILogger logger)
         {
-            _logger = logger;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task<OcrAccuracyScore> CalculateAccuracyAsync(string recognizedText, string groundTruth)

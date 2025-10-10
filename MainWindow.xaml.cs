@@ -41,6 +41,7 @@ namespace P5S_ceviri
         private readonly IVideoCaptureService _videoCaptureService;
         private readonly IOcrComparisonService _ocrComparisonService;
         private readonly IOcrAccuracyService _ocrAccuracyService;
+        private readonly IconManager _iconManager;
         private readonly DispatcherTimer _continuousTranslationTimer;
         private readonly DispatcherTimer _manualTranslationTimer;
         private readonly DispatcherTimer _continuousOcrTimer;
@@ -92,6 +93,7 @@ namespace P5S_ceviri
                 _videoCaptureService = ServiceContainer.GetService<IVideoCaptureService>();
                 _ocrComparisonService = ServiceContainer.GetService<IOcrComparisonService>();
                 _ocrAccuracyService = ServiceContainer.GetService<IOcrAccuracyService>();
+                _iconManager = new IconManager(_logger);
                 _ocrRegionProcessor = new OcrRegionProcessor(_ocrService, _translationService, _appSettings.OcrLanguage, _appSettings.TargetLanguage);
                 // UI bileşenlerini başlatmak için
                 InitializeTranslationServices();
@@ -207,8 +209,13 @@ namespace P5S_ceviri
                     return;
                 }
                 _hotkeyManager = new HotkeyManager(hwndSource, _logger);
+                
                 // Kısayolları kaydet
                 RegisterHotkeys();
+                
+                // Kayıtlı kısayolları listele
+                ListRegisteredHotkeys();
+                
                 _logger?.LogInformation("Hotkey kayıtları başarıyla tamamlandı");
             }
             catch (Exception ex)
@@ -223,8 +230,28 @@ namespace P5S_ceviri
             {
                 _logger?.LogInformation("OnClosed çağrıldı - Uygulama kapatılıyor");
 
-                // Kısayolları kaldır
+                // Tüm ProcessInfo nesnelerini dispose et
+                if (cmbProcesses.ItemsSource is System.Collections.IEnumerable processes)
+                {
+                    foreach (var item in processes)
+                    {
+                        if (item is ProcessInfo pi)
+                        {
+                            pi.Dispose();
+                        }
+                    }
+                }
+
+                // Kısayolları kaldır ve HotkeyManager'ı dispose et
                 UnregisterHotkeys();
+                _hotkeyManager?.Dispose();
+
+                // Servisleri dispose et
+                _pointerValidationService?.Dispose();
+                
+                // EnhancedMemoryService'i dispose et (tüm event'leri ve kaynakları temizler)
+                _enhancedMemoryService?.Dispose();
+                _logger?.LogInformation("EnhancedMemoryService kaynakları serbest bırakıldı");
 
                 _logger?.LogInformation("Uygulama başarıyla kapatıldı");
             }
@@ -240,12 +267,51 @@ namespace P5S_ceviri
 
         private void RegisterHotkeys()
         {
-            if (_appSettings.ToggleOcrHotkey != null)
-                _ocrHotkeyId = _hotkeyManager.RegisterHotkey(_appSettings.ToggleOcrHotkey.Modifiers, _appSettings.ToggleOcrHotkey.Key, ToggleOcr);
-            if (_appSettings.ToggleTranslateWindowHotkey != null)
-                _translateWindowHotkeyId = _hotkeyManager.RegisterHotkey(_appSettings.ToggleTranslateWindowHotkey.Modifiers, _appSettings.ToggleTranslateWindowHotkey.Key, ToggleTranslateWindow);
-            if (_appSettings.SwitchTranslationServiceHotkey != null)
-                _switchTranslationServiceHotkeyId = _hotkeyManager.RegisterHotkey(_appSettings.SwitchTranslationServiceHotkey.Modifiers, _appSettings.SwitchTranslationServiceHotkey.Key, SwitchTranslationService);
+            if (_appSettings.ToggleOcrHotkey != null && _appSettings.ToggleOcrHotkey.IsValid)
+            {
+                _ocrHotkeyId = _hotkeyManager.RegisterHotkey(
+                    _appSettings.ToggleOcrHotkey.Modifiers, 
+                    _appSettings.ToggleOcrHotkey.Key, 
+                    ToggleOcr,
+                    "OCR Aç/Kapat"
+                );
+                if (_ocrHotkeyId > 0)
+                {
+                    _logger?.LogInformation($"OCR kısayolu kaydedildi: {_appSettings.ToggleOcrHotkey}");
+                }
+            }
+
+            if (_appSettings.ToggleTranslateWindowHotkey != null && _appSettings.ToggleTranslateWindowHotkey.IsValid)
+            {
+                _translateWindowHotkeyId = _hotkeyManager.RegisterHotkey(
+                    _appSettings.ToggleTranslateWindowHotkey.Modifiers, 
+                    _appSettings.ToggleTranslateWindowHotkey.Key, 
+                    ToggleTranslateWindow,
+                    "Çeviri Penceresini Aç/Kapat"
+                );
+                if (_translateWindowHotkeyId > 0)
+                {
+                    _logger?.LogInformation($"Çeviri penceresi kısayolu kaydedildi: {_appSettings.ToggleTranslateWindowHotkey}");
+                }
+            }
+
+            if (_appSettings.SwitchTranslationServiceHotkey != null && _appSettings.SwitchTranslationServiceHotkey.IsValid)
+            {
+                _switchTranslationServiceHotkeyId = _hotkeyManager.RegisterHotkey(
+                    _appSettings.SwitchTranslationServiceHotkey.Modifiers, 
+                    _appSettings.SwitchTranslationServiceHotkey.Key, 
+                    SwitchTranslationService,
+                    "Çeviri Servisi Değiştir"
+                );
+                if (_switchTranslationServiceHotkeyId > 0)
+                {
+                    _logger?.LogInformation($"Çeviri servisi değiştirme kısayolu kaydedildi: {_appSettings.SwitchTranslationServiceHotkey}");
+                }
+            }
+
+            // Kayıtlı kısayol sayısını logla
+            int registeredCount = _hotkeyManager.RegisteredHotkeyCount;
+            _logger?.LogInformation($"Toplam {registeredCount} kısayol başarıyla kaydedildi");
         }
 
         private void AppSettings_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -285,8 +351,28 @@ namespace P5S_ceviri
 
         private void UpdateHotkeys()
         {
-            UnregisterHotkeys();
-            RegisterHotkeys();
+            try
+            {
+                if (_hotkeyManager == null)
+                {
+                    _logger?.LogWarning("HotkeyManager başlatılmamış, kısayollar güncellenemiyor");
+                    return;
+                }
+
+                _logger?.LogInformation("Kısayollar güncelleniyor...");
+
+                // Tüm mevcut kısayolları kaldır
+                _hotkeyManager.UnregisterAllHotkeys();
+
+                // Yeniden kaydet
+                RegisterHotkeys();
+
+                _logger?.LogInformation("Kısayollar başarıyla güncellendi");
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Kısayol güncellemesi sırasında hata oluştu", ex);
+            }
         }
 
         private void UnregisterHotkeys()
@@ -295,14 +381,26 @@ namespace P5S_ceviri
             {
                 if (_hotkeyManager != null)
                 {
-                    _hotkeyManager.UnregisterHotkey(_ocrHotkeyId);
-                    _hotkeyManager.UnregisterHotkey(_translateWindowHotkeyId);
-                    _hotkeyManager.UnregisterHotkey(_switchTranslationServiceHotkeyId);
+                    _logger?.LogInformation("Kısayollar kaldırılıyor...");
+                    _hotkeyManager.UnregisterAllHotkeys();
+                    _logger?.LogInformation("Tüm kısayollar başarıyla kaldırıldı");
                 }
             }
             catch (Exception ex)
             {
-                _logger?.LogError("Kısayol tuşlarının kaydı kaldırılamadı", ex);
+                _logger?.LogError("Kısayol kaldırma sırasında hata oluştu", ex);
+            }
+        }
+
+        private void ListRegisteredHotkeys()
+        {
+            if (_hotkeyManager == null) return;
+
+            var hotkeys = _hotkeyManager.GetRegisteredHotkeys();
+            _logger?.LogInformation($"=== Kayıtlı Kısayollar ({hotkeys.Count}) ===");
+            foreach (var (Id, Modifiers, Key, Description) in hotkeys)
+            {
+                _logger?.LogInformation($"  [{Id}] {Description}: {Modifiers} + {Key}");
             }
         }
 
@@ -359,10 +457,44 @@ namespace P5S_ceviri
 
                 _enhancedMemoryService.StatusChanged += OnScanStatusChanged;
                 _enhancedMemoryService.ProgressChanged += OnScanProgressChanged;
+                
+                // Timestamp ile başlangıç durumu raporla
+                _enhancedMemoryService.ReportStatusWithTimestamp("Pattern taraması başlatılıyor...");
                 AppendToLog("Pattern taraması başlatılıyor...");
 
+                // Process'e bağlan (event'ler için)
+                bool attachSuccess = _enhancedMemoryService.AttachToProcess(pi.Process.Id);
+                if (attachSuccess)
+                {
+                    AppendToLog($"Process'e başarıyla bağlanıldı: {pi.Process.ProcessName} (PID: {pi.Process.Id})");
+                }
+
+                // Gelişmiş tarama: Chunk ve buffer boyutunu belirle
+                int chunkSize = 4 * 1024 * 1024; // 4 MB
+                int bufferSize = 1024; // 1 KB
+                bool useOverlappingBuffers = true; // Pattern kaçırma önleme
+                
+                // Process belleğine göre chunk boyutunu ayarla
+                if (pi.Process.WorkingSet64 > 100 * 1024 * 1024) // 100 MB'den büyükse
+                {
+                    chunkSize = 8 * 1024 * 1024; // 8 MB chunk kullan (daha hızlı)
+                    AppendToLog("Büyük bellek alanı tespit edildi, 8 MB chunk boyutu kullanılıyor");
+                }
+                else
+                {
+                    AppendToLog("Normal bellek alanı, 4 MB chunk boyutu kullanılıyor");
+                }
+
+                // Tüm overload'ların kullanıldığı gelişmiş tarama
                 List<IntPtr> addresses = await _enhancedMemoryService.FindPatternAddressesAsync(
-                    pi.Process, searchText, _scanCancellationTokenSource.Token, progress);
+                    pi.Process, 
+                    searchText, 
+                    _scanCancellationTokenSource.Token, 
+                    progress,
+                    chunkSize,          // Özel chunk boyutu
+                    bufferSize,         // Özel buffer boyutu
+                    useOverlappingBuffers // Overlap kullan
+                );
                 if (addresses == null || !addresses.Any())
                 {
                     AppendToLog("Belirtilen pattern bulunamadı.");
@@ -373,51 +505,102 @@ namespace P5S_ceviri
                 _lastFoundPaths.Clear(); // Önceki sonuçları temizle
 
                 int maxAddressesToScan = Math.Min(10, addresses.Count); //  ilk 10 adresi tara
-                for (int i = 0; i < maxAddressesToScan; i++)
+                
+                using (var scanner = new PointerScanner(pi.Process, _memoryService, _logger))
                 {
-                    IntPtr targetAddress = addresses[i];
-                    AppendToLog($"Pointer taraması başlatılıyor: 0x{targetAddress.ToInt64():X} ({i + 1}/{maxAddressesToScan})");
-                    var scanner = new PointerScanner(pi.Process, _logger);
-                    // Pointer yollarını bulmak için tarama yap
-                    var pathsForAddress = await scanner.FindPointers(targetAddress, maxDepth: 3);
-                    _lastFoundPaths.AddRange(pathsForAddress);
-                    AppendToLog($" • {pathsForAddress.Count} pointer yolu bulundu.");
-                    // Bulunan yolları ListBox'a ekle 
-                    foreach (var path in pathsForAddress.Take(10)) // İlk 10'u göster
+                    // Önbelleği temizle (yeni tarama için)
+                    scanner.ClearCache();
+                    _logger?.LogInformation("PointerScanner önbelleği temizlendi, yeni tarama başlatılıyor");
+                    
+                    for (int i = 0; i < maxAddressesToScan; i++)
                     {
-                        lstAddresses.Items.Add(new ListBoxItem { Content = path.ToString() });
+                        IntPtr targetAddress = addresses[i];
+                        AppendToLog($"Pointer taraması başlatılıyor: 0x{targetAddress.ToInt64():X} ({i + 1}/{maxAddressesToScan})");
+                        
+                        // Pointer yollarını bulmak için tarama yap
+                        var pathsForAddress = await scanner.FindPointers(targetAddress, maxDepth: 3);
+                        _lastFoundPaths.AddRange(pathsForAddress);
+                        AppendToLog($" • {pathsForAddress.Count} pointer yolu bulundu.");
+                        
+                        // Bulunan yolları ListBox'a ekle 
+                        foreach (var path in pathsForAddress.Take(10)) // İlk 10'u göster
+                        {
+                            lstAddresses.Items.Add(new ListBoxItem { Content = path.ToString() });
+                        }
+                    }
+                    
+                    // Önbellek istatistiklerini göster
+                    _logger?.LogInformation($"PointerScanner önbelleğinde {scanner.CachedPathCount} pointer yolu var");
+                    
+                    // En iyi 3 pointer için hızlı stability testi
+                    if (_lastFoundPaths.Any())
+                    {
+                        AppendToLog("\n=== En İyi Pointer'lar için Hızlı Stabilite Testi ===");
+                        var topPaths = _lastFoundPaths.Take(3).ToList();
+                        
+                        foreach (var path in topPaths)
+                        {
+                            try
+                            {
+                                var quickStability = await scanner.CheckPointerStability(path, checkCount: 3, intervalMs: 100);
+                                string statusIcon = quickStability.StabilityScore >= 70 ? "✅" : "⚠️";
+                                AppendToLog($"{statusIcon} {path}: Stabilite {quickStability.StabilityScore:F1}/100");
+                            }
+                            catch (Exception ex)
+                            {
+                                AppendToLog($"❌ {path}: Test hatası - {ex.Message}");
+                            }
+                        }
                     }
                 }
+                
                 if (_lastFoundPaths.Any())
                 {
                     btnTestPointer.IsEnabled = true;
                     btnSavePointers.IsEnabled = true;
-                    AppendToLog("Pointer taraması tamamlandı. Pointer'ları test edebilir veya kaydedebilirsiniz.");
+                    
+                    // Timestamp ile tamamlanma durumu raporla
+                    _enhancedMemoryService.ReportStatusWithTimestamp($"✅ Pointer taraması tamamlandı. {_lastFoundPaths.Count} yol bulundu.");
+                    _enhancedMemoryService.ReportProgressWithTimestamp(100); // %100 tamamlandı
+                    
+                    AppendToLog("\n✅ Pointer taraması tamamlandı. Pointer'ları test edebilir veya kaydedebilirsiniz.");
                 }
                 else
                 {
+                    _enhancedMemoryService.ReportStatusWithTimestamp("⚠️ Hiçbir pointer yolu bulunamadı.");
                     AppendToLog("Hiçbir pointer yolu bulunamadı.");
                 }
 
             }
             catch (OperationCanceledException)
             {
+                _enhancedMemoryService.ReportStatusWithTimestamp("⛔ Pattern taraması kullanıcı tarafından durduruldu.");
                 AppendToLog("Pattern taraması kullanıcı tarafından durduruldu.");
             }
             catch (Exception ex)
             {
+                _enhancedMemoryService.ReportStatusWithTimestamp($"❌ Tarama sırasında hata: {ex.Message}");
                 AppendToLog($"Tarama sırasında hata: {ex.Message}", true);
                 _logger?.LogError("Pointer taraması sırasında hata oluştu.", ex);
             }
             finally
             {
+                // Event'leri temizle
                 _enhancedMemoryService.StatusChanged -= OnScanStatusChanged;
                 _enhancedMemoryService.ProgressChanged -= OnScanProgressChanged;
+                
+                // UI kontrollerini sıfırla
                 btnScanPointers.IsEnabled = true;
                 btnStopScan.IsEnabled = false;
                 lblScanStatus.Text = "";
+                
+                // Kaynakları temizle
                 _scanCancellationTokenSource?.Dispose();
                 _scanCancellationTokenSource = null;
+                
+                // EnhancedMemoryService'i dispose etme - tekrar kullanılabilir olmalı
+                // NOT: Servis constructor'da oluşturulduğu için burada dispose etmiyoruz
+                _logger?.LogInformation("Pointer tarama işlemi sonlandırıldı ve kaynaklar temizlendi.");
             }
         }
 
@@ -447,28 +630,51 @@ namespace P5S_ceviri
                 int validCount = 0;
                 foreach (var result in validationResults.Take(10)) // İlk 10 sonucu göster
                 {
-                    AppendToLog($"  • {result.Path}: Skor={result.Score}, Geçerli={result.IsValid}, Değer='{result.CurrentValue?.Substring(0, Math.Min(50, result.CurrentValue?.Length ?? 0))}'");
+                    string valuePreview = result.CurrentValue?.Substring(0, Math.Min(50, result.CurrentValue?.Length ?? 0)) ?? "null";
+                    AppendToLog($"  • {result.Path}: Skor={result.Score}, Geçerli={result.IsValid}, Değer='{valuePreview}'");
                     if (result.IsValid) validCount++;
                 }
 
                 AppendToLog($"Toplam {validCount}/{validationResults.Count} pointer geçerli bulundu.");
+                
+                // Kayıtlı pointer sayısını göster
+                var registeredPaths = _pointerValidationService.GetRegisteredPointerPaths();
+                _logger.LogInformation($"Önbellekte {registeredPaths.Count} pointer yolu kayıtlı");
 
-                // En iyi skorlu pointer'ı stabilite testi ile test et
+                // En iyi skorlu pointer'ı stabilite testi ile test et (her iki servis de)
                 var bestPath = _lastFoundPaths.First();
                 AppendToLog($"En iyi pointer stabilite testi başlatılıyor: {bestPath}");
 
-                var stabilityResult = await _pointerValidationService.TestPointerStabilityAsync(pi.Process, bestPath, 15, 500);
-                AppendToLog($"Stabilite Testi Sonuçları:");
-                AppendToLog($"  • Başarı Oranı: {stabilityResult.SuccessRate:F1}%");
-                AppendToLog($"  • Adres Tutarlılığı: {stabilityResult.AddressConsistency:F1}%");
-                AppendToLog($"  • Değer Tutarlılığı: {stabilityResult.ValueConsistency:F1}%");
-                AppendToLog($"  • Genel Stabilite Skoru: {stabilityResult.StabilityScore}/100");
-                if (stabilityResult.StabilityScore >= 80)
-                    AppendToLog("Bu pointer güvenilir görünüyor!");
-                else if (stabilityResult.StabilityScore >= 60)
-                    AppendToLog("Bu pointer orta derecede güvenilir.");
-                else
-                    AppendToLog("Bu pointer güvenilir değil, başka pointer'lar deneyin.", true);
+                // 1. PointerValidationService ile test
+                AppendToLog("=== PointerValidationService Stabilite Testi ===");
+                var validationStability = await _pointerValidationService.TestPointerStabilityAsync(pi.Process, bestPath, 10, 500);
+                AppendToLog($"  • Başarı Oranı: {validationStability.SuccessRate:F1}%");
+                AppendToLog($"  • Adres Tutarlılığı: {validationStability.AddressConsistency:F1}%");
+                AppendToLog($"  • Değer Tutarlılığı: {validationStability.ValueConsistency:F1}%");
+                AppendToLog($"  • Genel Stabilite Skoru: {validationStability.StabilityScore:F1}/100");
+
+                // 2. PointerScanner ile test
+                using (var scanner = new PointerScanner(pi.Process, _memoryService, _logger))
+                {
+                    AppendToLog("=== PointerScanner Stabilite Testi ===");
+                    var scannerStability = await scanner.CheckPointerStability(bestPath, 10, 500);
+                    AppendToLog($"  • Başarı Oranı: {scannerStability.SuccessRate:F1}%");
+                    AppendToLog($"  • Adres Tutarlılığı: {scannerStability.AddressConsistency:F1}%");
+                    AppendToLog($"  • Değer Tutarlılığı: {scannerStability.ValueConsistency:F1}%");
+                    AppendToLog($"  • Genel Stabilite Skoru: {scannerStability.StabilityScore:F1}/100");
+                    AppendToLog($"  • Önbellek Kullanımı: {scanner.CachedPathCount} pointer yolu");
+
+                    // Kararlılık değerlendirmesi
+                    double avgStability = (validationStability.StabilityScore + scannerStability.StabilityScore) / 2.0;
+                    AppendToLog($"\n=== Ortalama Stabilite Skoru: {avgStability:F1}/100 ===");
+                    
+                    if (avgStability >= 80)
+                        AppendToLog("✅ Bu pointer güvenilir görünüyor!");
+                    else if (avgStability >= 60)
+                        AppendToLog("⚠️ Bu pointer orta derecede güvenilir.");
+                    else
+                        AppendToLog("❌ Bu pointer güvenilir değil, başka pointer'lar deneyin.", true);
+                }
             }
             catch (Exception ex)
             {
@@ -544,6 +750,28 @@ namespace P5S_ceviri
                                 {
                                     AppendToLog($"Geçersiz pointer'lar filtrelendi. Kalan: {_lastFoundPaths.Count}");
                                 }
+
+                                // En iyi pointer için hızlı stability kontrolü
+                                if (_lastFoundPaths.Any())
+                                {
+                                    var topPath = _lastFoundPaths.First();
+                                    AppendToLog($"En iyi pointer için hızlı stabilite kontrolü: {topPath}");
+                                    
+                                    using (var scanner = new PointerScanner(pi.Process, _memoryService, _logger))
+                                    {
+                                        var quickStability = await scanner.CheckPointerStability(topPath, checkCount: 5, intervalMs: 200);
+                                        AppendToLog($"Hızlı Stabilite: {quickStability.StabilityScore:F1}/100");
+                                        
+                                        if (quickStability.StabilityScore >= 70)
+                                        {
+                                            AppendToLog("✅ Pointer kararlı görünüyor, kullanıma hazır!");
+                                        }
+                                        else
+                                        {
+                                            AppendToLog("⚠️ Pointer kararsız olabilir, tam test öneririz.");
+                                        }
+                                    }
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -574,6 +802,72 @@ namespace P5S_ceviri
         private void OnScanProgressChanged(int progress)
         {
             Dispatcher.Invoke(() => progressScan.Value = progress);
+        }
+
+        private void OnTranslationStatsUpdated(object sender, PerformanceOptimizedTranslationService.PerformanceStats stats)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                try
+                {
+                    // İstatistikleri log'a yazdır
+                    _logger?.LogInformation($"Çeviri İstatistikleri - " +
+                        $"Toplam: {stats.TotalRequests}, " +
+                        $"Batch: {stats.BatchProcessedRequests}, " +
+                        $"Tekil: {stats.IndividualProcessedRequests}, " +
+                        $"Cache Hit Rate: {stats.CacheHitRate:F2}%, " +
+                        $"Ort. Süre: {stats.AverageResponseTime.TotalMilliseconds:F2}ms");
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError("İstatistik güncelleme sırasında hata", ex);
+                }
+            });
+        }
+
+        private void OnTranslationCompleted(object sender, TranslationCompletedEventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(e.ErrorMessage))
+                    {
+                        _logger?.LogInformation($"✅ Çeviri tamamlandı - " +
+                            $"Kaynak: '{e.OriginalText.Substring(0, Math.Min(30, e.OriginalText.Length))}...', " +
+                            $"Hedef Dil: {e.TargetLanguage}, " +
+                            $"Güven: {e.Confidence * 100:F0}%, " +
+                            $"Zaman: {e.TranslationTime:HH:mm:ss}");
+                    }
+                    else
+                    {
+                        _logger?.LogError($"❌ Çeviri hatası - " +
+                            $"Metin: '{e.OriginalText.Substring(0, Math.Min(30, e.OriginalText.Length))}...', " +
+                            $"Hata: {e.ErrorMessage}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError("TranslationCompleted event handler'da hata", ex);
+                }
+            });
+        }
+
+        private void OnTranslationProgress(object sender, TranslationProgressEventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                try
+                {
+                    _logger?.LogInformation($"Çeviri İlerlemesi: {e.ProgressPercentage}% " +
+                        $"({e.CompletedSentences}/{e.TotalSentences}) - " +
+                        $"Şu an: '{e.CurrentSentence.Substring(0, Math.Min(20, e.CurrentSentence.Length))}...'");
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError("TranslationProgress event handler'da hata", ex);
+                }
+            });
         }
 
         #endregion
@@ -623,8 +917,14 @@ namespace P5S_ceviri
             try
             {
                 AdvancedTranslationService advancedService = null;
+                
+                // PerformanceOptimizedTranslationService event'lerini subscribe et
                 if (_translationService is PerformanceOptimizedTranslationService performanceService)
                 {
+                    // StatsUpdated event'ini dinle
+                    performanceService.StatsUpdated += OnTranslationStatsUpdated;
+                    _logger.LogInformation("PerformanceOptimizedTranslationService StatsUpdated event'i aktif");
+                    
                     if (performanceService.BaseService is AdvancedTranslationService baseService)
                     {
                         advancedService = baseService;
@@ -634,10 +934,17 @@ namespace P5S_ceviri
                 {
                     advancedService = directService;
                 }
+                
+                // AdvancedTranslationService event'lerini subscribe et
                 if (advancedService != null)
                 {
                     cmbTranslationService.ItemsSource = advancedService.AvailableStrategies;
                     cmbTranslationService.SelectedIndex = 0;
+                    
+                    // TranslationCompleted ve TranslationProgress event'lerini dinle
+                    advancedService.TranslationCompleted += OnTranslationCompleted;
+                    advancedService.TranslationProgress += OnTranslationProgress;
+                    _logger.LogInformation("AdvancedTranslationService event'leri aktif");
                 }
             }
             catch (Exception ex)
@@ -1006,6 +1313,22 @@ namespace P5S_ceviri
                 {
                     advancedService.ClearTranslationContext();
                 }
+                
+                // Process seçildiğini logla (ToString() kullanarak)
+                _logger?.LogInformation($"Process seçildi: {pi}");
+                
+                // Process ikonu al (kullanım örneği)
+                var processIcon = _iconManager.ProcessIconuAl(pi.Process);
+                if (processIcon != null)
+                {
+                    _logger.LogInformation($"Process ikonu alındı: {pi.ProcessName}");
+                }
+                
+                // Yeni process seçildiğinde tüm önbellekleri temizle
+                _memoryService.ClearAllCaches();
+                _pointerValidationService.ClearPointerCache();
+                _logger.LogInformation("Tüm önbellekler temizlendi");
+                
                 _appSettings.LastProcessName = pi.ProcessName;
                 _settingsManager.SaveSettings(_appSettings);
                 _translationHistory.Clear(); // Geçmiş çevirileri temizlemek için
@@ -1293,16 +1616,45 @@ namespace P5S_ceviri
             {
                 AppendToLog("Çalışan işlemler listeleniyor...");
                 var selectedBefore = cmbProcesses.SelectedItem as ProcessInfo;
+                
+                // Eski ProcessInfo nesnelerini dispose et
+                if (cmbProcesses.ItemsSource is System.Collections.IEnumerable oldProcesses)
+                {
+                    foreach (var item in oldProcesses)
+                    {
+                        if (item is ProcessInfo oldPi)
+                        {
+                            oldPi.Dispose();
+                        }
+                    }
+                }
+                
                 _processService.RefreshProcesses();
-                var processes = _processService.GetProcesses().Where(p => p.MainWindowHandle != IntPtr.Zero && !string.IsNullOrEmpty(p.MainWindowTitle)).Select(p => new ProcessInfo(p)).OrderBy(p => p.ProcessName).ToList();
+                var processes = _processService.GetProcesses()
+                    .Where(p => p.MainWindowHandle != IntPtr.Zero && !string.IsNullOrEmpty(p.MainWindowTitle))
+                    .Select(p => new ProcessInfo(p, _logger))
+                    .OrderBy(p => p.ProcessName)
+                    .ToList();
                 cmbProcesses.ItemsSource = processes;
                 var processToSelect = processes.FirstOrDefault(p => selectedBefore != null && p.Process.Id == selectedBefore.Process.Id) ?? processes.FirstOrDefault(p => !string.IsNullOrEmpty(_appSettings.LastProcessName) && p.ProcessName == _appSettings.LastProcessName);
                 if (processToSelect != null) { cmbProcesses.SelectedItem = processToSelect; }
+                
+                // IconManager kullanarak önbellek durumunu göster
+                _iconManager.OnbellekDurumuGoster();
+                
                 AppendToLog($"{processes.Count} adet pencereli uygulama bulundu.");
+                _logger?.LogInformation($"Process listesi yüklendi: {processes.Count} adet");
+                
+                // Process listesini logla (ilk 5 process)
+                foreach (var proc in processes.Take(5))
+                {
+                    _logger?.LogInformation($"  • {proc}"); // ToString() kullanıyor
+                }
             }
             catch (Exception ex)
             {
                 AppendToLog($"İşlem listesi yüklenirken hata: {ex.Message}", true);
+                _logger?.LogError("Process listesi yüklenirken hata oluştu", ex);
             }
         }
 
@@ -1838,6 +2190,128 @@ namespace P5S_ceviri
             }
         }
 
+        // Kullanılmayan metodları aktif hale getiren yeni handler'lar
+        
+        private void ClearAllCaches_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var result = MessageBox.Show("Tüm önbellekleri temizlemek istediğinizden emin misiniz?\n\n" +
+                    "Bu şunları içerir:\n" +
+                    "- Çeviri önbelleği\n" +
+                    "- Bellek önbelleği\n" +
+                    "- Oyun önerileri önbelleği\n" +
+                    "- Pointer önbelleği\n" +
+                    "- İkon önbelleği",
+                    "Tüm Önbellekleri Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    // Memory Service önbellekleri
+                    _memoryService?.ClearAllCaches();
+                    _logger.LogInformation("Memory Service önbellekleri temizlendi");
+
+                    // Translation Service önbelleği
+                    if (_translationService is PerformanceOptimizedTranslationService perfService)
+                    {
+                        perfService.ClearCache();
+                        _logger.LogInformation("PerformanceOptimized önbelleği temizlendi");
+                    }
+                    if (_translationService is AdvancedTranslationService advService)
+                    {
+                        advService.ClearExpiredCache();
+                        _logger.LogInformation("AdvancedTranslation önbelleği temizlendi");
+                    }
+
+                    // Game Recipe önbelleği
+                    _gameRecipeService?.ClearCache();
+                    _logger.LogInformation("GameRecipe önbelleği temizlendi");
+
+                    // Pointer validation önbelleği
+                    _pointerValidationService?.ClearPointerCache();
+                    _logger.LogInformation("PointerValidation önbelleği temizlendi");
+
+                    // İkon önbelleği
+                    LogoHelper.ClearIconCache();
+                    _logger.LogInformation("Icon önbelleği temizlendi");
+
+                    AppendToLog("✅ Tüm önbellekler başarıyla temizlendi");
+                    MessageBox.Show("Tüm önbellekler başarıyla temizlendi.", "Başarılı", 
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Önbellekler temizlenirken hata", ex);
+                MessageBox.Show($"Önbellekler temizlenirken hata: {ex.Message}", "Hata",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void ReloadGameRecipes_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                _gameRecipeService?.ReloadRecipes();
+                AppendToLog("✅ Oyun önerileri yeniden yüklendi");
+                MessageBox.Show("Oyun önerileri başarıyla yeniden yüklendi.", "Başarılı",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Öneriler yüklenirken hata", ex);
+                MessageBox.Show($"Öneriler yüklenirken hata: {ex.Message}", "Hata",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void ResetSettingsToDefaults_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var result = MessageBox.Show("Tüm ayarları varsayılan değerlere döndürmek istediğinizden emin misiniz?\n\n" +
+                    "Bu işlem:\n" +
+                    "- Tüm OCR ayarlarını sıfırlar\n" +
+                    "- Hotkey'leri varsayılana döndürür\n" +
+                    "- Tema, dil ve diğer tüm ayarları sıfırlar\n\n" +
+                    "Bu işlem GERİ ALINAMAZ!",
+                    "Ayarları Sıfırla", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    _appSettings.ResetToDefaults();
+                    AppendToLog("✅ Ayarlar varsayılan değerlere döndürüldü");
+                    MessageBox.Show("Ayarlar başarıyla sıfırlandı ve kaydedildi.\n\n" +
+                        "Değişikliklerin tam olarak uygulanması için uygulamayı yeniden başlatın.",
+                        "Başarılı", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Ayarlar sıfırlanırken hata", ex);
+                MessageBox.Show($"Ayarlar sıfırlanırken hata: {ex.Message}", "Hata",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void SaveSettingsNow_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                _appSettings.SaveSettingsToDisk();
+                _settingsManager.SaveSettings(_appSettings);
+                AppendToLog("✅ Ayarlar diske kaydedildi");
+                MessageBox.Show("Ayarlar başarıyla kaydedildi.", "Başarılı",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Ayarlar kaydedilirken hata", ex);
+                MessageBox.Show($"Ayarlar kaydedilirken hata: {ex.Message}", "Hata",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         private void btnClearLogFile_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -1864,6 +2338,193 @@ namespace P5S_ceviri
             {
                 _logger.LogError("Log dosyası temizlenirken hata oluştu.", ex);
                 MessageBox.Show($"Log dosyası temizlenirken hata oluştu: {ex.Message}", "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        #endregion
+
+        #region Memory Pattern Utilities
+
+        private void btnCompareMemoryPatterns_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Örnek: İki bellek bloğunun benzerliğini karşılaştır
+                var pi = cmbProcesses.SelectedItem as ProcessInfo;
+                if (pi == null)
+                {
+                    AppendToLog("Önce bir process seçin.", true);
+                    return;
+                }
+
+                if (!_memoryService.AttachToProcess(pi.Process.Id))
+                {
+                    AppendToLog("Process'e bağlanılamadı.", true);
+                    return;
+                }
+
+                // Örnek kullanım: 0x1000 adresinden 100 byte oku
+                IntPtr address1 = new IntPtr(0x1000);
+                byte[] data1 = _memoryService.ReadBytesCached(address1, 100);
+                
+                if (data1.Length > 0)
+                {
+                    // ByteArrayComparer kullanarak benzerlik kontrolü
+                    var comparer = new PointerScanner.ByteArrayComparer();
+                    
+                    // Aynı adresten 100ms sonra tekrar oku
+                    System.Threading.Thread.Sleep(100);
+                    byte[] data2 = _memoryService.ReadBytesCached(address1, 100);
+                    
+                    if (data2.Length > 0)
+                    {
+                        double similarity = comparer.CalculateSimilarity(data1, data2);
+                        AppendToLog($"Bellek benzerliği: {similarity:P} (0x{address1.ToInt64():X})");
+                        
+                        if (similarity >= 0.95)
+                            AppendToLog("✅ Bellek kararlı görünüyor");
+                        else if (similarity >= 0.70)
+                            AppendToLog("⚠️ Bellek kısmen değişken");
+                        else
+                            AppendToLog("❌ Bellek çok değişken (dinamik bölge)");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Bellek karşılaştırması sırasında hata oluştu.", ex);
+                AppendToLog($"Hata: {ex.Message}", true);
+            }
+        }
+
+        #endregion
+
+        #region Pointer Cache Management
+
+        private void btnClearPointerCache_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var result = MessageBox.Show("Tüm pointer önbelleklerini temizlemek istediğinizden emin misiniz?\n\n• PointerValidationService önbelleği\n• MemoryService önbelleği",
+                                           "Pointer Önbelleğini Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    // PointerValidationService önbelleğini temizle
+                    _pointerValidationService.ClearPointerCache();
+                    
+                    // MemoryService önbelleğini temizle
+                    _memoryService.ClearAllCaches();
+                    
+                    AppendToLog("Tüm pointer önbellekleri temizlendi:");
+                    AppendToLog("  • PointerValidationService önbelleği temizlendi");
+                    AppendToLog("  • MemoryService adres ve bellek önbelleği temizlendi");
+                    
+                    _logger.LogInformation("Kullanıcı tüm pointer önbelleklerini temizledi.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Pointer önbelleği temizlenirken hata oluştu.", ex);
+                MessageBox.Show($"Pointer önbelleği temizlenirken hata oluştu: {ex.Message}", "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void btnListPointerCache_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // PointerValidationService önbelleği
+                var registeredPaths = _pointerValidationService.GetRegisteredPointerPaths();
+                
+                AppendToLog($"=== PointerValidationService Önbelleği ({registeredPaths.Count}) ===");
+                
+                foreach (var path in registeredPaths.Take(10))
+                {
+                    AppendToLog($"  • {path}");
+                }
+
+                if (registeredPaths.Count > 10)
+                {
+                    AppendToLog($"  ... ve {registeredPaths.Count - 10} tane daha");
+                }
+
+                // MemoryService önbellek istatistikleri
+                var cacheStats = _memoryService.GetCacheStatistics();
+                AppendToLog($"\n=== MemoryService Önbellek İstatistikleri ===");
+                AppendToLog($"  • Adres Önbelleği: {cacheStats.AddressCacheCount} adet");
+                AppendToLog($"  • Bellek Önbelleği: {cacheStats.MemoryCacheCount} adet");
+
+                // En sık kullanılan adresler
+                var mostFrequent = _memoryService.GetMostFrequentAddresses(5);
+                if (mostFrequent.Any())
+                {
+                    AppendToLog($"\n=== En Sık Kullanılan Adresler (Top 5) ===");
+                    foreach (var kvp in mostFrequent)
+                    {
+                        AppendToLog($"  • 0x{kvp.Value.ToInt64():X} - {kvp.Key}");
+                    }
+                }
+
+                _logger.LogInformation($"Kullanıcı pointer önbelleğini listeledi. Toplam: PointerValidation={registeredPaths.Count}, MemoryService={cacheStats.AddressCacheCount + cacheStats.MemoryCacheCount}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Pointer önbelleği listelenirken hata oluştu.", ex);
+                MessageBox.Show($"Pointer önbelleği listelenirken hata oluştu: {ex.Message}", "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        #endregion
+
+        #region Translation Cache Management
+
+        private void btnClearTranslationCache_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var result = MessageBox.Show("Çeviri önbelleğini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz ve tüm kaydedilmiş çeviriler silinecektir.",
+                                           "Çeviri Önbelleğini Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    // AdvancedTranslationService ise
+                    if (_translationService is AdvancedTranslationService advancedService)
+                    {
+                        advancedService.ClearExpiredCache();
+                        AppendToLog("Eski çeviri önbelleği temizlendi.");
+                    }
+
+                    AppendToLog("Çeviri önbelleği başarıyla temizlendi.");
+                    _logger.LogInformation("Kullanıcı çeviri önbelleğini temizledi.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Çeviri önbelleği temizlenirken hata oluştu.", ex);
+                MessageBox.Show($"Çeviri önbelleği temizlenirken hata oluştu: {ex.Message}", "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void btnSaveTranslationCache_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_translationService is AdvancedTranslationService advancedService)
+                {
+                    advancedService.SaveCacheToDisk();
+                    AppendToLog("Çeviri önbelleği diske kaydedildi.");
+                    _logger.LogInformation("Kullanıcı çeviri önbelleğini manuel olarak kaydetti.");
+                }
+                else
+                {
+                    AppendToLog("Aktif çeviri servisi önbellek kaydetmeyi desteklemiyor.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Çeviri önbelleği kaydedilirken hata oluştu.", ex);
+                MessageBox.Show($"Çeviri önbelleği kaydedilirken hata oluştu: {ex.Message}", "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 

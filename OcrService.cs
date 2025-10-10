@@ -13,7 +13,7 @@ using CvPoint = OpenCvSharp.Point;
 
 namespace P5S_ceviri
 {
-    public class OcrService : IOcrService
+    public class OcrService : IOcrService, IDisposable
     {
         #region Win32 Imports and Constants
     
@@ -28,11 +28,12 @@ namespace P5S_ceviri
         private readonly Dictionary<OcrEngineType, IOcrEngine> _ocrEngines;
         private readonly Net _eastNet;
         private const string EastModelPath = "frozen_east_text_detection.pb";
+        private bool _disposed = false;
 
         public OcrService(ILogger logger, AppSettings appSettings)
         {
-            _logger = logger;
-            _appSettings = appSettings;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
             _ocrEngines = new Dictionary<OcrEngineType, IOcrEngine>
             {
                 { OcrEngineType.Tesseract, new TesseractOcrEngine(logger, appSettings) },
@@ -53,7 +54,14 @@ namespace P5S_ceviri
 
         public async Task<string> GetTextFromImage(Bitmap image, string language, bool invertColors = false)
         {
-            return await RecognizeTextInRegionsAsync(image, language);
+            if (image == null) return string.Empty;
+
+            using (var processedImage = PreprocessImageForOcr(image, invertColors))
+            {
+                if (processedImage == null) return string.Empty;
+
+                return await RecognizeTextInRegionsAsync(processedImage, language);
+            }
         }
 
         public async Task<string> GetTextAdaptiveAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto)
@@ -341,15 +349,29 @@ namespace P5S_ceviri
 
         public Bitmap CropImage(Bitmap image, System.Drawing.Rectangle region) => image.Clone(region, image.PixelFormat);
 
-        private Bitmap PreprocessImageForOcr(Bitmap originalImage)
+        private Bitmap PreprocessImageForOcr(Bitmap originalImage, bool invertColors = false)
         {
             if (originalImage == null) return null;
             Bitmap processedImage = originalImage;
             try
             {
-                if (_appSettings.EnableSuperResolution && ShouldApplySuperResolution(originalImage))
+                // Renk inversiyonu
+                if (invertColors)
                 {
-                    processedImage = ApplySuperResolution(processedImage);
+                    using (Mat src = BitmapConverter.ToMat(originalImage))
+                    {
+                        Mat inverted = new Mat();
+                        Cv2.BitwiseNot(src, inverted);
+                        processedImage = BitmapConverter.ToBitmap(inverted);
+                        inverted.Dispose();
+                    }
+                }
+
+                if (_appSettings.EnableSuperResolution && ShouldApplySuperResolution(processedImage))
+                {
+                    var tempImage = ApplySuperResolution(processedImage);
+                    if (processedImage != originalImage) processedImage.Dispose();
+                    processedImage = tempImage;
                 }
                 if (_appSettings.EnableSkewCorrection)
                 {
@@ -686,6 +708,35 @@ namespace P5S_ceviri
         Mat IOcrService.CreateContrastMask(Mat imageMat)
         {
             return CreateContrastMask(imageMat);
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed) return;
+
+            if (disposing)
+            {
+                // Managed kaynakları temizle
+                _eastNet?.Dispose();
+                
+                // OCR motorlarını temizle
+                foreach (var engine in _ocrEngines.Values)
+                {
+                    if (engine is IDisposable disposable)
+                    {
+                        disposable.Dispose();
+                    }
+                }
+                _ocrEngines.Clear();
+            }
+
+            _disposed = true;
         }
     }
 }

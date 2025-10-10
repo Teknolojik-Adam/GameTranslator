@@ -86,7 +86,7 @@ namespace P5S_ceviri
 
             // Pointer validation servisi
             services.AddSingleton<PointerValidationService>(sp =>
-                new PointerValidationService(sp.GetRequiredService<IMemoryService>(), sp.GetRequiredService<ILogger>()));
+                new PointerValidationService(sp.GetRequiredService<IMemoryService>(), sp.GetRequiredService<ILogger>(), sp.GetRequiredService<AppSettings>()));
 
             // ML metin işleme servisi
             services.AddSingleton<MLTextProcessor>(sp =>

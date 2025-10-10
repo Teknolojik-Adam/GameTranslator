@@ -95,8 +95,9 @@ namespace P5S_ceviri
             }
         }
 
-        public async Task<string> RecognizeTextAsync(Bitmap image, string language)
+        public async Task<string> RecognizeTextAsync(Bitmap image, string language, Tesseract.PageSegMode psm = Tesseract.PageSegMode.Auto)
         {
+            // Not: Windows OCR PageSegMode parametresini kullanmaz (Tesseract'a özgü)
             if (_ocrEngine == null)
             {
                 _logger.LogWarning("Windows OCR motoru kullanılamıyor, tanıma işlemi atlandı.");

@@ -100,7 +100,7 @@ namespace P5S_ceviri
                 EnableRegionDetectionCheckBox.IsChecked = _appSettings.EnableOcrRegionDetection;
             }
 
-            // Mevcut kameralarý yükle
+           
             LoadAvailableCameras();
         }
 
@@ -242,7 +242,7 @@ namespace P5S_ceviri
         {
             if (CameraComboBox.SelectedIndex >= 0)
             {
-                // _appSettings için null kontrolü
+                //null kontrolü
                 if (_appSettings != null)
                 {
                     _appSettings.VideoOcrDeviceIndex = CameraComboBox.SelectedIndex;
@@ -260,7 +260,7 @@ namespace P5S_ceviri
                 FrameRateText.Text = $"{frameRate} FPS";
             }
 
-            // _appSettings için null kontrolü
+            //  null kontrolü
             if (_appSettings != null)
             {
                 _appSettings.VideoOcrFrameRate = frameRate;
@@ -281,7 +281,7 @@ namespace P5S_ceviri
                     int.TryParse(parts[0], out int width) &&
                     int.TryParse(parts[1], out int height))
                 {
-                    // _appSettings için null kontrolü
+                    // null kontrolü
                     if (_appSettings != null)
                     {
                         _appSettings.VideoOcrWidth = width;
@@ -301,7 +301,7 @@ namespace P5S_ceviri
                 ConfidenceThresholdText.Text = $"{threshold:P0}";
             }
 
-            // _appSettings için null kontrolü
+            //  null kontrolü
             if (_appSettings != null)
             {
                 _appSettings.OcrConfidenceThreshold = threshold;
@@ -318,7 +318,7 @@ namespace P5S_ceviri
 
         private void UpdateSettingsFromUI()
         {
-            // _appSettings için null kontrolü
+            //  null kontrolü
             if (_appSettings != null)
             {
                 _appSettings.VideoOcrFrameRate = (int)FrameRateSlider.Value;
