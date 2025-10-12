@@ -262,7 +262,7 @@ namespace P5S_ceviri
                 }
 
                 report.AverageProcessingTime = results.Average(r => r.TotalProcessingTime.TotalMilliseconds);
-
+                //
                 // Öneriler oluşturmak için
                 GenerateRecommendations(report);
 

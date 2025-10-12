@@ -14,7 +14,7 @@ namespace P5S_ceviri
                 // Servisleri başlat
                 ServiceContainer.Initialize();
 
-                // Ayarları yükle ve temayı uygula
+                // Ayarları yükle ve temayı uygulamak için
                 InitializeTheme();
             }
             catch (Exception ex)

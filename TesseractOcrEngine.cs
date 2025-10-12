@@ -24,7 +24,11 @@ namespace P5S_ceviri
 
         public async Task<string> RecognizeTextAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto)
         {
-            if (image == null) return string.Empty;
+            if (image == null)
+            {
+                _logger.LogWarning("Görsel verisi sağlanmadı, tanıma işlemi atlandı.");
+                return string.Empty;
+            }
 
             var adaptiveResult = await TryRecognizeWithStrategy(image, language, psm, Preprocess_AdaptiveThreshold);
             _logger.LogInformation($"[Tesseract-Adaptif] Sonuç: '{adaptiveResult.Text}', Güvenilirlik: {adaptiveResult.Confidence:P}");

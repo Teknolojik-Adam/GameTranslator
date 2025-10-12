@@ -346,7 +346,7 @@ namespace P5S_ceviri
             }
             return bmp;
         }
-
+        //
         public Bitmap CropImage(Bitmap image, System.Drawing.Rectangle region) => image.Clone(region, image.PixelFormat);
 
         private Bitmap PreprocessImageForOcr(Bitmap originalImage, bool invertColors = false)

@@ -2,9 +2,7 @@
 
 namespace P5S_ceviri
 {
-    /// <summary>
-    /// Logları konsola yazan basit bir ILogger implementasyonu.
-    /// </summary>
+
     public class ConsoleLogger : ILogger
     {
         private readonly object _lock = new object();

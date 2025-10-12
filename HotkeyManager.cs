@@ -72,7 +72,7 @@ namespace P5S_ceviri
 
             lock (_lockObject)
             {
-                // Aynı kombinasyon zaten kayıtlı mı kontrol et
+                // Aynı kombinasyon zaten kayıtlı mı kontrol etmek için
                 var existing = _registeredHotkeys.Values.FirstOrDefault(h => h.Modifiers == modifiers && h.Key == key);
                 if (existing != null)
                 {

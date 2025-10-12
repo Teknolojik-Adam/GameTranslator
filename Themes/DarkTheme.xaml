@@ -236,7 +236,7 @@
     <Style TargetType="TextBlock" x:Key="ThemedTextBlock">
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>
     </Style>
-
+    <!-- RadioButton Stili -->
     <!-- RadioButton Stili -->
     <Style TargetType="RadioButton" x:Key="ThemedRadioButton">
         <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}"/>

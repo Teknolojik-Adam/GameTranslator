@@ -71,6 +71,7 @@
         <GridSplitter Grid.Row="2" Grid.ColumnSpan="2" Height="3" HorizontalAlignment="Stretch" 
                        Background="{DynamicResource BorderBrush}"/>
         <!-- Sol Panel Kontrolleri -->
+        <!-- Sol Panel Kontrolleri -->
         <StackPanel Grid.Row="3" Grid.Column="0" Margin="5">
             <GroupBox Header="RAM'den Çeviri" Style="{DynamicResource ThemedGroupBox}">
                 <StackPanel Margin="5">

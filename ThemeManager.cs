@@ -45,7 +45,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                // Hata durumunda varsayılan temaya geri dön
+                // Hata durumunda varsayılan temaya geri dönmek için
                 MessageBox.Show($"Tema değiştirme sırasında hata oluştu: {ex.Message}", "Tema Hatası",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             }

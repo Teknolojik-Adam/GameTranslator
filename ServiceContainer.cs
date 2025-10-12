@@ -14,7 +14,7 @@ namespace P5S_ceviri
             if (_serviceProvider != null) return;
 
             var services = new ServiceCollection();
-
+            //
             // Temel servisler
             services.AddSingleton<ILogger, ConsoleLogger>();
             services.AddSingleton<SettingsManager>(sp =>

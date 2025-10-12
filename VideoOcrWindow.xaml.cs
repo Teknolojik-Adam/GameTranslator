@@ -100,7 +100,7 @@ namespace P5S_ceviri
                 EnableRegionDetectionCheckBox.IsChecked = _appSettings.EnableOcrRegionDetection;
             }
 
-           
+           //
             LoadAvailableCameras();
         }
 

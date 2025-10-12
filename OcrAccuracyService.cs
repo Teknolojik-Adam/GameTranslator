@@ -33,7 +33,7 @@ namespace P5S_ceviri
 
                 score.CharacterAccuracy = CalculateCharacterAccuracy(normalizedRecognized, normalizedGroundTruth, score);
                 score.WordAccuracy = CalculateWordAccuracy(normalizedRecognized, normalizedGroundTruth, score);
-                score.LineAccuracy = CalculateLineAccuracy(recognizedText ?? "", groundTruth, score); // Satır doğruluğu için orijinal metni
+                score.LineAccuracy = CalculateLineAccuracy(recognizedText ?? "", groundTruth, score); // Satır doğruluğunu kontrol etmek için
                 score.ConfidenceScore = CalculateConfidenceScore(normalizedRecognized, normalizedGroundTruth);
                 score.OverallScore = CalculateOverallScore(score);
 

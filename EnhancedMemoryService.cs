@@ -158,7 +158,7 @@ namespace P5S_ceviri
                 return new List<IntPtr>();
             }
         }
-
+        //
         private (byte[] bytes, bool[] masks)? ParsePattern(string pattern)
         {
             var parts = pattern.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);

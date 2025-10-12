@@ -220,7 +220,7 @@ namespace P5S_ceviri
             get => _requireStableOcr;
             set { if (_requireStableOcr != value) { _requireStableOcr = value; OnPropertyChanged(); } }
         }
-
+        //
         private bool _requireStableRam = false;
         public bool RequireStableRam
         {

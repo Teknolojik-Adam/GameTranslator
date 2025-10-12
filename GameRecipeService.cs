@@ -64,7 +64,7 @@ namespace P5S_ceviri
                 _logger.LogError($"'{RecipesFileName}' dosyası yüklenirken hata oluştu", ex);
             }
         }
-
+        //
         private string NormalizeProcessName(string processName)
         {
             if (string.IsNullOrWhiteSpace(processName))

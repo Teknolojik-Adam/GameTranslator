@@ -41,7 +41,7 @@ namespace P5S_ceviri
         private const uint PROCESS_VM_READ = 0x0010;
         private const uint PROCESS_QUERY_INFORMATION = 0x0400;
         private const int MAX_CACHE_ENTRIES = 1000;
-        private const int MAX_READ_SIZE = 1024 * 1024; // 1MB maksimum okuma boyutu
+        private const int MAX_READ_SIZE = 1024 * 1024; // varsayilan 1MB maksimum okuma boyutu
         private const int MIN_PROCESS_ID = 4; 
         private const long MAX_VALID_ADDRESS = 0x7FFFFFFFFFFF; 
         private const long MIN_VALID_ADDRESS = 0x10000;

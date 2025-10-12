@@ -13,7 +13,7 @@ namespace P5S_ceviri
             _logger = logger ?? new ConsoleLogger();
         }
 
-        // Process için ikon al
+        // Process için ikon almak için
         public BitmapImage ProcessIconuAl(Process process)
         {
             try

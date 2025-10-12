@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Drawing;
 using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Windows.Globalization;
 using Windows.Graphics.Imaging;
@@ -126,7 +128,12 @@ namespace P5S_ceviri
                     }
 
                     OcrResult ocrResult = await _ocrEngine.RecognizeAsync(softwareBitmap);
-                    return ocrResult.Text?.Trim().Replace("\n", " ").Replace("  ", " ") ?? string.Empty;
+                    string rawText = ocrResult.Text?.Trim() ?? string.Empty;
+                    
+                    // Hafif temizlik (sadece boşluk/satır sonu normalizasyonu)
+                    rawText = CleanOcrText(rawText);
+                    
+                    return rawText;
                 }
             }
             catch (Exception ex)
@@ -134,6 +141,22 @@ namespace P5S_ceviri
                 _logger.LogError("Windows OCR ile metin tanıma sırasında bir hata oluştu.", ex);
                 return string.Empty;
             }
+        }
+
+        /// <summary>
+        /// OCR sonuçlarını hafifçe temizler (sadece boşluklar ve satır sonları)
+        /// NOT: Eski agresif temizlik kaldırıldı - noktalama, sayılar korunuyor
+        /// </summary>
+        private string CleanOcrText(string ocrText)
+        {
+            if (string.IsNullOrWhiteSpace(ocrText)) return string.Empty;
+            
+            // Sadece boşluk ve satır sonu normalizasyonu
+            ocrText = ocrText.Trim();
+            ocrText = Regex.Replace(ocrText, @"\r\n|\r|\n", " "); // Satır sonlarını boşluğa çevir
+            ocrText = Regex.Replace(ocrText, @"\s{2,}", " ");     // Çoklu boşlukları tek boşluğa indir
+            
+            return ocrText;
         }
 
         private async Task<SoftwareBitmap> CreateSoftwareBitmapFromBitmap(Bitmap bitmap)

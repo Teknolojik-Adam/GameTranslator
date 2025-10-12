@@ -36,7 +36,7 @@ namespace P5S_ceviri
             {
                 if (IsCapturing)
                 {
-                    _logger.LogWarning("Video yakalama zaten �al���yor");
+                    _logger.LogWarning("Video yakalama zaten çalışıyor");
                     return true;
                 }
 
@@ -44,22 +44,22 @@ namespace P5S_ceviri
 
                 if (!_videoCapture.IsOpened())
                 {
-                    _logger.LogError($"Video yakalama cihaz� {deviceIndex} a��lamad�");
-                    OnVideoError($"Video yakalama cihaz� {deviceIndex} a��lamad�");
+                    _logger.LogError($"Video yakalama cihazı {deviceIndex} açılamadı");
+                    OnVideoError($"Video yakalama cihazı {deviceIndex} açılamadı");
                     return false;
                 }
 
-                // Video yakalama ayarlar�n� yap�land�r
+                // Video yakalama ayarlarını yapılandır
                 _videoCapture.Set(VideoCaptureProperties.FrameWidth, VideoWidth);
                 _videoCapture.Set(VideoCaptureProperties.FrameHeight, VideoHeight);
                 _videoCapture.Set(VideoCaptureProperties.Fps, FrameRate);
 
-                // Ayarlar� do�rula
+                // Ayarları doğrula
                 var actualWidth = (int)_videoCapture.Get(VideoCaptureProperties.FrameWidth);
                 var actualHeight = (int)_videoCapture.Get(VideoCaptureProperties.FrameHeight);
                 var actualFps = _videoCapture.Get(VideoCaptureProperties.Fps);
 
-                _logger.LogInformation($"Video yakalama ba�lat�ld� - Cihaz: {deviceIndex}, ��z�n�rl�k: {actualWidth}x{actualHeight}, FPS: {actualFps}");
+                _logger.LogInformation($"Video yakalama başlatıldı - Cihaz: {deviceIndex}, Çözünürlük: {actualWidth}x{actualHeight}, FPS: {actualFps}");
 
                 IsCapturing = true;
                 _cancellationTokenSource = new CancellationTokenSource();
@@ -69,8 +69,8 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError("Video yakalama ba�lat�lamad�", ex);
-                OnVideoError("Video yakalama ba�lat�lamad�", ex);
+                _logger.LogError("Video yakalama başlatılamadı", ex);
+                OnVideoError("Video yakalama başlatılamadı", ex);
                 return false;
             }
         }
@@ -105,8 +105,8 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError("Video yakalama durdurulurken hata olu�tu", ex);
-                OnVideoError("Video yakalama durdurulurken hata olu�tu", ex);
+                _logger.LogError("Video yakalama durdurulurken hata oluştu", ex);
+                OnVideoError("Video yakalama durdurulurken hata oluştu", ex);
             }
         }
 
@@ -131,7 +131,7 @@ namespace P5S_ceviri
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError("Tek bir kare yakalan�rken hata olu�tu", ex);
+                    _logger.LogError("Tek bir kare yakalanırken hata oluştu", ex);
                 }
 
                 return null;
@@ -144,7 +144,7 @@ namespace P5S_ceviri
 
             try
             {
-                // 0-9 aras� cihazlar� test et
+                // 0-9 arası cihazları test et
                 for (int i = 0; i < 10; i++)
                 {
                     using (var testCapture = new VideoCapture(i))
@@ -159,7 +159,7 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                _logger.LogError("Mevcut video cihazlar� alg�lan�rken hata olu�tu", ex);
+                _logger.LogError("Mevcut video cihazları algılanırken hata oluştu", ex);
             }
 
             return devices.ToArray();
@@ -188,19 +188,19 @@ namespace P5S_ceviri
                         }
                     }
 
-                    // Kare h�z�n� kontrol et
+                    // Kare hızını kontrol et
                     var delay = 1000 / FrameRate;
                     await Task.Delay(delay, cancellationToken);
                 }
             }
             catch (OperationCanceledException)
             {
-                
+
             }
             catch (Exception ex)
             {
-                _logger.LogError("Video yakalama d�ng�s�nde hata olu�tu", ex);
-                OnVideoError("Video yakalama d�ng�s�nde hata olu�tu", ex);
+                _logger.LogError("Video yakalama döngüsünde hata oluştu", ex);
+                OnVideoError("Video yakalama döngüsünde hata oluştu", ex);
             }
         }
 

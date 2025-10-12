@@ -12,7 +12,6 @@ using Windows.Globalization;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 using Windows.Storage.Streams;
-using System.Text.RegularExpressions;
 using OpenCvSharp.Extensions;
 using System.Drawing.Imaging;
 
@@ -89,7 +88,7 @@ namespace P5S_ceviri
                         }
                     }
                 }
-                return CleanOcrText(allRecognizedText.ToString());
+                return allRecognizedText.ToString().Trim();
             }
             catch (Exception ex)
             {
@@ -194,19 +193,6 @@ namespace P5S_ceviri
             }
         }
 
-        public string CleanOcrText(string ocrText)
-        {
-            if (string.IsNullOrWhiteSpace(ocrText)) return string.Empty;
-            ocrText = ocrText.Trim();
-            ocrText = Regex.Replace(ocrText, @"\s+", " ");
-            ocrText = Regex.Replace(ocrText, @"\r\n|\r|\n", " ");
-            char[] punctuation = { '.', ',', ';', ':', '!', '?', '-', '_', '(', ')', '[', ']', '{', '}', '"', '\'' };
-            ocrText = new string(ocrText.Where(c => !punctuation.Contains(c)).ToArray());
-            ocrText = Regex.Replace(ocrText, @"[0-9]", "");
-            ocrText = Regex.Replace(ocrText, @"[^a-zA-Z\s]", "");
-            return ocrText;
-        }
-
         public Mat CreateContrastMask(Mat sourceImage)
         {
             using (Mat gray = new Mat())
@@ -231,11 +217,31 @@ namespace P5S_ceviri
             }
         }
 
-     
         public Scalar[] DetectTextColors(Mat sourceImage)
         {
-            _logger.LogWarning("DetectTextColors metodu henüz tam olarak uygulanmadı.");
-            return Array.Empty<Scalar>();
+            using (Mat hsv = new Mat())
+            {
+                Cv2.CvtColor(sourceImage, hsv, ColorConversionCodes.BGR2HSV);
+                using (Mat hist = new Mat())
+                {
+                    int[] channels = { 0 };
+                    int[] histSize = { 180 };
+                    Rangef[] ranges = { new Rangef(0, 180) };
+
+                    Cv2.CalcHist(new Mat[] { hsv }, channels, null, hist, 1, histSize, ranges);
+                    
+                    Scalar[] dominantColors = new Scalar[3];
+                    for (int i = 0; i < 3; i++)
+                    {
+                        Cv2.MinMaxLoc(hist, out _, out double maxVal, out _, out OpenCvSharp.Point maxLoc);
+                        dominantColors[i] = new Scalar(maxLoc.Y, 255, 255);
+                        
+                        hist.Set<float>(maxLoc.Y, 0, 0f);
+                    }
+                    
+                    return dominantColors;
+                }
+            }
         }
     }
 }

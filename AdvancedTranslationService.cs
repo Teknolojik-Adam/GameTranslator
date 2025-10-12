@@ -75,7 +75,7 @@ namespace P5S_ceviri
 
             int placeholderCounter = 0;
 
-            // Sayıları koruma (örnek: 123, 45.67)
+            // Sayıları koruma ()
             string protectedText = Regex.Replace(text, @"\b\d+(?:\.\d+)?\b", match =>
             {
                 string placeholder = $"__NUMBER_{placeholderCounter}__";
@@ -84,7 +84,7 @@ namespace P5S_ceviri
                 return placeholder;
             });
 
-            // Tarihleri koruma (örnek: 2023-12-31, 31/12/2023, 31.12.2023)
+            // Tarihleri koruma ()
             protectedText = Regex.Replace(protectedText, @"\b\d{4}-\d{2}-\d{2}\b|\b\d{2}/\d{2}/\d{4}\b|\b\d{1,2}\.\d{1,2}\.\d{4}\b", match =>
             {
                 string placeholder = $"__DATE_{placeholderCounter}__";

@@ -74,7 +74,7 @@ namespace P5S_ceviri
 
             return left.Equals(right);
         }
-
+        //
         public static bool operator !=(Hotkey left, Hotkey right)
         {
             return !(left == right);

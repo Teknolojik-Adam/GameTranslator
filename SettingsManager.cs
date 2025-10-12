@@ -19,7 +19,7 @@ namespace P5S_ceviri
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _settingsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
         }
-
+        //
         public AppSettings LoadSettings()
         {
             lock (_lockObject)

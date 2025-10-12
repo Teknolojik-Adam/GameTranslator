@@ -11,7 +11,7 @@ namespace P5S_ceviri
         string TryReadStringDeep(IntPtr address);
         IntPtr ResolveAddressFromPath(Process process, PathInfo path);
         
-        // Cache metodları
+        
         IntPtr ResolveAddressFromPathCached(Process process, PathInfo path);
         byte[] ReadBytesCached(IntPtr address, int length);
         List<KeyValuePair<PathInfo, IntPtr>> GetMostFrequentAddresses(int topN = 10);

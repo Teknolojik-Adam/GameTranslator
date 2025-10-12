@@ -124,6 +124,7 @@
     </Compile>
     <Compile Include="HotkeyManager.cs" />
     <Compile Include="IOcrEngine.cs" />
+    <Compile Include="OcrTextCorrector.cs" />
     <Compile Include="PerformanceOptimizedTranslationService.cs" />
     <Compile Include="PointerScanner.cs" />
     <Compile Include="TesseractOcrEngine.cs" />
