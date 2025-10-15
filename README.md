@@ -14,4 +14,7 @@ Ekran Çevirisini Başlat ile OCR tabanlı çeviri yapabilirsiniz.
 
 Akiş Şemasi
 
-<img width="318" height="466" alt="473813728-e6217574-e2d1-42ca-a6b4-bcb0e8d86f1b" src="https://github.com/user-attachments/assets/2f330cb8-563b-4d1c-832f-d48594f78142" />
+
+<img width="11176" height="1526" alt="2" src="https://github.com/user-attachments/assets/6a55b8e6-836e-4ebf-a699-0a4ae7a32ea2" />
+
+<img width="7265" height="3290" alt="3" src="https://github.com/user-attachments/assets/b9ea624e-4918-4098-9082-6fb3341404fe" />
