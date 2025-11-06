@@ -1,3 +1,6 @@
+sadece bir tuşa basıp ekrandaki yazıları çevirmek, basit ve kafa karıştırmayan bir çözüm mü arıyorsun? O zaman senin için hazırladığımız YENİ GameTranslator Tess'e bir göz at!
+Link: https://teknolojikadam.itch.io/gametranslator-tess
+
 Özellikler • RAM Üzerinden Çeviri: Oyunların belleğinden metinleri okuyarak otomatik olarak Türkçeye çevirir. • OCR (Ekran Görüntüsü) ile Çeviri: Oyun penceresinin ekran görüntüsünü alır, metinleri OCR ile algılar ve çevirir. • Çeviri Penceresi (Overlay): Çevirileri ayrı bir pencerede veya doğrudan oyun üzerinde gösterebilirsiniz. • Kolay Kurulum: Oyunlar için kalıcı pointer yolunu Cheat Engine ile bulup programa tanımlayabilirsiniz. • Birden Fazla Oyun Desteği: Farklı oyunlar için farklı adres yolları kaydedilebilir. • Kapsamlı Hata Yönetimi: Hatalar kullanıcıya bildirilir ve loglanır. Gereksinimler • .NET Framework 4.8 yüklü olduğundan emin olun. • program.exe ve tessdata klasörünü aynı dizinde bulundurun.
 
 Kullanım Programı başlatın.
