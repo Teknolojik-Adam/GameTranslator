@@ -69,7 +69,7 @@ namespace P5S_ceviri
         #endregion
 
         public MainWindow()
-        {
+        {//
             InitializeComponent();
             try
             {

@@ -181,7 +181,7 @@ namespace P5S_ceviri
             _logger.LogInformation("Varsayılan icon döndürüldü.");
             return CreateBitmapImageFromResource("P5S_ceviri.Resources.default_icon.png");
         }
-
+        //
         private static BitmapImage CreateBitmapImageFromResource(string resourceName)
         {
             try

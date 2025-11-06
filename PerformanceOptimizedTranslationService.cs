@@ -6,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 namespace P5S_ceviri
-{
+{//
     public class PerformanceOptimizedTranslationService : ITranslationService, IDisposable
     {
         private readonly ITranslationService _baseService;

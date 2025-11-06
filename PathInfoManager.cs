@@ -6,7 +6,7 @@ using System.Reflection;
 using System.Windows.Media.Imaging;
 
 namespace P5S_ceviri
-{
+{//
     public class ProcessInfo : IDisposable
     {
         private readonly Process _process;

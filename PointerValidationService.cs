@@ -19,7 +19,7 @@ namespace P5S_ceviri
         public IntPtr ResolvedAddress { get; set; }
     }
 
-
+    // Kararlılık testi için örnek veri yapısı
     public class StabilitySample
     {
         public DateTime Timestamp { get; set; }

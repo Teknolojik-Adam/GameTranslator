@@ -2,6 +2,7 @@ using System;
 
 namespace P5S_ceviri
 {
+    //
     public class PointerStabilityResult
     {
         public PointerPath Path { get; set; }

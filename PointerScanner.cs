@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace P5S_ceviri
 {
-  
+  //
     public class PointerPath
     {
         public string ModuleName { get; set; } = string.Empty;
