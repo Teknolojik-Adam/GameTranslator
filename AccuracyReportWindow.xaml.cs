@@ -21,23 +21,23 @@ namespace P5S_ceviri
 
         private void LoadReportData()
         {
-            // Set report date
+            
             ReportDateText.Text = $"Generated on: {_report.GeneratedAt:yyyy-MM-dd HH:mm:ss}";
 
-            // Load summary
+            
             TotalTestsText.Text = _report.TotalTests.ToString();
             OverallAccuracyText.Text = $"{_report.OverallAccuracy:P1}";
             BestEngineText.Text = _report.BestPerformingEngine.ToString();
 
-            // Load engine performance
+            
             EnginePerformanceListView.ItemsSource = _report.EngineSummaries.Values;
 
-            // Load detailed statistics
+            
             CharacterAccuracyListView.ItemsSource = _report.EngineSummaries.Values;
             WordAccuracyListView.ItemsSource = _report.EngineSummaries.Values;
             LineAccuracyListView.ItemsSource = _report.EngineSummaries.Values;
 
-            // Load recommendations
+           
             var recommendations = _report.Recommendations.Select(kvp => 
                 new { Key = kvp.Key, Value = kvp.Value?.ToString() ?? "" }).ToList();
             RecommendationsListView.ItemsSource = recommendations;
@@ -87,7 +87,7 @@ namespace P5S_ceviri
             sb.AppendLine($"Generated on: {_report.GeneratedAt:yyyy-MM-dd HH:mm:ss}");
             sb.AppendLine();
 
-            // Summary
+            
             sb.AppendLine("SUMMARY");
             sb.AppendLine("-------");
             sb.AppendLine($"Total Tests: {_report.TotalTests}");
@@ -95,7 +95,7 @@ namespace P5S_ceviri
             sb.AppendLine($"Best Engine: {_report.BestPerformingEngine}");
             sb.AppendLine();
 
-            // Engine Performance
+            
             sb.AppendLine("ENGINE PERFORMANCE");
             sb.AppendLine("------------------");
             sb.AppendLine("Engine\t\tTests\tAvg Accuracy\tBest Accuracy\tAvg Time (ms)");
@@ -107,7 +107,7 @@ namespace P5S_ceviri
             }
             sb.AppendLine();
 
-            // Detailed Statistics
+            
             sb.AppendLine("DETAILED STATISTICS");
             sb.AppendLine("-------------------");
             foreach (var summary in _report.EngineSummaries.Values)
@@ -119,7 +119,7 @@ namespace P5S_ceviri
                 sb.AppendLine();
             }
 
-            // Recommendations
+           
             sb.AppendLine("RECOMMENDATIONS");
             sb.AppendLine("---------------");
             foreach (var recommendation in _report.Recommendations)
@@ -134,7 +134,7 @@ namespace P5S_ceviri
         {
             var sb = new StringBuilder();
             
-            // Header
+            
             sb.AppendLine("Report Type,Value");
             sb.AppendLine($"Generated Date,{_report.GeneratedAt:yyyy-MM-dd HH:mm:ss}");
             sb.AppendLine($"Total Tests,{_report.TotalTests}");
@@ -142,7 +142,7 @@ namespace P5S_ceviri
             sb.AppendLine($"Best Engine,{_report.BestPerformingEngine}");
             sb.AppendLine();
 
-            // Engine Performance
+            
             sb.AppendLine("Engine Performance");
             sb.AppendLine("Engine,Test Count,Average Accuracy,Best Accuracy,Average Processing Time (ms)");
             
@@ -152,7 +152,7 @@ namespace P5S_ceviri
             }
             sb.AppendLine();
 
-            // Detailed Statistics
+            
             sb.AppendLine("Detailed Statistics");
             sb.AppendLine("Engine,Character Accuracy,Word Accuracy,Line Accuracy");
             
@@ -162,7 +162,7 @@ namespace P5S_ceviri
             }
             sb.AppendLine();
 
-            // Recommendations
+           
             sb.AppendLine("Recommendations");
             sb.AppendLine("Category,Recommendation");
             

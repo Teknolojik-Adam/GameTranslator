@@ -88,6 +88,13 @@ namespace P5S_ceviri
             set { if (_theme != value) { _theme = value; OnPropertyChanged(); } }
         }
 
+        private string _language = "tr";
+        public string Language
+        {
+            get => _language;
+            set { if (_language != value) { _language = value; OnPropertyChanged(); } }
+        }
+
         private string _targetLanguage = "tr";
         public string TargetLanguage
         {
@@ -542,6 +549,7 @@ namespace P5S_ceviri
             _adaptiveThresholdC = 2;
             _lastProcessName = "";
             _theme = "Light";
+            _language = "tr";
             _targetLanguage = "tr";
             _ocrLanguage = "eng";
             _enableOcrColorFilter = true;

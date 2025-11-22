@@ -7,7 +7,14 @@ namespace P5S_ceviri
         public InputDialog(string question, string defaultAnswer = "")
         {
             InitializeComponent();
-            lblQuestion.Text = question;
+
+            // Eğer MainWindow'dan dolu bir soru metni geldiyse onu yaz.
+            // Boş geldiyse XAML'daki "{DynamicResource Str_Input_Question}" geçerli kalır.
+            if (!string.IsNullOrEmpty(question))
+            {
+                lblQuestion.Text = question;
+            }
+
             txtAnswer.Text = defaultAnswer;
         }
 

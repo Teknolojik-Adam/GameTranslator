@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
-using System.IO; 
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
@@ -66,6 +66,63 @@ namespace P5S_ceviri
         private List<PointerPath> _lastFoundPaths = new List<PointerPath>();
         private readonly LinkedList<string> _translationHistory = new LinkedList<string>();
         private const int MaxTranslationHistory = 2; // Mevcut çeviriye ek olarak saklanacak eski çeviri sayısı
+
+        private System.Collections.ObjectModel.ObservableCollection<LogEntry> _logEntries = new System.Collections.ObjectModel.ObservableCollection<LogEntry>();
+        public System.Collections.ObjectModel.ObservableCollection<LogEntry> LogEntries => _logEntries;
+
+        public class LogEntry : System.ComponentModel.INotifyPropertyChanged
+        {
+            public DateTime Timestamp { get; set; }
+            public string Key { get; set; }
+            public object[] Args { get; set; }
+            public bool IsError { get; set; }
+
+            private string _fullText;
+            public string FullText
+            {
+                get => _fullText;
+                set { _fullText = value; PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(FullText))); }
+            }
+
+            public event System.ComponentModel.PropertyChangedEventHandler PropertyChanged;
+
+            public void UpdateTranslation()
+            {
+                string logType = IsError ? "[ERROR]" : "[INFO]";
+                try
+                {
+                    var appSettings = ServiceContainer.GetService<AppSettings>();
+                    if (appSettings != null && appSettings.Language == "tr")
+                    {
+                        logType = IsError ? "[HATA]" : "[BİLGİ]";
+                    }
+                }
+                catch { }
+
+                string message = Key; // Default to key
+                try
+                {
+                    if (Application.Current != null)
+                    {
+                        var resource = Application.Current.TryFindResource(Key) as string;
+                        if (!string.IsNullOrEmpty(resource))
+                        {
+                            if (Args != null && Args.Length > 0)
+                            {
+                                message = string.Format(resource, Args);
+                            }
+                            else
+                            {
+                                message = resource;
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                FullText = $"{Timestamp:HH:mm:ss} {logType} - {message}";
+            }
+        }
         #endregion
 
         public MainWindow()
@@ -188,6 +245,20 @@ namespace P5S_ceviri
             }
         }
 
+        private void btnGitHub_Click(object sender, RoutedEventArgs e)
+        {
+            System.Diagnostics.Process.Start("https://github.com/Teknolojik-Adam/GameTranslator");
+        }
+
+        private void btnItchIo_Click(object sender, RoutedEventArgs e)
+        {
+            System.Diagnostics.Process.Start("https://teknolojikadam.itch.io/teknolojikadamgametranslator");
+        }
+
+        private void btnItchIoTess_Click(object sender, RoutedEventArgs e)
+        {
+            System.Diagnostics.Process.Start("https://teknolojikadam.itch.io/gametranslator-tess");
+        }
         #region Enhanced Pointer Scanner UI Logic
         protected override void OnSourceInitialized(EventArgs e)
         {
@@ -209,13 +280,13 @@ namespace P5S_ceviri
                     return;
                 }
                 _hotkeyManager = new HotkeyManager(hwndSource, _logger);
-                
+
                 // Kısayolları kaydet
                 RegisterHotkeys();
-                
+
                 // Kayıtlı kısayolları listele
                 ListRegisteredHotkeys();
-                
+
                 _logger?.LogInformation("Hotkey kayıtları başarıyla tamamlandı");
             }
             catch (Exception ex)
@@ -248,7 +319,7 @@ namespace P5S_ceviri
 
                 // Servisleri dispose et
                 _pointerValidationService?.Dispose();
-                
+
                 // EnhancedMemoryService'i dispose et (tüm event'leri ve kaynakları temizler)
                 _enhancedMemoryService?.Dispose();
                 _logger?.LogInformation("EnhancedMemoryService kaynakları serbest bırakıldı");
@@ -270,8 +341,8 @@ namespace P5S_ceviri
             if (_appSettings.ToggleOcrHotkey != null && _appSettings.ToggleOcrHotkey.IsValid)
             {
                 _ocrHotkeyId = _hotkeyManager.RegisterHotkey(
-                    _appSettings.ToggleOcrHotkey.Modifiers, 
-                    _appSettings.ToggleOcrHotkey.Key, 
+                    _appSettings.ToggleOcrHotkey.Modifiers,
+                    _appSettings.ToggleOcrHotkey.Key,
                     ToggleOcr,
                     "OCR Aç/Kapat"
                 );
@@ -284,8 +355,8 @@ namespace P5S_ceviri
             if (_appSettings.ToggleTranslateWindowHotkey != null && _appSettings.ToggleTranslateWindowHotkey.IsValid)
             {
                 _translateWindowHotkeyId = _hotkeyManager.RegisterHotkey(
-                    _appSettings.ToggleTranslateWindowHotkey.Modifiers, 
-                    _appSettings.ToggleTranslateWindowHotkey.Key, 
+                    _appSettings.ToggleTranslateWindowHotkey.Modifiers,
+                    _appSettings.ToggleTranslateWindowHotkey.Key,
                     ToggleTranslateWindow,
                     "Çeviri Penceresini Aç/Kapat"
                 );
@@ -298,8 +369,8 @@ namespace P5S_ceviri
             if (_appSettings.SwitchTranslationServiceHotkey != null && _appSettings.SwitchTranslationServiceHotkey.IsValid)
             {
                 _switchTranslationServiceHotkeyId = _hotkeyManager.RegisterHotkey(
-                    _appSettings.SwitchTranslationServiceHotkey.Modifiers, 
-                    _appSettings.SwitchTranslationServiceHotkey.Key, 
+                    _appSettings.SwitchTranslationServiceHotkey.Modifiers,
+                    _appSettings.SwitchTranslationServiceHotkey.Key,
                     SwitchTranslationService,
                     "Çeviri Servisi Değiştir"
                 );
@@ -431,18 +502,18 @@ namespace P5S_ceviri
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
             if (pi == null)
             {
-                AppendToLog("Lütfen önce bir oyun/uygulama seçin.", true);
+                AppendToLog(GetString("Str_Log_SelectProcessFirst"), true);
                 return;
             }
             string searchText = txtScanText.Text;
             if (string.IsNullOrWhiteSpace(searchText))
             {
-                AppendToLog("Lütfen pattern girin.", true);
+                AppendToLog(GetString("Str_Log_EnterPattern"), true);
                 return;
             }
             btnScanPointers.IsEnabled = false;
             btnStopScan.IsEnabled = true;
-            lblScanStatus.Text = "Tarama başlatılıyor...";
+            lblScanStatus.Text = GetString("Str_Log_ScanStarted");
             lstAddresses.Items.Clear(); // ListBox'ı temizle
             _scanCancellationTokenSource = new CancellationTokenSource();
             try
@@ -451,45 +522,45 @@ namespace P5S_ceviri
                 {
                     Dispatcher.Invoke(() =>
                     {
-                        lblScanStatus.Text = $"Tarama devam ediyor... ({value}%)";
+                        lblScanStatus.Text = $"Scanning... ({value}%)";
                     });
                 });
 
                 _enhancedMemoryService.StatusChanged += OnScanStatusChanged;
                 _enhancedMemoryService.ProgressChanged += OnScanProgressChanged;
-                
+
                 // Timestamp ile başlangıç durumu raporla
-                _enhancedMemoryService.ReportStatusWithTimestamp("Pattern taraması başlatılıyor...");
-                AppendToLog("Pattern taraması başlatılıyor...");
+                _enhancedMemoryService.ReportStatusWithTimestamp(GetString("Str_Log_ScanStarted"));
+                AppendToLog(GetString("Str_Log_ScanStarted"));
 
                 // Process'e bağlan (event'ler için)
                 bool attachSuccess = _enhancedMemoryService.AttachToProcess(pi.Process.Id);
                 if (attachSuccess)
                 {
-                    AppendToLog($"Process'e başarıyla bağlanıldı: {pi.Process.ProcessName} (PID: {pi.Process.Id})");
+                    AppendToLog(GetString("Str_Log_ProcessAttached", pi.Process.ProcessName, pi.Process.Id));
                 }
 
                 // Gelişmiş tarama: Chunk ve buffer boyutunu belirle
                 int chunkSize = 4 * 1024 * 1024; // 4 MB
                 int bufferSize = 1024; // 1 KB
                 bool useOverlappingBuffers = true; // Pattern kaçırma önleme
-                
+
                 // Process belleğine göre chunk boyutunu ayarla
                 if (pi.Process.WorkingSet64 > 100 * 1024 * 1024) // 100 MB'den büyükse
                 {
                     chunkSize = 8 * 1024 * 1024; // 8 MB chunk kullan (daha hızlı)
-                    AppendToLog("Büyük bellek alanı tespit edildi, 8 MB chunk boyutu kullanılıyor");
+                    AppendToLog(GetString("Str_Log_LargeMemory"));
                 }
                 else
                 {
-                    AppendToLog("Normal bellek alanı, 4 MB chunk boyutu kullanılıyor");
+                    AppendToLog(GetString("Str_Log_NormalMemory"));
                 }
 
                 // Tüm overload'ların kullanıldığı gelişmiş tarama
                 List<IntPtr> addresses = await _enhancedMemoryService.FindPatternAddressesAsync(
-                    pi.Process, 
-                    searchText, 
-                    _scanCancellationTokenSource.Token, 
+                    pi.Process,
+                    searchText,
+                    _scanCancellationTokenSource.Token,
                     progress,
                     chunkSize,          // Özel chunk boyutu
                     bufferSize,         // Özel buffer boyutu
@@ -497,90 +568,94 @@ namespace P5S_ceviri
                 );
                 if (addresses == null || !addresses.Any())
                 {
-                    AppendToLog("Belirtilen pattern bulunamadı.");
+                    AppendToLog(GetString("Str_Log_PatternNotFound"));
                     return;
                 }
-                AppendToLog($"{addresses.Count} adet adres bulundu.");
+                AppendToLog(GetString("Str_Log_AddressesFound", addresses.Count));
 
                 _lastFoundPaths.Clear(); // Önceki sonuçları temizle
 
                 int maxAddressesToScan = Math.Min(10, addresses.Count); //  ilk 10 adresi tara
-                
+
                 using (var scanner = new PointerScanner(pi.Process, _memoryService, _logger))
                 {
                     // Önbelleği temizle (yeni tarama için)
                     scanner.ClearCache();
                     _logger?.LogInformation("PointerScanner önbelleği temizlendi, yeni tarama başlatılıyor");
-                    
+
                     for (int i = 0; i < maxAddressesToScan; i++)
                     {
                         IntPtr targetAddress = addresses[i];
-                        AppendToLog($"Pointer taraması başlatılıyor: 0x{targetAddress.ToInt64():X} ({i + 1}/{maxAddressesToScan})");
-                        
+                        AppendToLog(GetString("Str_Log_ScanningAddress", targetAddress.ToInt64(), i + 1, maxAddressesToScan));
+
                         // Pointer yollarını bulmak için tarama yap
                         var pathsForAddress = await scanner.FindPointers(targetAddress, maxDepth: 3);
                         _lastFoundPaths.AddRange(pathsForAddress);
-                        AppendToLog($" • {pathsForAddress.Count} pointer yolu bulundu.");
-                        
+                        AppendToLog(GetString("Str_Log_PathsFound", pathsForAddress.Count));
+
                         // Bulunan yolları ListBox'a ekle 
                         foreach (var path in pathsForAddress.Take(10)) // İlk 10'u göster
                         {
                             lstAddresses.Items.Add(new ListBoxItem { Content = path.ToString() });
                         }
                     }
-                    
+
                     // Önbellek istatistiklerini göster
                     _logger?.LogInformation($"PointerScanner önbelleğinde {scanner.CachedPathCount} pointer yolu var");
-                    
+
                     // En iyi 3 pointer için hızlı stability testi
                     if (_lastFoundPaths.Any())
                     {
-                        AppendToLog("\n=== En İyi Pointer'lar için Hızlı Stabilite Testi ===");
+                        AppendToLog(Environment.NewLine + GetString("Str_Log_StabilityTest"));
                         var topPaths = _lastFoundPaths.Take(3).ToList();
-                        
+
                         foreach (var path in topPaths)
                         {
                             try
                             {
                                 var quickStability = await scanner.CheckPointerStability(path, checkCount: 3, intervalMs: 100);
                                 string statusIcon = quickStability.StabilityScore >= 70 ? "✅" : "⚠️";
-                                AppendToLog($"{statusIcon} {path}: Stabilite {quickStability.StabilityScore:F1}/100");
+                                AppendToLog($"{statusIcon} {path}: " + GetString("Str_Log_QuickStability", quickStability.StabilityScore));
                             }
                             catch (Exception ex)
                             {
-                                AppendToLog($"❌ {path}: Test hatası - {ex.Message}");
+                                AppendToLog(GetString("Str_Log_TestError", path, ex.Message));
                             }
                         }
                     }
                 }
-                
+
                 if (_lastFoundPaths.Any())
                 {
                     btnTestPointer.IsEnabled = true;
                     btnSavePointers.IsEnabled = true;
-                    
+
                     // Timestamp ile tamamlanma durumu raporla
-                    _enhancedMemoryService.ReportStatusWithTimestamp($"✅ Pointer taraması tamamlandı. {_lastFoundPaths.Count} yol bulundu.");
+                    string completeMsg = GetString("Str_Log_ScanComplete", _lastFoundPaths.Count);
+                    _enhancedMemoryService.ReportStatusWithTimestamp(completeMsg);
                     _enhancedMemoryService.ReportProgressWithTimestamp(100); // %100 tamamlandı
-                    
-                    AppendToLog("\n✅ Pointer taraması tamamlandı. Pointer'ları test edebilir veya kaydedebilirsiniz.");
+
+                    AppendToLog(Environment.NewLine + completeMsg);
                 }
                 else
                 {
-                    _enhancedMemoryService.ReportStatusWithTimestamp("⚠️ Hiçbir pointer yolu bulunamadı.");
-                    AppendToLog("Hiçbir pointer yolu bulunamadı.");
+                    string noPathsMsg = GetString("Str_Log_NoPaths");
+                    _enhancedMemoryService.ReportStatusWithTimestamp(noPathsMsg);
+                    AppendToLog(noPathsMsg);
                 }
 
             }
             catch (OperationCanceledException)
             {
-                _enhancedMemoryService.ReportStatusWithTimestamp("⛔ Pattern taraması kullanıcı tarafından durduruldu.");
-                AppendToLog("Pattern taraması kullanıcı tarafından durduruldu.");
+                string cancelMsg = GetString("Str_Log_ScanCancelled");
+                _enhancedMemoryService.ReportStatusWithTimestamp(cancelMsg);
+                AppendToLog(cancelMsg);
             }
             catch (Exception ex)
             {
-                _enhancedMemoryService.ReportStatusWithTimestamp($"❌ Tarama sırasında hata: {ex.Message}");
-                AppendToLog($"Tarama sırasında hata: {ex.Message}", true);
+                string errorMsg = GetString("Str_Log_ScanError", ex.Message);
+                _enhancedMemoryService.ReportStatusWithTimestamp(errorMsg);
+                AppendToLog(errorMsg, true);
                 _logger?.LogError("Pointer taraması sırasında hata oluştu.", ex);
             }
             finally
@@ -588,16 +663,16 @@ namespace P5S_ceviri
                 // Event'leri temizle
                 _enhancedMemoryService.StatusChanged -= OnScanStatusChanged;
                 _enhancedMemoryService.ProgressChanged -= OnScanProgressChanged;
-                
+
                 // UI kontrollerini sıfırla
                 btnScanPointers.IsEnabled = true;
                 btnStopScan.IsEnabled = false;
                 lblScanStatus.Text = "";
-                
+
                 // Kaynakları temizle
                 _scanCancellationTokenSource?.Dispose();
                 _scanCancellationTokenSource = null;
-                
+
                 // EnhancedMemoryService'i dispose etme - tekrar kullanılabilir olmalı
                 // NOT: Servis constructor'da oluşturulduğu için burada dispose etmiyoruz
                 _logger?.LogInformation("Pointer tarama işlemi sonlandırıldı ve kaynaklar temizlendi.");
@@ -607,78 +682,78 @@ namespace P5S_ceviri
         private void btnStopScan_Click(object sender, RoutedEventArgs e)
         {
             _scanCancellationTokenSource?.Cancel();
-            AppendToLog("Pattern taraması durdurma komutu verildi...");
+            AppendToLog(GetString("Str_Log_StoppingScan"));
         }
 
         private async void btnTestPointer_Click(object sender, RoutedEventArgs e)
         {
             if (!_lastFoundPaths.Any())
             {
-                AppendToLog("Test edilecek pointer yolu bulunamadı. Önce tarama yapın.", true);
+                AppendToLog(GetString("Str_Log_NoPathToTest"), true);
                 return;
             }
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
             if (pi == null) return;
 
             // Önce tüm pointer'ları ValidatePointersAsync ile doğrula
-            AppendToLog($"Pointer doğrulama testi başlatılıyor... ({_lastFoundPaths.Count} pointer)");
+            AppendToLog(GetString("Str_Log_ValidationStarted", _lastFoundPaths.Count));
             try
             {
                 var validationResults = await _pointerValidationService.ValidatePointersAsync(pi.Process, _lastFoundPaths);
-                AppendToLog($"Pointer Doğrulama Sonuçları:");
+                AppendToLog(GetString("Str_Log_ValidationResults"));
 
                 int validCount = 0;
                 foreach (var result in validationResults.Take(10)) // İlk 10 sonucu göster
                 {
                     string valuePreview = result.CurrentValue?.Substring(0, Math.Min(50, result.CurrentValue?.Length ?? 0)) ?? "null";
-                    AppendToLog($"  • {result.Path}: Skor={result.Score}, Geçerli={result.IsValid}, Değer='{valuePreview}'");
+                    AppendToLog($"  • {result.Path}: Score={result.Score}, Valid={result.IsValid}, Value='{valuePreview}'");
                     if (result.IsValid) validCount++;
                 }
 
-                AppendToLog($"Toplam {validCount}/{validationResults.Count} pointer geçerli bulundu.");
-                
+                AppendToLog(GetString("Str_Log_ValidCount", validCount, validationResults.Count));
+
                 // Kayıtlı pointer sayısını göster
                 var registeredPaths = _pointerValidationService.GetRegisteredPointerPaths();
                 _logger.LogInformation($"Önbellekte {registeredPaths.Count} pointer yolu kayıtlı");
 
                 // En iyi skorlu pointer'ı stabilite testi ile test et (her iki servis de)
                 var bestPath = _lastFoundPaths.First();
-                AppendToLog($"En iyi pointer stabilite testi başlatılıyor: {bestPath}");
+                AppendToLog(GetString("Str_Log_BestPathTest", bestPath));
 
                 // 1. PointerValidationService ile test
-                AppendToLog("=== PointerValidationService Stabilite Testi ===");
+                AppendToLog(GetString("Str_Log_ServiceStability"));
                 var validationStability = await _pointerValidationService.TestPointerStabilityAsync(pi.Process, bestPath, 10, 500);
-                AppendToLog($"  • Başarı Oranı: {validationStability.SuccessRate:F1}%");
-                AppendToLog($"  • Adres Tutarlılığı: {validationStability.AddressConsistency:F1}%");
-                AppendToLog($"  • Değer Tutarlılığı: {validationStability.ValueConsistency:F1}%");
-                AppendToLog($"  • Genel Stabilite Skoru: {validationStability.StabilityScore:F1}/100");
+                AppendToLog($"  • Success Rate: {validationStability.SuccessRate:F1}%");
+                AppendToLog($"  • Address Consistency: {validationStability.AddressConsistency:F1}%");
+                AppendToLog($"  • Value Consistency: {validationStability.ValueConsistency:F1}%");
+                AppendToLog($"  • Overall Stability Score: {validationStability.StabilityScore:F1}/100");
 
                 // 2. PointerScanner ile test
                 using (var scanner = new PointerScanner(pi.Process, _memoryService, _logger))
                 {
-                    AppendToLog("=== PointerScanner Stabilite Testi ===");
+                    AppendToLog(GetString("Str_Log_ScannerStability"));
                     var scannerStability = await scanner.CheckPointerStability(bestPath, 10, 500);
-                    AppendToLog($"  • Başarı Oranı: {scannerStability.SuccessRate:F1}%");
-                    AppendToLog($"  • Adres Tutarlılığı: {scannerStability.AddressConsistency:F1}%");
-                    AppendToLog($"  • Değer Tutarlılığı: {scannerStability.ValueConsistency:F1}%");
-                    AppendToLog($"  • Genel Stabilite Skoru: {scannerStability.StabilityScore:F1}/100");
-                    AppendToLog($"  • Önbellek Kullanımı: {scanner.CachedPathCount} pointer yolu");
+                    AppendToLog($"  • Success Rate: {scannerStability.SuccessRate:F1}%");
+                    AppendToLog($"  • Address Consistency: {scannerStability.AddressConsistency:F1}%");
+                    AppendToLog($"  • Value Consistency: {scannerStability.ValueConsistency:F1}%");
+                    AppendToLog($"  • Overall Stability Score: {scannerStability.StabilityScore:F1}/100");
+                    AppendToLog($"  • Cache Usage: {scanner.CachedPathCount} pointer paths");
 
                     // Kararlılık değerlendirmesi
                     double avgStability = (validationStability.StabilityScore + scannerStability.StabilityScore) / 2.0;
-                    AppendToLog($"\n=== Ortalama Stabilite Skoru: {avgStability:F1}/100 ===");
-                    
+                    AppendToLog(Environment.NewLine + GetString("Str_Log_AvgStability", avgStability));
+
                     if (avgStability >= 80)
-                        AppendToLog("✅ Bu pointer güvenilir görünüyor!");
+                        AppendToLog(GetString("Str_Log_Reliable"));
                     else if (avgStability >= 60)
-                        AppendToLog("⚠️ Bu pointer orta derecede güvenilir.");
+                        AppendToLog(GetString("Str_Log_MediumReliable"));
                     else
-                        AppendToLog("❌ Bu pointer güvenilir değil, başka pointer'lar deneyin.", true);
+                        AppendToLog(GetString("Str_Log_Unreliable"), true);
                 }
             }
             catch (Exception ex)
             {
-                AppendToLog($"Pointer testi sırasında hata: {ex.Message}", true);
+                AppendToLog(GetString("Str_Log_TestErrorGeneric", ex.Message), true);
             }
         }
 
@@ -686,7 +761,7 @@ namespace P5S_ceviri
         {
             if (!_lastFoundPaths.Any())
             {
-                AppendToLog("Kaydedilecek pointer bulunamadı.", true);
+                AppendToLog(GetString("Str_Log_NoPathToSave"), true);
                 return;
             }
             try
@@ -700,12 +775,12 @@ namespace P5S_ceviri
                 {
                     var json = System.Text.Json.JsonSerializer.Serialize(_lastFoundPaths, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
                     System.IO.File.WriteAllText(saveDialog.FileName, json);
-                    AppendToLog($"Pointer'lar kaydedildi: {saveDialog.FileName}");
+                    AppendToLog(GetString("Str_Log_Saved", saveDialog.FileName));
                 }
             }
             catch (Exception ex)
             {
-                AppendToLog($"Kaydetme sırasında hata: {ex.Message}", true);
+                AppendToLog(GetString("Str_Log_SaveError", ex.Message), true);
             }
         }
 
@@ -724,7 +799,7 @@ namespace P5S_ceviri
                     if (loadedPaths?.Any() == true)
                     {
                         _lastFoundPaths = loadedPaths;
-                        AppendToLog($"{loadedPaths.Count} adet pointer yolu yüklendi: {openDialog.FileName}");
+                        AppendToLog(GetString("Str_Log_Loaded", loadedPaths.Count, openDialog.FileName));
                         // Loaded pointer'ları göstermek için
                         foreach (var path in loadedPaths.Take(10))
                         {
@@ -737,57 +812,57 @@ namespace P5S_ceviri
                         var pi = cmbProcesses.SelectedItem as ProcessInfo;
                         if (pi != null)
                         {
-                            AppendToLog("Yüklenen pointer'lar otomatik olarak doğrulanıyor...");
+                            AppendToLog(GetString("Str_Log_ValidatingLoaded"));
                             try
                             {
                                 var validationResults = await _pointerValidationService.ValidatePointersAsync(pi.Process, loadedPaths);
                                 int validCount = validationResults.Count(r => r.IsValid);
-                                AppendToLog($"Otomatik doğrulama tamamlandı: {validCount}/{validationResults.Count} pointer geçerli");
+                                AppendToLog(GetString("Str_Log_ValidationComplete", validCount, validationResults.Count));
 
                                 // Geçerli olmayan pointer'ları listeden çıkar
                                 _lastFoundPaths = validationResults.Where(r => r.IsValid).Select(r => r.Path).ToList();
                                 if (_lastFoundPaths.Count != loadedPaths.Count)
                                 {
-                                    AppendToLog($"Geçersiz pointer'lar filtrelendi. Kalan: {_lastFoundPaths.Count}");
+                                    AppendToLog(GetString("Str_Log_Filtered", _lastFoundPaths.Count));
                                 }
 
                                 // En iyi pointer için hızlı stability kontrolü
                                 if (_lastFoundPaths.Any())
                                 {
                                     var topPath = _lastFoundPaths.First();
-                                    AppendToLog($"En iyi pointer için hızlı stabilite kontrolü: {topPath}");
-                                    
+                                    AppendToLog(GetString("Str_Log_QuickCheck", topPath));
+
                                     using (var scanner = new PointerScanner(pi.Process, _memoryService, _logger))
                                     {
                                         var quickStability = await scanner.CheckPointerStability(topPath, checkCount: 5, intervalMs: 200);
-                                        AppendToLog($"Hızlı Stabilite: {quickStability.StabilityScore:F1}/100");
-                                        
+                                        AppendToLog(GetString("Str_Log_QuickStability", quickStability.StabilityScore));
+
                                         if (quickStability.StabilityScore >= 70)
                                         {
-                                            AppendToLog("✅ Pointer kararlı görünüyor, kullanıma hazır!");
+                                            AppendToLog(GetString("Str_Log_StableReady"));
                                         }
                                         else
                                         {
-                                            AppendToLog("⚠️ Pointer kararsız olabilir, tam test öneririz.");
+                                            AppendToLog(GetString("Str_Log_UnstableWarn"));
                                         }
                                     }
                                 }
                             }
                             catch (Exception ex)
                             {
-                                AppendToLog($"Otomatik doğrulama hatası: {ex.Message}", true);
+                                AppendToLog(GetString("Str_Log_ValidationError", ex.Message), true);
                             }
                         }
                     }
                     else
                     {
-                        AppendToLog("Dosyada geçerli pointer bulunamadı.", true);
+                        AppendToLog(GetString("Str_Log_NoValidInFile"), true);
                     }
                 }
             }
             catch (Exception ex)
             {
-                AppendToLog($"Yükleme sırasında hata: {ex.Message}", true);
+                AppendToLog(GetString("Str_Log_LoadError", ex.Message), true);
             }
         }
 
@@ -895,6 +970,21 @@ namespace P5S_ceviri
                 chkEnableContextAnalysis.IsChecked = _appSettings.EnableContextAnalysis;
                 cmbDnnModel.SelectedIndex = (int)_appSettings.SelectedDnnModel;
 
+                // UI Dilini ayarla
+                foreach (ComboBoxItem item in cmbLanguage.Items)
+                {
+                    if (item.Tag != null && item.Tag.ToString() == _appSettings.Language)
+                    {
+                        cmbLanguage.SelectedItem = item;
+                        break;
+                    }
+                }
+                if (cmbLanguage.SelectedItem == null)
+                {
+                    cmbLanguage.SelectedIndex = 0;
+                }
+
+
                 // Olay dinleyicilerini ekle
                 cmbOcrLanguage.SelectionChanged += CmbOcrLanguage_SelectionChanged;
                 cmbTargetLanguage.SelectionChanged += CmbTargetLanguage_SelectionChanged;
@@ -917,14 +1007,14 @@ namespace P5S_ceviri
             try
             {
                 AdvancedTranslationService advancedService = null;
-                
+
                 // PerformanceOptimizedTranslationService event'lerini subscribe et
                 if (_translationService is PerformanceOptimizedTranslationService performanceService)
                 {
                     // StatsUpdated event'ini dinle
                     performanceService.StatsUpdated += OnTranslationStatsUpdated;
                     _logger.LogInformation("PerformanceOptimizedTranslationService StatsUpdated event'i aktif");
-                    
+
                     if (performanceService.BaseService is AdvancedTranslationService baseService)
                     {
                         advancedService = baseService;
@@ -934,13 +1024,13 @@ namespace P5S_ceviri
                 {
                     advancedService = directService;
                 }
-                
+
                 // AdvancedTranslationService event'lerini subscribe et
                 if (advancedService != null)
                 {
                     cmbTranslationService.ItemsSource = advancedService.AvailableStrategies;
                     cmbTranslationService.SelectedIndex = 0;
-                    
+
                     // TranslationCompleted ve TranslationProgress event'lerini dinle
                     advancedService.TranslationCompleted += OnTranslationCompleted;
                     advancedService.TranslationProgress += OnTranslationProgress;
@@ -1313,22 +1403,22 @@ namespace P5S_ceviri
                 {
                     advancedService.ClearTranslationContext();
                 }
-                
+
                 // Process seçildiğini logla (ToString() kullanarak)
                 _logger?.LogInformation($"Process seçildi: {pi}");
-                
+
                 // Process ikonu al (kullanım örneği)
                 var processIcon = _iconManager.ProcessIconuAl(pi.Process);
                 if (processIcon != null)
                 {
                     _logger.LogInformation($"Process ikonu alındı: {pi.ProcessName}");
                 }
-                
+
                 // Yeni process seçildiğinde tüm önbellekleri temizle
                 _memoryService.ClearAllCaches();
                 _pointerValidationService.ClearPointerCache();
                 _logger.LogInformation("Tüm önbellekler temizlendi");
-                
+
                 _appSettings.LastProcessName = pi.ProcessName;
                 _settingsManager.SaveSettings(_appSettings);
                 _translationHistory.Clear(); // Geçmiş çevirileri temizlemek için
@@ -1402,16 +1492,16 @@ namespace P5S_ceviri
                 _outputWindow.RegionSelected += (region) =>
                 {
                     _selectedOcrRegion = region;
-                    AppendToLog($"Yeni OCR bölgesi seçildi: {region}");
+                    AppendToLog(GetString("Str_Log_NewRegion", region));
                 };
                 _outputWindow.Show();
-                AppendToLog("Çeviri penceresi gösterildi.");
+                AppendToLog(GetString("Str_Log_OverlayShown"));
             }
             else
             {
                 _outputWindow.Close();
                 _outputWindow = null;
-                AppendToLog("Çeviri penceresi gizlendi.");
+                AppendToLog(GetString("Str_Log_OverlayHidden"));
             }
         }
 
@@ -1427,31 +1517,31 @@ namespace P5S_ceviri
         private async void StartManualTranslation(string addressText)
         {
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
-            if (pi == null) { AppendToLog("Lütfen önce listeden bir uygulama seçin.", true); return; }
-            if (!_memoryService.AttachToProcess(pi.Process.Id)) { AppendToLog("Uygulamaya bağlanılamadı. Yönetici olarak çalıştırmayı deneyin.", true); return; }
+            if (pi == null) { AppendToLog(GetString("Str_Log_SelectProcessFirst"), true); return; }
+            if (!_memoryService.AttachToProcess(pi.Process.Id)) { AppendToLog(GetString("Str_Log_AttachFailAdmin"), true); return; }
             try
             {
                 _manualAddress = addressText.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? new IntPtr(long.Parse(addressText.Substring(2), NumberStyles.HexNumber)) : new IntPtr(long.Parse(addressText, NumberStyles.HexNumber));
-                AppendToLog($"Gerçek zamanlı adres okuma başlatılıyor: {_manualAddress.ToInt64():X}");
+                AppendToLog(GetString("Str_Log_StartingManual", _manualAddress.ToInt64()));
                 _lastManualText = "";
                 _manualTranslationTimer.Start();
                 UpdateUIState();
             }
-            catch (Exception ex) { AppendToLog($"Adres analiz etme hatası: {ex.Message}", true); }
+            catch (Exception ex) { AppendToLog(GetString("Str_Log_AddressError", ex.Message), true); }
         }
 
         private async void StartContinuousTranslation()
         {
             StopAllTranslations();
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
-            if (pi == null) { AppendToLog("Lütfen bir uygulama seçin."); return; }
-            if (!_memoryService.AttachToProcess(pi.Process.Id)) { AppendToLog("Uygulamaya bağlanılamadı.", true); return; }
+            if (pi == null) { AppendToLog(GetString("Str_Log_SelectApp")); return; }
+            if (!_memoryService.AttachToProcess(pi.Process.Id)) { AppendToLog(GetString("Str_Log_AttachFail"), true); return; }
             var recipe = await _gameRecipeService.GetRecipeForProcessAsync(pi.Process);
             if (recipe == null) return;
             _dynamicTextAddress = _memoryService.ResolveAddressFromPath(pi.Process, recipe);
             if (_dynamicTextAddress == IntPtr.Zero)
             {
-                AppendToLog("Adres çözümlenemedi! Yol geçersiz veya oyun güncellenmiş olabilir.", true);
+                AppendToLog(GetString("Str_Log_AddressResolveFail"), true);
                 _isSetupMode = true;
                 UpdateUIState();
                 return;
@@ -1510,7 +1600,7 @@ namespace P5S_ceviri
             _lastReadText = "";
             _potentiallyStableOcrText = "";
             _isOcrTickBusy = false;
-            AppendToLog("Ekran çevirisi durduruldu.");
+            AppendToLog(GetString("Str_Log_OcrStopped"));
             UpdateUIState();
         }
 
@@ -1518,14 +1608,44 @@ namespace P5S_ceviri
         {
             var pi = cmbProcesses.SelectedItem as ProcessInfo;
             if (pi == null) return;
-            var prompt = new InputDialog("Lütfen Cheat Engine ile bulduğunuz kalıcı pointer yolunu girin:", "\"OyunAdi.exe\"+1A2B3C, 40, 1F8, 10");
+
+            string question = Application.Current.FindResource("Str_Msg_EnterPointerPath") as string;
+            // Hata önleyici: Eğer kaynak bulunamazsa varsayılan metni kullan
+            if (string.IsNullOrEmpty(question)) question = "Lütfen pointer yolunu girin:";
+
+        
+            var prompt = new InputDialog(question, "\"gamename.exe\"+1A2B3C, 40, 1F8, 10");
+
             if (prompt.ShowDialog() == true)
             {
                 var (baseModule, baseOffset, offsets) = ParsePointerPath(prompt.Answer);
-                if (string.IsNullOrWhiteSpace(baseModule) || offsets == null) { MessageBox.Show("Girdi formatı geçersiz.", "Hatalı Giriş", MessageBoxButton.OK, MessageBoxImage.Error); return; }
-                var newRecipe = new GameRecipe { ProcessName = pi.ProcessName, PathInfo = new PathInfo { BaseAddressModule = baseModule, BaseAddressOffset = baseOffset, PointerOffsets = offsets } };
+
+                if (string.IsNullOrWhiteSpace(baseModule) || offsets == null)
+                {
+                    // Hata mesajlarını dil dosyasından al
+                    string errorMsg = Application.Current.FindResource("Str_Msg_InvalidInputFormat") as string;
+                    string errorTitle = Application.Current.FindResource("Str_Title_Error") as string;
+
+                    MessageBox.Show(errorMsg ?? "Girdi formatı geçersiz.", errorTitle ?? "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                var newRecipe = new GameRecipe
+                {
+                    ProcessName = pi.ProcessName,
+                    PathInfo = new PathInfo
+                    {
+                        BaseAddressModule = baseModule,
+                        BaseAddressOffset = baseOffset,
+                        PointerOffsets = offsets
+                    }
+                };
+
                 _gameRecipeService.SaveOrUpdateRecipe(newRecipe);
-                AppendToLog($"'{pi.ProcessName}' için yeni çeviri yolu kaydedildi! Çeviri başlatılıyor...");
+                // Eğer GetString metodun yoksa aşağıdakini kullan:
+                string logFormat = Application.Current.FindResource("Str_Log_NewRecipe") as string;
+                AppendToLog(string.Format(logFormat ?? "'{0}' için yeni yol kaydedildi.", pi.ProcessName));
+
                 _isSetupMode = false;
                 UpdateUIState();
                 StartContinuousTranslation();
@@ -1541,12 +1661,12 @@ namespace P5S_ceviri
             cmbTargetLanguage.IsEnabled = !anyTranslationRunning;
             cmbOcrLanguage.IsEnabled = !anyTranslationRunning;
             chkEnableColorFilter.IsEnabled = !anyTranslationRunning;
-            if (_isContinuousTranslationRunning || _manualTranslationTimer.IsEnabled) { btnTranslate.Content = "RAM Çevirisini Durdur"; btnTranslate.IsEnabled = true; }
-            else if (_isSetupMode && processSelected) { btnTranslate.Content = "Yeni Çeviri Yolu Kur..."; btnTranslate.IsEnabled = !anyTranslationRunning; }
-            else { btnTranslate.Content = "RAM Çevirisini Başlat"; btnTranslate.IsEnabled = processSelected && !anyTranslationRunning; }
-            if (_isContinuousOcrRunning) { btnContinuousOcr.Content = "Ekran Çevirisini Durdur"; btnContinuousOcr.IsEnabled = true; }
-            else { btnContinuousOcr.Content = "Ekran Çevirisini Başlat"; btnContinuousOcr.IsEnabled = processSelected && !anyTranslationRunning; }
-            if (!processSelected) { txtAddress.Text = "Lütfen bir uygulama seçin."; }
+            if (_isContinuousTranslationRunning || _manualTranslationTimer.IsEnabled) { btnTranslate.Content = GetString("Str_Main_StopRam"); btnTranslate.IsEnabled = true; }
+            else if (_isSetupMode && processSelected) { btnTranslate.Content = GetString("Str_Main_SetupNewPath"); btnTranslate.IsEnabled = !anyTranslationRunning; }
+            else { btnTranslate.Content = GetString("Str_Main_StartRam"); btnTranslate.IsEnabled = processSelected && !anyTranslationRunning; }
+            if (_isContinuousOcrRunning) { btnContinuousOcr.Content = GetString("Str_Main_StopScreenOcr"); btnContinuousOcr.IsEnabled = true; }
+            else { btnContinuousOcr.Content = GetString("Str_Main_StartScreenOcr"); btnContinuousOcr.IsEnabled = processSelected && !anyTranslationRunning; }
+            if (!processSelected) { txtAddress.Text = GetString("Str_Main_SelectAppHint"); }
         }
 
         private (string Module, long Offset, List<int> Offsets) ParsePointerPath(string input)
@@ -1614,9 +1734,9 @@ namespace P5S_ceviri
         {
             try
             {
-                AppendToLog("Çalışan işlemler listeleniyor...");
+                AppendToLog(GetString("Str_Log_ListingProcesses"));
                 var selectedBefore = cmbProcesses.SelectedItem as ProcessInfo;
-                
+
                 // Eski ProcessInfo nesnelerini dispose et
                 if (cmbProcesses.ItemsSource is System.Collections.IEnumerable oldProcesses)
                 {
@@ -1628,7 +1748,7 @@ namespace P5S_ceviri
                         }
                     }
                 }
-                
+
                 _processService.RefreshProcesses();
                 var processes = _processService.GetProcesses()
                     .Where(p => p.MainWindowHandle != IntPtr.Zero && !string.IsNullOrEmpty(p.MainWindowTitle))
@@ -1638,13 +1758,13 @@ namespace P5S_ceviri
                 cmbProcesses.ItemsSource = processes;
                 var processToSelect = processes.FirstOrDefault(p => selectedBefore != null && p.Process.Id == selectedBefore.Process.Id) ?? processes.FirstOrDefault(p => !string.IsNullOrEmpty(_appSettings.LastProcessName) && p.ProcessName == _appSettings.LastProcessName);
                 if (processToSelect != null) { cmbProcesses.SelectedItem = processToSelect; }
-                
+
                 // IconManager kullanarak önbellek durumunu göster
                 _iconManager.OnbellekDurumuGoster();
-                
-                AppendToLog($"{processes.Count} adet pencereli uygulama bulundu.");
+
+                AppendToLog(GetString("Str_Log_ProcessesFound", processes.Count));
                 _logger?.LogInformation($"Process listesi yüklendi: {processes.Count} adet");
-                
+
                 // Process listesini logla (ilk 5 process)
                 foreach (var proc in processes.Take(5))
                 {
@@ -1653,19 +1773,64 @@ namespace P5S_ceviri
             }
             catch (Exception ex)
             {
-                AppendToLog($"İşlem listesi yüklenirken hata: {ex.Message}", true);
+                AppendToLog(GetString("Str_Log_ListError", ex.Message), true);
                 _logger?.LogError("Process listesi yüklenirken hata oluştu", ex);
             }
         }
 
-        private void AppendToLog(string message, bool isError = false)
+        private void AppendToLog(string key, params object[] args)
         {
-            if (!Dispatcher.CheckAccess()) { Dispatcher.Invoke(() => AppendToLog(message, isError)); return; }
-            string logType = isError ? "[HATA]" : "[BİLGİ]";
-            string timestampedMessage = $"{DateTime.Now:HH:mm:ss} {logType} - {message}";
-            txtOutput.Items.Add(timestampedMessage);
-            if (txtOutput.Items.Count > 0) { txtOutput.ScrollIntoView(txtOutput.Items[txtOutput.Items.Count - 1]); }
-            if (txtOutput.Items.Count > 500) { txtOutput.Items.RemoveAt(0); }
+            // Overload for cleaner syntax without isError
+            AppendToLog(key, false, args);
+        }
+
+        private void AppendToLog(string key, bool isError, params object[] args)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() => AppendToLog(key, isError, args));
+                return;
+            }
+
+            var entry = new LogEntry
+            {
+                Timestamp = DateTime.Now,
+                Key = key,
+                Args = args,
+                IsError = isError
+            };
+            entry.UpdateTranslation(); // Initial formatting
+
+            _logEntries.Add(entry);
+
+            if (_logEntries.Count > 500)
+            {
+                _logEntries.RemoveAt(0);
+            }
+
+            // Auto-scroll
+            if (txtOutput.Items.Count > 0)
+            {
+                txtOutput.ScrollIntoView(txtOutput.Items[txtOutput.Items.Count - 1]);
+            }
+        }
+
+        private string GetString(string key, params object[] args)
+        {
+            try
+            {
+                var resource = Application.Current.TryFindResource(key) as string;
+                if (string.IsNullOrEmpty(resource)) return key; // Return key as fallback
+                if (args != null && args.Length > 0)
+                {
+                    return string.Format(resource, args);
+                }
+                return resource;
+            }
+            catch
+            {
+                return key;
+            }
         }
 
         protected virtual void OnTranslatedTextChanged(string newText) => TranslatedTextChanged?.Invoke(newText);
@@ -1718,13 +1883,45 @@ namespace P5S_ceviri
                     _appSettings.Theme = themeString;
                     _settingsManager.SaveSettings(_appSettings);
                     // Log kaydet
-                    AppendToLog($"Tema değiştirildi: {selectedItem.Content}");
+                    AppendToLog(GetString("Str_Log_ThemeChanged", selectedItem.Content));
                 }
             }
             catch (Exception ex)
             {
                 _logger?.LogError("Tema değiştirme sırasında hata oluştu.", ex);
-                AppendToLog("Tema değiştirme sırasında hata oluştu.", true);
+                AppendToLog(GetString("Str_Log_ThemeError"), true);
+            }
+        }
+
+        private void CmbLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            try
+            {
+                if (cmbLanguage.SelectedItem is ComboBoxItem selectedItem)
+                {
+                    string langCode = selectedItem.Tag.ToString();
+                    if (_appSettings.Language != langCode)
+                    {
+                        _appSettings.Language = langCode;
+                        _settingsManager.SaveSettings(_appSettings);
+                        App.ChangeLanguage(langCode);
+
+                        // Refresh existing logs
+                        foreach (var log in _logEntries)
+                        {
+                            log.UpdateTranslation();
+                        }
+
+                        // Update the UI to reflect the new language
+                        UpdateUIState();
+
+                        AppendToLog("Str_Log_LanguageChanged", selectedItem.Content);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError("Dil değiştirme sırasında hata oluştu.", ex);
             }
         }
 
@@ -1740,20 +1937,20 @@ namespace P5S_ceviri
                     else if (engineName == "Tesseract OCR")
                         _appSettings.OcrEngine = OcrEngineType.Tesseract;
                     _settingsManager.SaveSettings(_appSettings);
-                    AppendToLog($"OCR motoru değiştirildi: {engineName}");
+                    AppendToLog(GetString("Str_Log_OcrEngineChanged", engineName));
 
                     // OCR motoru değiştiğinde metin algılama yöntemini güncelle
                     UpdateTextDetectionMethodOptions();
 
                     // OCR servislerini test et
-                    AppendToLog("OCR servisleri test ediliyor...");
+                    AppendToLog(GetString("Str_Log_TestingOcr"));
                     TestWindowsOcrService();
                 }
             }
             catch (Exception ex)
             {
                 _logger?.LogError("OCR motoru değiştirme sırasında hata oluştu.", ex);
-                AppendToLog("OCR motoru değiştirme sırasında hata oluştu.", true);
+                AppendToLog(GetString("Str_Log_OcrChangeError"), true);
             }
         }
 
@@ -1764,92 +1961,92 @@ namespace P5S_ceviri
                 var pi = cmbProcesses.SelectedItem as ProcessInfo;
                 if (pi == null || pi.Process.HasExited)
                 {
-                    AppendToLog("Test için geçerli bir işlem seçin.", true);
+                    AppendToLog(GetString("Str_Log_SelectProcessTest"), true);
                     return;
                 }
 
                 IntPtr handle = pi.Process.MainWindowHandle;
                 if (handle == IntPtr.Zero)
                 {
-                    AppendToLog("İşlem penceresi bulunamadı.", true);
+                    AppendToLog(GetString("Str_Log_WindowNotFound"), true);
                     return;
                 }
 
-                AppendToLog("OCR servisleri test ediliyor...");
+                AppendToLog(GetString("Str_Log_TestingOcr"));
 
                 // Ekran görüntüsü al
                 using (var screenshot = await Task.Run(() => _ocrService.CaptureWindow(handle)))
                 {
                     if (screenshot == null)
                     {
-                        AppendToLog("Ekran görüntüsü alınamadı.", true);
+                        AppendToLog(GetString("Str_Log_ScreenshotFailed"), true);
                         return;
                     }
 
-                    AppendToLog($"Ekran görüntüsü alındı: {screenshot.Width}x{screenshot.Height}");
+                    AppendToLog(GetString("Str_Log_ScreenshotTaken", screenshot.Width, screenshot.Height));
 
                     // 1. WindowsOcrService ile metin tanıma
                     try
                     {
-                        AppendToLog("WindowsOcrService test ediliyor...");
+                        AppendToLog(GetString("Str_Log_TestingWindowsOcr"));
                         var windowsOcrText = await _windowsOcrService.GetTextFromImage(screenshot, _appSettings.OcrLanguage);
                         if (!string.IsNullOrWhiteSpace(windowsOcrText))
                         {
-                            AppendToLog($"WindowsOcrService başarılı! Tanınan metin: {windowsOcrText}");
+                            AppendToLog(GetString("Str_Log_WindowsOcrSuccess", windowsOcrText));
                         }
                         else
                         {
-                            AppendToLog("WindowsOcrService metin tanıyamadı.", true);
+                            AppendToLog(GetString("Str_Log_WindowsOcrFail"), true);
                         }
                     }
                     catch (Exception ex)
                     {
-                        AppendToLog($"WindowsOcrService hatası: {ex.Message}", true);
+                        AppendToLog(GetString("Str_Log_WindowsOcrError", ex.Message), true);
                     }
 
                     // 2. IOcrService ile metin tanıma
                     try
                     {
-                        AppendToLog("IOcrService test ediliyor...");
+                        AppendToLog(GetString("Str_Log_TestingIOcr"));
                         var iocrText = await _ocrService.GetTextFromImage(screenshot, _appSettings.OcrLanguage);
                         if (!string.IsNullOrWhiteSpace(iocrText))
                         {
-                            AppendToLog($"IOcrService başarılı! Tanınan metin: {iocrText}");
+                            AppendToLog(GetString("Str_Log_IOcrSuccess", iocrText));
                         }
                         else
                         {
-                            AppendToLog("IOcrService metin tanıyamadı.", true);
+                            AppendToLog(GetString("Str_Log_IOcrFail"), true);
                         }
                     }
                     catch (Exception ex)
                     {
-                        AppendToLog($"IOcrService hatası: {ex.Message}", true);
+                        AppendToLog(GetString("Str_Log_IOcrError", ex.Message), true);
                     }
 
                     // 3. OcrRegionProcessor ile test
                     try
                     {
-                        AppendToLog("OcrRegionProcessor test ediliyor...");
+                        AppendToLog(GetString("Str_Log_TestingRegion"));
                         var regionResults = await _ocrRegionProcessor.ProcessChangedRegionsAsync(screenshot);
                         var regionText = string.Join(" ", regionResults.Select(r => r.TranslatedText).Where(t => !string.IsNullOrWhiteSpace(t)));
                         if (!string.IsNullOrWhiteSpace(regionText))
                         {
-                            AppendToLog($"OcrRegionProcessor başarılı! Tanınan metin: {regionText}");
+                            AppendToLog(GetString("Str_Log_RegionSuccess", regionText));
                         }
                         else
                         {
-                            AppendToLog($"OcrRegionProcessor {regionResults.Count} bölge buldu ama metin yok.", true);
+                            AppendToLog(GetString("Str_Log_RegionFail", regionResults.Count), true);
                         }
                     }
                     catch (Exception ex)
                     {
-                        AppendToLog($"OcrRegionProcessor hatası: {ex.Message}", true);
+                        AppendToLog(GetString("Str_Log_RegionError", ex.Message), true);
                     }
                 }
             }
             catch (Exception ex)
             {
-                AppendToLog($"OCR test hatası: {ex.Message}", true);
+                AppendToLog(GetString("Str_Log_OcrTestError", ex.Message), true);
                 _logger.LogError($"OCR test hatası: {ex.Message}", ex);
             }
         }
@@ -1865,20 +2062,20 @@ namespace P5S_ceviri
                     {
                         _appSettings.TextDetectionMethod = method;
                         _settingsManager.SaveSettings(_appSettings);
-                        AppendToLog($"Metin algılama yöntemi değiştirildi: {selectedItem.Content}");
+                        AppendToLog(GetString("Str_Log_MethodChanged", selectedItem.Content));
 
                         // Metin algılama yöntemi değişiklikleri için özel mesajlar
                         if (method == TextDetectionMethod.East)
                         {
-                            AppendToLog("EAST modeli yüksek doğruluklu metin algılama sağlar.");
+                            AppendToLog(GetString("Str_Log_EastInfo"));
                         }
                         else if (method == TextDetectionMethod.OpenCV)
                         {
-                            AppendToLog("OpenCV kontur algılama genel metinler için uygundur.");
+                            AppendToLog(GetString("Str_Log_OpenCvInfo"));
                         }
                         else
                         {
-                            AppendToLog("Tam ekran modunda tüm metinler taranacaktır.");
+                            AppendToLog(GetString("Str_Log_NoneInfo"));
                         }
                     }
                 }
@@ -1886,7 +2083,7 @@ namespace P5S_ceviri
             catch (Exception ex)
             {
                 _logger?.LogError("Metin algılama yöntemi değiştirme sırasında hata oluştu.", ex);
-                AppendToLog("Metin algılama yöntemi değiştirme sırasında hata oluştu.", true);
+                AppendToLog(GetString("Str_Log_MethodError"), true);
             }
         }
 
@@ -1907,7 +2104,7 @@ namespace P5S_ceviri
                 {
                     _appSettings.TextDetectionMethod = TextDetectionMethod.OpenCV;
                     cmbTextDetectionMethod.SelectedIndex = (int)TextDetectionMethod.OpenCV;
-                    AppendToLog("Windows OCR ile EAST modeli uyumlu değil. OpenCV kontur algılamaya geçildi.");
+                    AppendToLog(GetString("Str_Log_EastIncompatible"));
                 }
             }
         }
@@ -1915,19 +2112,19 @@ namespace P5S_ceviri
         private void CmbOcrLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (cmbOcrLanguage.SelectedItem is string selectedLang)
-        {
-            _appSettings.OcrLanguage = selectedLang;
-            _settingsManager.SaveSettings(_appSettings);
-        }
+            {
+                _appSettings.OcrLanguage = selectedLang;
+                _settingsManager.SaveSettings(_appSettings);
+            }
         }
 
         private void CmbTargetLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (cmbTargetLanguage.SelectedItem is string selectedLang)
-        {
-            _appSettings.TargetLanguage = selectedLang;
-            _settingsManager.SaveSettings(_appSettings);
-        }
+            {
+                _appSettings.TargetLanguage = selectedLang;
+                _settingsManager.SaveSettings(_appSettings);
+            }
         }
 
         private void ChkEnableColorFilter_Click(object sender, RoutedEventArgs e)
@@ -1964,56 +2161,56 @@ namespace P5S_ceviri
         {
             _appSettings.EnableAnomalyDetection = chkEnableAnomalyDetection.IsChecked ?? true;
             _settingsManager.SaveSettings(_appSettings);
-            AppendToLog("Anomali tespiti etkinleştirildi");
+            AppendToLog(GetString("Str_Log_AnomalyEnabled"));
         }
 
         private void chkEnableAnomalyDetection_Unchecked(object sender, RoutedEventArgs e)
         {
             _appSettings.EnableAnomalyDetection = chkEnableAnomalyDetection.IsChecked ?? false;
             _settingsManager.SaveSettings(_appSettings);
-            AppendToLog("Anomali tespiti devre dışı bırakıldı");
+            AppendToLog(GetString("Str_Log_AnomalyDisabled"));
         }
 
         private void chkEnableMachineLearning_Checked(object sender, RoutedEventArgs e)
         {
             _appSettings.EnableMachineLearning = chkEnableMachineLearning.IsChecked ?? true;
             _settingsManager.SaveSettings(_appSettings);
-            AppendToLog("Makine öğrenmesi etkinleştirildi");
+            AppendToLog(GetString("Str_Log_MlEnabled"));
         }
 
         private void chkEnableMachineLearning_Unchecked(object sender, RoutedEventArgs e)
         {
             _appSettings.EnableMachineLearning = chkEnableMachineLearning.IsChecked ?? false;
             _settingsManager.SaveSettings(_appSettings);
-            AppendToLog("Makine öğrenmesi devre dışı bırakıldı");
+            AppendToLog(GetString("Str_Log_MlDisabled"));
         }
 
         private void chkEnableTextCorrection_Checked(object sender, RoutedEventArgs e)
         {
             _appSettings.EnableTextCorrection = chkEnableTextCorrection.IsChecked ?? true;
             _settingsManager.SaveSettings(_appSettings);
-            AppendToLog("Metin düzeltme etkinleştirildi");
+            AppendToLog(GetString("Str_Log_CorrectionEnabled"));
         }
 
         private void chkEnableTextCorrection_Unchecked(object sender, RoutedEventArgs e)
         {
             _appSettings.EnableTextCorrection = chkEnableTextCorrection.IsChecked ?? false;
             _settingsManager.SaveSettings(_appSettings);
-            AppendToLog("Metin düzeltme devre dışı bırakıldı");
+            AppendToLog(GetString("Str_Log_CorrectionDisabled"));
         }
 
         private void chkEnableContextAnalysis_Checked(object sender, RoutedEventArgs e)
         {
             _appSettings.EnableContextAnalysis = chkEnableContextAnalysis.IsChecked ?? true;
             _settingsManager.SaveSettings(_appSettings);
-            AppendToLog("Bağlam analizi etkinleştirildi");
+            AppendToLog(GetString("Str_Log_ContextEnabled"));
         }
 
         private void chkEnableContextAnalysis_Unchecked(object sender, RoutedEventArgs e)
         {
             _appSettings.EnableContextAnalysis = chkEnableContextAnalysis.IsChecked ?? false;
             _settingsManager.SaveSettings(_appSettings);
-            AppendToLog("Bağlam analizi devre dışı bırakıldı");
+            AppendToLog(GetString("Str_Log_ContextDisabled"));
         }
 
         private void CmbDnnModel_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2027,22 +2224,22 @@ namespace P5S_ceviri
                     {
                         _appSettings.SelectedDnnModel = model;
                         _settingsManager.SaveSettings(_appSettings);
-                        AppendToLog($"DNN modeli değiştirildi: {selectedItem.Content}");
+                        AppendToLog(GetString("Str_Log_DnnChanged", selectedItem.Content));
 
                         // Model özelliklerini açıkla
                         switch (model)
                         {
                             case DnnModelType.EAST:
-                                AppendToLog("EAST: Yüksek doğruluklu metin tespiti");
+                                AppendToLog(GetString("Str_Log_EastDesc"));
                                 break;
                             case DnnModelType.CRNN:
-                                AppendToLog("CRNN: Gelişmiş metin tanıma");
+                                AppendToLog(GetString("Str_Log_CrnnDesc"));
                                 break;
                             case DnnModelType.PaddleOCR:
-                                AppendToLog("PaddleOCR: Çok dilli OCR desteği");
+                                AppendToLog(GetString("Str_Log_PaddleDesc"));
                                 break;
                             case DnnModelType.Custom:
-                                AppendToLog("Custom: Özel DNN modeli");
+                                AppendToLog(GetString("Str_Log_CustomDesc"));
                                 break;
                         }
                     }
@@ -2051,7 +2248,7 @@ namespace P5S_ceviri
             catch (Exception ex)
             {
                 _logger?.LogError("DNN modeli değiştirme sırasında hata oluştu.", ex);
-                AppendToLog("DNN modeli değiştirme sırasında hata oluştu.", true);
+                AppendToLog(GetString("Str_Log_DnnError"), true);
             }
         }
         #endregion
@@ -2063,19 +2260,33 @@ namespace P5S_ceviri
             try
             {
                 var stats = _mlTextProcessor.GetStatistics();
-                var message = $"ML İstatistikleri:\n\n" +
-                             $"İşlenen Toplam Metin: {stats.TotalTextsProcessed}\n" +
-                             $"Öğrenilen Benzersiz Kelime: {stats.UniqueWordsLearned}\n" +
-                             $"Yüklenen DNN Modeli: {stats.DnnModelsLoaded}\n" +
-                             $"Ortalama Güven Skoru: %{stats.AverageConfidence * 100:F1}";
+                // To keep it simple and not break non-string logic, I will just update the log call.
+                // But ideally the MessageBox content should also be localized. 
+                // For this task scope (localizing logs and missing buttons), I focus on AppendToLog.
+                // However, user said "loglar türkce geliyor", implying user-facing messages.
 
-                MessageBox.Show(message, "ML İstatistikleri", MessageBoxButton.OK, MessageBoxImage.Information);
-                AppendToLog($"ML istatistikleri görüntülendi: {stats.TotalTextsProcessed} metin işlendi");
+                var message = $"ML Statistics:\n\n" +
+                             $"Total Texts Processed: {stats.TotalTextsProcessed}\n" +
+                             $"Unique Words Learned: {stats.UniqueWordsLearned}\n" +
+                             $"DNN Models Loaded: {stats.DnnModelsLoaded}\n" +
+                             $"Average Confidence Score: %{stats.AverageConfidence * 100:F1}";
+
+                if (_appSettings.Language == "tr")
+                {
+                    message = $"ML İstatistikleri:\n\n" +
+                            $"İşlenen Toplam Metin: {stats.TotalTextsProcessed}\n" +
+                            $"Öğrenilen Benzersiz Kelime: {stats.UniqueWordsLearned}\n" +
+                            $"Yüklenen DNN Modeli: {stats.DnnModelsLoaded}\n" +
+                            $"Ortalama Güven Skoru: %{stats.AverageConfidence * 100:F1}";
+                }
+
+                MessageBox.Show(message, "ML Statistics", MessageBoxButton.OK, MessageBoxImage.Information);
+                AppendToLog(GetString("Str_Log_MlStats", stats.TotalTextsProcessed));
             }
             catch (Exception ex)
             {
                 _logger?.LogError("ML istatistikleri alınırken hata oluştu.", ex);
-                AppendToLog("ML istatistikleri alınırken hata oluştu.", true);
+                AppendToLog(GetString("Str_Log_MlStatsError"), true);
             }
         }
 
@@ -2084,18 +2295,26 @@ namespace P5S_ceviri
             try
             {
                 var stats = _anomalyDetector.GetStatistics();
-                var message = $"Anomali İstatistikleri:\n\n" +
+                var message = $"Anomaly Statistics:\n\n" +
+                             $"Total Texts Analyzed: {stats.TotalTextsAnalyzed}\n" +
+                             $"Average Text Length: {stats.AverageTextLength:F1} characters\n" +
+                             $"Unique Words: {stats.UniqueWords}";
+
+                if (_appSettings.Language == "tr")
+                {
+                    message = $"Anomali İstatistikleri:\n\n" +
                              $"Analiz Edilen Toplam Metin: {stats.TotalTextsAnalyzed}\n" +
                              $"Ortalama Metin Uzunluğu: {stats.AverageTextLength:F1} karakter\n" +
                              $"Benzersiz Kelime Sayısı: {stats.UniqueWords}";
+                }
 
-                MessageBox.Show(message, "Anomali İstatistikleri", MessageBoxButton.OK, MessageBoxImage.Information);
-                AppendToLog($"Anomali istatistikleri görüntülendi: {stats.TotalTextsAnalyzed} metin analiz edildi");
+                MessageBox.Show(message, "Anomaly Statistics", MessageBoxButton.OK, MessageBoxImage.Information);
+                AppendToLog(GetString("Str_Log_AnomalyStats", stats.TotalTextsAnalyzed));
             }
             catch (Exception ex)
             {
                 _logger?.LogError("Anomali istatistikleri alınırken hata oluştu.", ex);
-                AppendToLog("Anomali istatistikleri alınırken hata oluştu.", true);
+                AppendToLog(GetString("Str_Log_AnomalyStatsError"), true);
             }
         }
 
@@ -2103,20 +2322,29 @@ namespace P5S_ceviri
         {
             try
             {
-                var result = MessageBox.Show("ML geçmişini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.",
-                                           "ML Geçmişini Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                var message = "Are you sure you want to clear ML history?\n\nThis action cannot be undone.";
+                var title = "Clear ML History";
+                if (_appSettings.Language == "tr")
+                {
+                    message = "ML geçmişini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.";
+                    title = "ML Geçmişini Temizle";
+                }
+
+                var result = MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question);
 
                 if (result == MessageBoxResult.Yes)
                 {
                     _mlTextProcessor.ClearHistory();
-                    AppendToLog("ML geçmişi başarıyla temizlendi");
-                    MessageBox.Show("ML geçmişi başarıyla temizlendi.", "Başarılı", MessageBoxButton.OK, MessageBoxImage.Information);
+                    AppendToLog(GetString("Str_Log_MlCleared"));
+                    var successMsg = "ML history successfully cleared.";
+                    if (_appSettings.Language == "tr") successMsg = "ML geçmişi başarıyla temizlendi.";
+                    MessageBox.Show(successMsg, "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
             catch (Exception ex)
             {
                 _logger?.LogError("ML geçmişi temizlenirken hata oluştu.", ex);
-                AppendToLog("ML geçmişi temizlenirken hata oluştu.", true);
+                AppendToLog(GetString("Str_Log_MlClearError"), true);
             }
         }
 
@@ -2124,20 +2352,29 @@ namespace P5S_ceviri
         {
             try
             {
-                var result = MessageBox.Show("Anomali tespit geçmişini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.",
-                                           "Anomali Geçmişini Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                var message = "Are you sure you want to clear anomaly detection history?\n\nThis action cannot be undone.";
+                var title = "Clear Anomaly History";
+                if (_appSettings.Language == "tr")
+                {
+                    message = "Anomali tespit geçmişini temizlemek istediğinizden emin misiniz?\n\nBu işlem geri alınamaz.";
+                    title = "Anomali Geçmişini Temizle";
+                }
+
+                var result = MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question);
 
                 if (result == MessageBoxResult.Yes)
                 {
                     _anomalyDetector.ClearHistory();
-                    AppendToLog("Anomali tespit geçmişi başarıyla temizlendi");
-                    MessageBox.Show("Anomali tespit geçmişi başarıyla temizlendi.", "Başarılı", MessageBoxButton.OK, MessageBoxImage.Information);
+                    AppendToLog(GetString("Str_Log_AnomalyCleared"));
+                    var successMsg = "Anomaly detection history successfully cleared.";
+                    if (_appSettings.Language == "tr") successMsg = "Anomali tespit geçmişi başarıyla temizlendi.";
+                    MessageBox.Show(successMsg, "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
             catch (Exception ex)
             {
                 _logger?.LogError("Anomali geçmişi temizlenirken hata oluştu.", ex);
-                AppendToLog("Anomali geçmişi temizlenirken hata oluştu.", true);
+                AppendToLog(GetString("Str_Log_AnomalyClearError"), true);
             }
         }
 
@@ -2191,19 +2428,33 @@ namespace P5S_ceviri
         }
 
         // Kullanılmayan metodları aktif hale getiren yeni handler'lar
-        
+
         private void ClearAllCaches_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                var result = MessageBox.Show("Tüm önbellekleri temizlemek istediğinizden emin misiniz?\n\n" +
+                var message = "Are you sure you want to clear all caches?\n\n" +
+                    "This includes:\n" +
+                    "- Translation cache\n" +
+                    "- Memory cache\n" +
+                    "- Game recipe cache\n" +
+                    "- Pointer cache\n" +
+                    "- Icon cache";
+                var title = "Clear All Caches";
+
+                if (_appSettings.Language == "tr")
+                {
+                    message = "Tüm önbellekleri temizlemek istediğinizden emin misiniz?\n\n" +
                     "Bu şunları içerir:\n" +
                     "- Çeviri önbelleği\n" +
                     "- Bellek önbelleği\n" +
                     "- Oyun önerileri önbelleği\n" +
                     "- Pointer önbelleği\n" +
-                    "- İkon önbelleği",
-                    "Tüm Önbellekleri Temizle", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                    "- İkon önbelleği";
+                    title = "Tüm Önbellekleri Temizle";
+                }
+
+                var result = MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question);
 
                 if (result == MessageBoxResult.Yes)
                 {
@@ -2235,15 +2486,17 @@ namespace P5S_ceviri
                     LogoHelper.ClearIconCache();
                     _logger.LogInformation("Icon önbelleği temizlendi");
 
-                    AppendToLog("✅ Tüm önbellekler başarıyla temizlendi");
-                    MessageBox.Show("Tüm önbellekler başarıyla temizlendi.", "Başarılı", 
-                        MessageBoxButton.OK, MessageBoxImage.Information);
+                    AppendToLog(GetString("Str_Log_CachesCleared"));
+
+                    var successMsg = "All caches successfully cleared.";
+                    if (_appSettings.Language == "tr") successMsg = "Tüm önbellekler başarıyla temizlendi.";
+                    MessageBox.Show(successMsg, "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError("Önbellekler temizlenirken hata", ex);
-                MessageBox.Show($"Önbellekler temizlenirken hata: {ex.Message}", "Hata",
+                MessageBox.Show($"Error clearing caches: {ex.Message}", "Error",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -2253,14 +2506,15 @@ namespace P5S_ceviri
             try
             {
                 _gameRecipeService?.ReloadRecipes();
-                AppendToLog("✅ Oyun önerileri yeniden yüklendi");
-                MessageBox.Show("Oyun önerileri başarıyla yeniden yüklendi.", "Başarılı",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                AppendToLog(GetString("Str_Log_RecipesReloaded"));
+                var msg = "Game recipes successfully reloaded.";
+                if (_appSettings.Language == "tr") msg = "Oyun önerileri başarıyla yeniden yüklendi.";
+                MessageBox.Show(msg, "Success", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
                 _logger.LogError("Öneriler yüklenirken hata", ex);
-                MessageBox.Show($"Öneriler yüklenirken hata: {ex.Message}", "Hata",
+                MessageBox.Show($"Error reloading recipes: {ex.Message}", "Error",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -2269,27 +2523,40 @@ namespace P5S_ceviri
         {
             try
             {
-                var result = MessageBox.Show("Tüm ayarları varsayılan değerlere döndürmek istediğinizden emin misiniz?\n\n" +
+                var message = "Are you sure you want to reset all settings to default values?\n\n" +
+                    "This will:\n" +
+                    "- Reset all OCR settings\n" +
+                    "- Reset Hotkeys\n" +
+                    "- Reset Theme, language and other settings\n\n" +
+                    "This action CANNOT be undone!";
+                var title = "Reset Settings";
+
+                if (_appSettings.Language == "tr")
+                {
+                    message = "Tüm ayarları varsayılan değerlere döndürmek istediğinizden emin misiniz?\n\n" +
                     "Bu işlem:\n" +
                     "- Tüm OCR ayarlarını sıfırlar\n" +
                     "- Hotkey'leri varsayılana döndürür\n" +
                     "- Tema, dil ve diğer tüm ayarları sıfırlar\n\n" +
-                    "Bu işlem GERİ ALINAMAZ!",
-                    "Ayarları Sıfırla", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                    "Bu işlem GERİ ALINAMAZ!";
+                    title = "Ayarları Sıfırla";
+                }
+
+                var result = MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning);
 
                 if (result == MessageBoxResult.Yes)
                 {
                     _appSettings.ResetToDefaults();
-                    AppendToLog("✅ Ayarlar varsayılan değerlere döndürüldü");
-                    MessageBox.Show("Ayarlar başarıyla sıfırlandı ve kaydedildi.\n\n" +
-                        "Değişikliklerin tam olarak uygulanması için uygulamayı yeniden başlatın.",
-                        "Başarılı", MessageBoxButton.OK, MessageBoxImage.Information);
+                    AppendToLog(GetString("Str_Log_SettingsReset"));
+                    var msg = "Settings successfully reset and saved.\n\nRestart application for changes to take full effect.";
+                    if (_appSettings.Language == "tr") msg = "Ayarlar başarıyla sıfırlandı ve kaydedildi.\n\nDeğişikliklerin tam olarak uygulanması için uygulamayı yeniden başlatın.";
+                    MessageBox.Show(msg, "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError("Ayarlar sıfırlanırken hata", ex);
-                MessageBox.Show($"Ayarlar sıfırlanırken hata: {ex.Message}", "Hata",
+                MessageBox.Show($"Error resetting settings: {ex.Message}", "Error",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -2300,14 +2567,15 @@ namespace P5S_ceviri
             {
                 _appSettings.SaveSettingsToDisk();
                 _settingsManager.SaveSettings(_appSettings);
-                AppendToLog("✅ Ayarlar diske kaydedildi");
-                MessageBox.Show("Ayarlar başarıyla kaydedildi.", "Başarılı",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                AppendToLog(GetString("Str_Log_SettingsSaved"));
+                var msg = "Settings successfully saved.";
+                if (_appSettings.Language == "tr") msg = "Ayarlar başarıyla kaydedildi.";
+                MessageBox.Show(msg, "Success", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
                 _logger.LogError("Ayarlar kaydedilirken hata", ex);
-                MessageBox.Show($"Ayarlar kaydedilirken hata: {ex.Message}", "Hata",
+                MessageBox.Show($"Error saving settings: {ex.Message}", "Error",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -2366,21 +2634,21 @@ namespace P5S_ceviri
                 // Örnek kullanım: 0x1000 adresinden 100 byte oku
                 IntPtr address1 = new IntPtr(0x1000);
                 byte[] data1 = _memoryService.ReadBytesCached(address1, 100);
-                
+
                 if (data1.Length > 0)
                 {
                     // ByteArrayComparer kullanarak benzerlik kontrolü
                     var comparer = new PointerScanner.ByteArrayComparer();
-                    
+
                     // Aynı adresten 100ms sonra tekrar oku
                     System.Threading.Thread.Sleep(100);
                     byte[] data2 = _memoryService.ReadBytesCached(address1, 100);
-                    
+
                     if (data2.Length > 0)
                     {
                         double similarity = comparer.CalculateSimilarity(data1, data2);
                         AppendToLog($"Bellek benzerliği: {similarity:P} (0x{address1.ToInt64():X})");
-                        
+
                         if (similarity >= 0.95)
                             AppendToLog("✅ Bellek kararlı görünüyor");
                         else if (similarity >= 0.70)
@@ -2412,14 +2680,14 @@ namespace P5S_ceviri
                 {
                     // PointerValidationService önbelleğini temizle
                     _pointerValidationService.ClearPointerCache();
-                    
+
                     // MemoryService önbelleğini temizle
                     _memoryService.ClearAllCaches();
-                    
+
                     AppendToLog("Tüm pointer önbellekleri temizlendi:");
                     AppendToLog("  • PointerValidationService önbelleği temizlendi");
                     AppendToLog("  • MemoryService adres ve bellek önbelleği temizlendi");
-                    
+
                     _logger.LogInformation("Kullanıcı tüm pointer önbelleklerini temizledi.");
                 }
             }
@@ -2436,9 +2704,9 @@ namespace P5S_ceviri
             {
                 // PointerValidationService önbelleği
                 var registeredPaths = _pointerValidationService.GetRegisteredPointerPaths();
-                
+
                 AppendToLog($"=== PointerValidationService Önbelleği ({registeredPaths.Count}) ===");
-                
+
                 foreach (var path in registeredPaths.Take(10))
                 {
                     AppendToLog($"  • {path}");

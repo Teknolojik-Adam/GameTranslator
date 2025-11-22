@@ -14,5 +14,5 @@
              KeyDown="HotkeyTextBox_KeyDown"
              TextAlignment="Center"
              VerticalContentAlignment="Center"
-             ToolTip="Bu alana tıklayıp yeni bir kısayol atamak için tuşlara basın."/>
+             ToolTip="{DynamicResource Str_Hotkey_Tooltip}"/>
 </UserControl>
