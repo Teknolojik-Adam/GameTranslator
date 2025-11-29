@@ -28,6 +28,9 @@ namespace P5S_ceviri
         private readonly Dictionary<OcrEngineType, IOcrEngine> _ocrEngines;
         private readonly Net _eastNet;
         private const string EastModelPath = "frozen_east_text_detection.pb";
+        // Folder-based SavedModel paths
+        private const string CrnnModelPath = "crnn/saved_model.pb";
+        private const string PaddleModelPath = "paddleocr/saved_model.pb";
         private bool _disposed = false;
 
         public OcrService(ILogger logger, AppSettings appSettings)
@@ -39,6 +42,34 @@ namespace P5S_ceviri
                 { OcrEngineType.Tesseract, new TesseractOcrEngine(logger, appSettings) },
                 { OcrEngineType.WindowsOcr, new WindowsOcrEngine(logger) }
             };
+
+            // Initialize CRNN Engine if model exists
+            if (File.Exists(CrnnModelPath))
+            {
+                try
+                {
+                    _ocrEngines.Add(OcrEngineType.CRNN, new CrnnOcrEngine(logger, CrnnModelPath));
+                    _logger.LogInformation("CRNN OCR model successfully loaded.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError("Failed to initialize CRNN Engine", ex);
+                }
+            }
+
+            // Initialize PaddleOCR Engine if model exists
+            if (File.Exists(PaddleModelPath))
+            {
+                try
+                {
+                    _ocrEngines.Add(OcrEngineType.PaddleOCR, new PaddleOcrEngine(logger, PaddleModelPath));
+                    _logger.LogInformation("PaddleOCR model successfully loaded.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError("Failed to initialize PaddleOCR Engine", ex);
+                }
+            }
 
             if (File.Exists(EastModelPath))
             {

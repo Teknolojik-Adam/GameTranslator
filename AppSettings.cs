@@ -10,7 +10,9 @@ namespace P5S_ceviri
     public enum OcrEngineType
     {
         Tesseract,
-        WindowsOcr
+        WindowsOcr,
+        CRNN,
+        PaddleOCR
     }
 
     public enum TextDetectionMethod
