@@ -18,6 +18,10 @@ Ekran Çevirisini Başlat ile OCR tabanlı çeviri yapabilirsiniz.
 
 Çeviri penceresini açmak/gizlemek için ilgili butonu kullanın. Notlar • Bazı oyunlarda RAM adresleri güncellenirse, yeniden pointer yolu girmeniz gerekebilir. • OCR kalitesi, oyunun fontuna ve arka planına göre değişiklik gösterebilir. • Crunchyroll gibi anime veya film izleme platformlarında yaklaşık %90 başarı oranı sağlar.
 
+Not: GameTranslator, kaynağın ne olduğuna bakmaz; ekranda gördüğü pencereyi çevirir. Konsol (PS/Xbox) oyunlarını Remote Play ile yansıtarak veya Web Kameranızı TV'ye doğrultup kamera penceresini seçerek de oynayabilirsiniz. Mantık basittir: Bilgisayar ekranında görünen her şey çevrilir!
+
+Biliyor muydunuz? Telefonunuzu bir Çeviri Kamerasına dönüştürebilirsiniz! Eğer Capture Card'ınız yoksa, telefonunuza bir "IP Webcam" uygulaması kurun ve kamerayı TV'nize çevirin. GameTranslator, telefonunuzdan gelen görüntüyü okuyarak PS5, Xbox veya Switch oyunlarınızı anlık olarak Türkçe'ye çevirebilir.
+
 Akiş Şemasi
 
 
