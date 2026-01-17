@@ -1,3 +1,6 @@
+GameTranslator: Linux Vision çikti linux kullanicilarina özel  program
+https://teknolojikadam.itch.io/gametranslatorlinux
+
 sadece bir tuşa basıp ekrandaki yazıları çevirmek, basit ve kafa karıştırmayan bir çözüm mü arıyorsun? O zaman senin için hazırladığımız YENİ GameTranslator Tess'e bir göz at!
 Link: https://teknolojikadam.itch.io/gametranslator-tess
 
