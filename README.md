@@ -1,3 +1,4 @@
+<img width="2752" height="1535" alt="IMG_20260131_212847" src="https://github.com/user-attachments/assets/ab335219-6cb8-4216-8ab8-b0da5de723e0" />
 GameTranslator: Linux Vision çikti linux kullanicilarina özel  program
 https://teknolojikadam.itch.io/gametranslatorlinux
 
