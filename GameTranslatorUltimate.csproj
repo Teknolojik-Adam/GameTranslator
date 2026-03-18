@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{12325175-CE33-4300-95AE-B16A4FB0539D}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>GameTranslatorUltimate</RootNamespace>
+    <AssemblyName>GameTranslatorUltimate</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <ProjectTypeGuids>{60dc8134-eba5-43b8-bcc9-bb4bc16c2548};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
+    <WarningLevel>4</WarningLevel>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <Deterministic>true</Deterministic>
+    <IsWebBootstrapper>false</IsWebBootstrapper>
+    <NuGetPackageImportStamp>
+    </NuGetPackageImportStamp>
+    <PublishUrl>publish\</PublishUrl>
+    <Install>true</Install>
+    <InstallFrom>Disk</InstallFrom>
+    <UpdateEnabled>false</UpdateEnabled>
+    <UpdateMode>Foreground</UpdateMode>
+    <UpdateInterval>7</UpdateInterval>
+    <UpdateIntervalUnits>Days</UpdateIntervalUnits>
+    <UpdatePeriodically>false</UpdatePeriodically>
+    <UpdateRequired>false</UpdateRequired>
+    <MapFileExtensions>true</MapFileExtensions>
+    <ApplicationRevision>0</ApplicationRevision>
+    <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
+    <UseApplicationTrust>false</UseApplicationTrust>
+    <BootstrapperEnabled>true</BootstrapperEnabled>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>3</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>3</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+  <PropertyGroup />
+  <PropertyGroup>
+    <ApplicationIcon>logo.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Numerics" />
+    <Reference Include="System.Runtime.Remoting" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.Web" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Speech" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="System.Data.DataSetExtensions" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Xaml">
+      <RequiredTargetFramework>4.0</RequiredTargetFramework>
+    </Reference>
+    <Reference Include="WindowsBase" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="EasyHook" Version="2.7.7097" />
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.0" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.4" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.4" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.4" />
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.26100.4654" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="OpenCvSharp4" Version="4.11.0.20250507" />
+    <PackageReference Include="OpenCvSharp4.Extensions" Version="4.11.0.20250507" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.11.0.20250507" />
+    <PackageReference Include="Syncfusion.Licensing" Version="30.1.40" />
+    <PackageReference Include="Syncfusion.SfSkinManager.WPF" Version="30.1.40" />
+    <PackageReference Include="System.Buffers" Version="4.6.1" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.11" />
+    <PackageReference Include="System.IO.Pipelines" Version="9.0.4" />
+    <PackageReference Include="System.Memory" Version="4.6.3" />
+    <PackageReference Include="System.Numerics.Vectors" Version="4.6.1" />
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.1.2" />
+    <PackageReference Include="System.Runtime.InteropServices.WindowsRuntime" Version="4.3.0" />
+    <PackageReference Include="System.Runtime.WindowsRuntime" Version="4.6.0" />
+    <PackageReference Include="System.Runtime.WindowsRuntime.UI.Xaml" Version="4.6.0" />
+    <PackageReference Include="System.Text.Encodings.Web" Version="9.0.4" />
+    <PackageReference Include="System.Text.Json" Version="9.0.4" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.4" />
+    <PackageReference Include="System.ValueTuple" Version="4.6.1" />
+    <PackageReference Include="Tesseract" Version="5.2.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ApplicationDefinition Include="App.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </ApplicationDefinition>
+    <Compile Include="Hotkey.cs" />
+    <Compile Include="HotkeyInputControl.xaml.cs">
+      <DependentUpon>HotkeyInputControl.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="HotkeyManager.cs" />
+    <Compile Include="IOcrEngine.cs" />
+    <Compile Include="PerformanceOptimizedTranslationService.cs" />
+    <Compile Include="PointerScanner.cs" />
+    <Compile Include="TesseractOcrEngine.cs" />
+    <Compile Include="TranslationCacheManager.cs" />
+    <Compile Include="WindowsOcrEngine.cs" />
+    <Compile Include="WindowsOcrService.cs" />
+    <Page Include="HotkeyInputControl.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="InputDialog.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="MainWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="OutputWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Themes\LightTheme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Themes\DarkTheme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Resources\StringResources.en.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Resources\StringResources.tr.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="VideoOcrWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="AccuracyReportWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="AdvancedTranslationService.cs" />
+    <Compile Include="AnomalyDetector.cs" />
+    <Compile Include="MLTextProcessor.cs" />
+    <Compile Include="App.xaml.cs">
+      <DependentUpon>App.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="AppSettings.cs" />
+    <Compile Include="ConsoleLogger.cs" />
+    <Compile Include="GameRecipe.cs" />
+    <Compile Include="IconManager.cs" />
+    <Compile Include="ILogger.cs" />
+    <Compile Include="IMemoryService.cs" />
+    <Compile Include="InputDialog.xaml.cs">
+      <DependentUpon>InputDialog.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="IOcrService.cs" />
+    <Compile Include="IProcessService.cs" />
+    <Compile Include="ITranslationService.cs" />
+    <Compile Include="OllamaTranslationService.cs" />
+    <Compile Include="logo.cs" />
+    <Compile Include="MainWindow.xaml.cs">
+      <DependentUpon>MainWindow.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="MemoryService.cs" />
+    <Compile Include="OcrRegionProcessor.cs" />
+    <Compile Include="OcrService.cs" />
+    <Compile Include="OutputWindow.xaml.cs">
+      <DependentUpon>OutputWindow.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="GameRecipeService.cs" />
+    <Compile Include="PathInfo.cs" />
+    <Compile Include="PathInfoManager.cs" />
+    <Compile Include="ProcessService.cs" />
+    <Compile Include="ServiceContainer.cs" />
+    <Compile Include="SettingsManager.cs" />
+    <Compile Include="ThemeManager.cs" />
+    <Compile Include="EnhancedMemoryService.cs" />
+    <Compile Include="PointerValidationService.cs" />
+    <Compile Include="PointerStabilityResult.cs" />
+    <Compile Include="IVideoCaptureService.cs" />
+    <Compile Include="VideoCaptureService.cs" />
+    <Compile Include="IOcrComparisonService.cs" />
+    <Compile Include="OcrComparisonService.cs" />
+    <Compile Include="IOcrAccuracyService.cs" />
+    <Compile Include="OcrAccuracyService.cs" />
+    <Compile Include="IRealtimeVideoOcrService.cs" />
+    <Compile Include="RealtimeVideoOcrService.cs" />
+    <Compile Include="VideoOcrWindow.xaml.cs">
+      <DependentUpon>VideoOcrWindow.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="AccuracyReportWindow.xaml.cs">
+      <DependentUpon>AccuracyReportWindow.xaml</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Properties\AssemblyInfo.cs">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Properties\Resources.Designer.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+    <Compile Include="Properties\Settings.Designer.cs">
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Settings.settings</DependentUpon>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+    </Compile>
+    <EmbeddedResource Include="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+      <SubType>Designer</SubType>
+    </EmbeddedResource>
+    <None Include="packages.config" />
+    <None Include="Properties\Settings.settings">
+      <Generator>SettingsSingleFileGenerator</Generator>
+      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="App.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <BootstrapperPackage Include=".NETFramework,Version=v4.8">
+      <Visible>False</Visible>
+      <ProductName>Microsoft .NET Framework 4.8 %28x86 ve x64%29</ProductName>
+      <Install>true</Install>
+    </BootstrapperPackage>
+    <BootstrapperPackage Include="Microsoft.Net.Framework.3.5.SP1">
+      <Visible>False</Visible>
+      <ProductName>.NET Framework 3.5 SP1 </ProductName>
+      <Install>false</Install>
+    </BootstrapperPackage>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <ItemGroup>
+    <None Include="packages\OpenCvSharp4.runtime.win.4.11.0.20250507\runtimes\win-x64\native\*.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="tessdata\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="logo.ico" />
+  </ItemGroup>
+</Project>

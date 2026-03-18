@@ -1,0 +1,392 @@
+﻿<Window x:Class="GameTranslatorUltimate.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:GameTranslatorUltimate"
+        mc:Ignorable="d"
+        Title="{DynamicResource Str_Main_Title}"
+        Height="946"
+        Width="965"
+        FontFamily="Segoe UI"
+        Style="{DynamicResource ThemedWindow}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid Background="{DynamicResource PrimaryBackgroundBrush}" Margin="0,0,0,-55" MinHeight="900">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="150"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Üst Panel -->
+            <Border Grid.Row="0" Grid.ColumnSpan="2"
+                    Background="{DynamicResource SecondaryBackgroundBrush}"
+                    Padding="5">
+                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Label Content="{DynamicResource Str_Main_ProcessLabel}" Style="{DynamicResource ThemedLabel}"/>
+                    <ComboBox Name="cmbProcesses" Width="320"
+                              Style="{DynamicResource ThemedComboBox}"
+                              SelectionChanged="CmbProcesses_SelectionChanged">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <Image Source="{Binding IconImage}" Width="16" Height="16"
+                                           Margin="0,0,5,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ProcessName}"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource PrimaryTextBrush}"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <Button Name="btnRefresh" Content="{DynamicResource Str_Main_Refresh}" Margin="10,0"
+                            Style="{DynamicResource ThemedButton}"
+                            Click="btnRefresh_Click"/>
+                    <Label Content="{DynamicResource Str_Main_ThemeLabel}" Style="{DynamicResource ThemedLabel}" Margin="10,0,0,0"/>
+                    <ComboBox Name="cmbTheme" Width="100" Margin="5,0"
+                              Style="{DynamicResource ThemedComboBox}"
+                              SelectionChanged="CmbTheme_SelectionChanged">
+                        <ComboBoxItem Content="{DynamicResource Str_Theme_Light}" Tag="Light"/>
+                        <ComboBoxItem Content="{DynamicResource Str_Theme_Dark}" Tag="Dark"/>
+                    </ComboBox>
+                    <Label Content="{DynamicResource Str_Main_LanguageLabel}" Style="{DynamicResource ThemedLabel}" Margin="10,0,0,0"/>
+                    <ComboBox Name="cmbLanguage" Width="100" Margin="5,0"
+                              Style="{DynamicResource ThemedComboBox}"
+                              SelectionChanged="CmbLanguage_SelectionChanged">
+                    <ComboBoxItem Content="{DynamicResource Str_Lang_Turkish}" Tag="tr"/>
+                        <ComboBoxItem Content="{DynamicResource Str_Lang_English}" Tag="en"/>
+                    </ComboBox>
+
+                    <!--  Eklediğimiz bağlantı düğmeleri  -->
+                    <Button Name="btnGitHub" Content="GitHub" Margin="5,2" Padding="8,4"
+                            Style="{DynamicResource ThemedButton}"
+                            ToolTip="GitHub Reposu"
+                            Click="btnGitHub_Click"/>
+                    <Button Name="btnAegisWall" Content="AegisWall" Margin="5,2" Padding="8,4"
+                            Style="{DynamicResource ThemedButton}"
+                            ToolTip="Güvenlikle ilgili bir endişeniz mi var? AegisWall ilginizi çekebilir."
+                            Click="btnAegisWall_Click"/>
+                    <Button Name="btnItchIoTess" Content="GT Tess" Margin="5,2" Padding="8,4"
+                            Style="{DynamicResource ThemedButton}"
+                            ToolTip="GameTranslator'dan daha basit bir arayüz — tek tıklamayla çalışacak basit bir çeviri programı."
+                            Click="btnItchIoTess_Click"/>
+                    <Button Name="btnGameTranslatorLinux" Content="GT Linux" Margin="5,2" Padding="8,4"
+                            Style="{DynamicResource ThemedButton}"
+                            ToolTip="GameTranslator Linux sürümünü görmek ister misiniz? Sadece Linux kullanıcıları için hazırlanmış bir araç."
+                            Click="btnGameTranslatorLinux_Click"/>
+                    <Button Name="btnItchIo" Content="Itch.io Sayfası" Margin="5,2" Padding="8,4"
+                            Style="{DynamicResource ThemedButton}"
+                            ToolTip="Projemizin Itch.io sayfası"
+                            Click="btnItchIo_Click"/>
+                    <Button Name="btnDonate" Content="Destek Ol" Margin="5,2" Padding="8,4"
+                            Style="{DynamicResource ThemedButton}" Foreground="#ff4f4f" FontWeight="SemiBold"
+                            ToolTip="Bize destek olmak isterseniz buraya tıklayın."
+                            Click="btnDonate_Click"/>
+                    <!--  -->
+
+                    <Label Name="lblStatus" Content="{DynamicResource Str_Status_Ready}"
+                           Style="{DynamicResource ThemedLabel}"
+                           VerticalAlignment="Center" Margin="10,0,0,0"/>
+                </WrapPanel>
+            </Border>
+
+            <!-- Metin Alanları -->
+            <GroupBox Header="{DynamicResource Str_Main_OriginalText}" Grid.Row="1" Grid.Column="0"
+                       Style="{DynamicResource ThemedGroupBox}" Margin="5">
+                <TextBox Name="txtOriginal" Style="{DynamicResource ThemedTextBox}"
+                         TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Disabled" AcceptsReturn="True"
+                         MaxWidth="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=GroupBox}}"/>
+            </GroupBox>
+            <GroupBox Header="{DynamicResource Str_Main_TranslatedText}" Grid.Row="1" Grid.Column="1"
+                       Style="{DynamicResource ThemedGroupBox}" Margin="5">
+                <TextBox Name="txtTranslated" Style="{DynamicResource ThemedTextBox}"
+                         TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Disabled" AcceptsReturn="True"
+                         MaxWidth="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=GroupBox}}"/>
+            </GroupBox>
+            <GridSplitter Grid.Row="2" Grid.ColumnSpan="2" Height="3" HorizontalAlignment="Stretch"
+                          Background="{DynamicResource BorderBrush}"/>
+
+            <!-- Sol Panel Kontrolleri -->
+            <ScrollViewer Grid.Row="3" Grid.Column="0" Margin="5" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <GroupBox Header="{DynamicResource Str_Main_RamTranslation}" Style="{DynamicResource ThemedGroupBox}">
+                    <StackPanel Margin="5">
+                        <Button Name="btnTranslate" Content="{DynamicResource Str_Main_StartRam}"
+                                Style="{DynamicResource ThemedButton}"
+                                Click="btnTranslate_Click"/>
+                        <Button Name="btnVideoOcr" Content="{DynamicResource Str_Main_OpenVideoOcr}"
+                                Style="{DynamicResource ThemedButton}"
+                                Click="btnVideoOcr_Click" Margin="0,5,0,0"/>
+                        <TextBlock Text="{DynamicResource Str_Main_MemoryAddress}" Margin="0,10,0,5"
+                                   Foreground="{DynamicResource PrimaryTextBrush}"/>
+                        <TextBox Name="txtAddress" Style="{DynamicResource ThemedTextBox}"/>
+                    </StackPanel>
+                </GroupBox>
+                <Label Content="{DynamicResource Str_Main_TranslationService}" Style="{DynamicResource ThemedLabel}" Margin="5,10,5,0"/>
+                <ComboBox x:Name="cmbTranslationService" Margin="5,0,5,5" Padding="5"
+                          Style="{DynamicResource ThemedComboBox}"
+                          DisplayMemberPath="Name" SelectedValuePath="Type"
+                          SelectionChanged="cmbTranslationService_SelectionChanged"/>
+
+                <StackPanel x:Name="pnlOllamaSettings" Margin="5,0,5,5" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                        <Label Content="Ollama API URL" Style="{DynamicResource ThemedLabel}" />
+                        <TextBlock Text="(✓)" ToolTip="Örnek ve varsayılan URL: http://localhost:11434" VerticalAlignment="Center" Margin="5,0,0,0" Foreground="{DynamicResource AccentBrush}" Cursor="Hand" FontWeight="Bold"/>
+                    </StackPanel>
+                    <TextBox x:Name="txtOllamaApiUrl" Style="{DynamicResource ThemedTextBox}" ToolTip="Örn: http://localhost:11434"
+                             TextChanged="txtOllamaApiUrl_TextChanged"/>
+                    
+                    <Label Content="Ollama Model AdÄ±" Style="{DynamicResource ThemedLabel}" Margin="0,5,0,0"/>
+                    <TextBox x:Name="txtOllamaModelName" Style="{DynamicResource ThemedTextBox}" ToolTip="Örn: llama3:8b"
+                             TextChanged="txtOllamaModelName_TextChanged"/>
+                    
+                        <TextBlock Text="Değişikliklerin kaydedilmesi için ayarları kaydetmeyi unutmayın." FontSize="10" FontStyle="Italic" Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                </StackPanel>
+                <Label Content="{DynamicResource Str_Main_OcrLanguage}" Style="{DynamicResource ThemedLabel}" Margin="5,10,5,0"/>
+                <ComboBox x:Name="cmbOcrLanguage" Margin="5,0,5,5" Padding="5"
+                          Style="{DynamicResource ThemedComboBox}"/>
+                <Label Content="{DynamicResource Str_Main_TargetLanguage}" Style="{DynamicResource ThemedLabel}" Margin="5,10,5,0"/>
+                <ComboBox x:Name="cmbTargetLanguage" Margin="5,0,5,5" Padding="5"
+                          Style="{DynamicResource ThemedComboBox}"/>
+                <CheckBox x:Name="chkEnableColorFilter" Content="{DynamicResource Str_Main_OcrColorFilter}"
+                          Margin="5,10,5,5" VerticalAlignment="Center" Checked="chkEnableColorFilter_Checked"/>
+                <CheckBox x:Name="chkEnableSkewCorrection" Content="{DynamicResource Str_Main_SkewCorrection}"
+                          Margin="5,5,5,5" VerticalAlignment="Center"/>
+                <CheckBox x:Name="chkEnableHandwritingMode" Content="{DynamicResource Str_Main_HandwritingMode}"
+                          Margin="5,5,5,5" VerticalAlignment="Center"/>
+                <CheckBox x:Name="chkEnableSuperResolution" Content="{DynamicResource Str_Main_SuperResolution}"
+                          Margin="5,5,5,5" VerticalAlignment="Center"/>
+                <CheckBox x:Name="chkEnableAnomalyDetection" Content="{DynamicResource Str_Main_AnomalyDetection}"
+                          Margin="5,5,5,5" VerticalAlignment="Center" Checked="chkEnableAnomalyDetection_Checked" Unchecked="chkEnableAnomalyDetection_Unchecked"/>
+                <!-- Machine Learning checkbox removed from UI -->
+                <CheckBox x:Name="chkEnableContextAnalysis" Content="{DynamicResource Str_Main_ContextAnalysis}"
+                          Margin="5,5,5,5" VerticalAlignment="Center" Checked="chkEnableContextAnalysis_Checked" Unchecked="chkEnableContextAnalysis_Unchecked"/>
+
+                <!-- ML ve Anomali İstatistikleri -->
+                <StackPanel Orientation="Horizontal" Margin="5,10,5,5">
+                    <Button x:Name="btnMLStatistics" Content="{DynamicResource Str_Main_MlStats}"
+                            Style="{DynamicResource ThemedButton}" Width="120" Margin="0,0,5,0"
+                            Click="btnMLStatistics_Click"/>
+                    <Button x:Name="btnAnomalyStatistics" Content="{DynamicResource Str_Main_AnomalyStats}"
+                            Style="{DynamicResource ThemedButton}" Width="140" Margin="0,0,5,0"
+                            Click="btnAnomalyStatistics_Click"/>
+                </StackPanel>
+
+                <!-- Temizleme Butonları -->
+                <StackPanel Orientation="Horizontal" Margin="5,5,5,5">
+                    <Button x:Name="btnClearMLHistory" Content="{DynamicResource Str_Main_ClearMl}"
+                            Style="{DynamicResource ThemedButton}" Width="140" Margin="0,0,5,0"
+                            Click="btnClearMLHistory_Click"/>
+                    <Button x:Name="btnClearAnomalyHistory" Content="{DynamicResource Str_Main_ClearAnomaly}"
+                            Style="{DynamicResource ThemedButton}" Width="160" Margin="0,0,5,0"
+                            Click="btnClearAnomalyHistory_Click"/>
+                    <Button x:Name="btnClearAllCaches" Content="{DynamicResource Str_Main_ClearCaches}"
+                            Style="{DynamicResource ThemedButton}" Width="160" Margin="0,0,5,0"
+                            Click="ClearAllCaches_Click" ToolTip="Çeviri, bellek, öneri ve ikon önbelleklerini temizler"/>
+                </StackPanel>
+
+                <!-- Log Yönetimi -->
+                <StackPanel Orientation="Horizontal" Margin="5,5,5,5">
+                    <Button x:Name="btnViewLogFile" Content="{DynamicResource Str_Main_ViewLog}"
+                            Style="{DynamicResource ThemedButton}" Width="150" Margin="0,0,5,0"
+                            Click="btnViewLogFile_Click"/>
+                    <Button x:Name="btnClearLogFile" Content="{DynamicResource Str_Main_ClearLog}"
+                            Style="{DynamicResource ThemedButton}" Width="150" Margin="0,0,5,0"
+                            Click="btnClearLogFile_Click"/>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="5,5,5,5">
+                    <Button x:Name="btnReloadGameRecipes" Content="{DynamicResource Str_Main_ReloadSettings}"
+                            Style="{DynamicResource ThemedButton}" Width="120" Margin="0,0,5,0"
+                            Click="ReloadGameRecipes_Click" ToolTip="game_recipes.json dosyasını yeniden yükler"/>
+                    <Button x:Name="btnSaveSettings" Content="{DynamicResource Str_Main_SaveSettings}"
+                            Style="{DynamicResource ThemedButton}" Width="120" Margin="0,0,5,0"
+                            Click="SaveSettingsNow_Click" ToolTip="Ayarları hemen diske kaydeder"/>
+                    <Button x:Name="btnResetSettings" Content="{DynamicResource Str_Main_ResetSettings}"
+                            Style="{DynamicResource ThemedButton}" Width="120" Margin="0,0,5,0"
+                            Click="ResetSettingsToDefaults_Click" ToolTip="TÃ¼m ayarlarÄ± varsayÄ±lan deÄŸerlere dÃ¶ndÃ¼rÃ¼r"/>
+                </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Sağ Panel Kontrolleri -->
+            <ScrollViewer Grid.Row="3" Grid.Column="1" Margin="5" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <GroupBox Header="{DynamicResource Str_Main_ScreenTranslation}" Style="{DynamicResource ThemedGroupBox}">
+                    <StackPanel Margin="5">
+                        <TextBlock Text="{DynamicResource Str_Main_ScreenOcrInfo}"
+                                   TextWrapping="Wrap"
+                                   Foreground="{DynamicResource PrimaryTextBrush}"/>
+                        <Button Name="btnContinuousOcr" Content="{DynamicResource Str_Main_StartScreenOcr}"
+                                Margin="0,10,0,0" Style="{DynamicResource ThemedButton}"
+                                Click="btnContinuousOcr_Click"/>
+                        <Separator Margin="0,10" />
+                        <TextBlock Text="{DynamicResource Str_Main_OcrEngine}" Margin="0,5,0,5"
+                                   Foreground="{DynamicResource PrimaryTextBrush}"/>
+                        <ComboBox Name="cmbOcrEngine"
+                                  Style="{DynamicResource ThemedComboBox}"
+                                  SelectionChanged="CmbOcrEngine_SelectionChanged">
+                            <ComboBoxItem Content="{DynamicResource Str_Ocr_Windows}" Tag="Windows"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Ocr_Tesseract}" Tag="Tesseract"/>
+                        </ComboBox>
+                        <TextBlock Text="{DynamicResource Str_Main_TextDetectionMethod}" Margin="0,5,0,5"
+                                   Foreground="{DynamicResource PrimaryTextBrush}"/>
+                        <ComboBox Name="cmbTextDetectionMethod"
+                                  Style="{DynamicResource ThemedComboBox}"
+                                  SelectionChanged="CmbTextDetectionMethod_SelectionChanged">
+                            <ComboBoxItem Content="{DynamicResource Str_Method_East}" Tag="East"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Method_OpenCV}" Tag="OpenCV"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Method_None}" Tag="None"/>
+                        </ComboBox>
+                        <TextBlock Text="{DynamicResource Str_Main_TesseractPsm}" Margin="0,5,0,5"
+                                   Foreground="{DynamicResource PrimaryTextBrush}"/>
+                        <ComboBox Name="cmbPageSegMode"
+                                  Style="{DynamicResource ThemedComboBox}"
+                                  SelectionChanged="CmbPageSegMode_SelectionChanged">
+                            <ComboBoxItem Content="Auto" Tag="Auto"/>
+                            <ComboBoxItem Content="Single Line" Tag="SingleLine"/>
+                            <ComboBoxItem Content="Sparse Text" Tag="SparseText"/>
+                        </ComboBox>
+                        <TextBlock Text="{DynamicResource Str_Main_DnnModel}" Margin="0,5,0,5"
+                                   Foreground="{DynamicResource PrimaryTextBrush}"/>
+                        <ComboBox Name="cmbDnnModel"
+                                  Style="{DynamicResource ThemedComboBox}"
+                                  SelectionChanged="CmbDnnModel_SelectionChanged">
+                            <ComboBoxItem Content="{DynamicResource Str_Model_East}" Tag="EAST"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Model_Crnn}" Tag="CRNN"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Model_Paddle}" Tag="PaddleOCR"/>
+                            <ComboBoxItem Content="{DynamicResource Str_Model_Custom}" Tag="Custom"/>
+                        </ComboBox>
+                        <TextBlock Text="{DynamicResource Str_Main_RestartHint}"
+                                   TextWrapping="Wrap"
+                                   FontSize="10"
+                                   FontStyle="Italic"
+                                   Foreground="{DynamicResource SecondaryTextBrush}"
+                                   Margin="0,5,0,0"/>
+                    </StackPanel>
+                </GroupBox>
+                <GroupBox Header="{DynamicResource Str_Main_VisualSettings}" Style="{DynamicResource ThemedGroupBox}" Margin="0,5,0,0">
+                    <StackPanel Margin="5">
+                        <Button x:Name="btnToggleOverlay" Content="{DynamicResource Str_Main_ToggleOverlay}"
+                                Style="{DynamicResource ThemedButton}"
+                                Click="btnToggleOverlay_Click"/>
+                    </StackPanel>
+                </GroupBox>
+                <GroupBox Header="{DynamicResource Str_Main_AdvancedPointerScan}" Style="{DynamicResource ThemedGroupBox}" Margin="0,5,0,0">
+                    <StackPanel Margin="5">
+                        <TextBlock Text="{DynamicResource Str_Main_ScanPattern}" Margin="0,0,0,5"
+                                   Foreground="{DynamicResource PrimaryTextBrush}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <TextBox Name="txtScanText" Width="150" Margin="0,0,5,0"
+                                     Style="{DynamicResource ThemedTextBox}"
+                                     ToolTip="{DynamicResource Str_Main_ScanPattern}"/>
+                            <Button Name="btnScanPointers" Content="{DynamicResource Str_Main_Scan}"
+                                    Style="{DynamicResource ThemedButton}" Width="60" Margin="5,0,0,0"
+                                    Click="btnScanPointers_Click"/>
+                            <Button Name="btnStopScan" Content="{DynamicResource Str_Stop}"
+                                    Style="{DynamicResource ThemedButton}" Width="60" Margin="5,0,0,0"
+                                    Click="btnStopScan_Click"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,5,0,10">
+                            <TextBlock Text="{DynamicResource Str_Main_Encoding}" VerticalAlignment="Center" Margin="0,0,5,0"
+                                       Foreground="{DynamicResource PrimaryTextBrush}"/>
+                            <ComboBox Name="cmbEncoding" Width="80" Style="{DynamicResource ThemedComboBox}" SelectedIndex="0">
+                                <ComboBoxItem Content="Unicode" Tag="Unicode"/>
+                                <ComboBoxItem Content="UTF-8" Tag="UTF-8"/>
+                                <ComboBoxItem Content="ASCII" Tag="ASCII"/>
+                            </ComboBox>
+                            <TextBlock Text="{DynamicResource Str_Main_Depth}" VerticalAlignment="Center" Margin="10,0,5,0"
+                                       Foreground="{DynamicResource PrimaryTextBrush}"/>
+                            <ComboBox Name="cmbDepth" Width="50" Style="{DynamicResource ThemedComboBox}" SelectedIndex="1">
+                                <ComboBoxItem Content="1" Tag="1"/>
+                                <ComboBoxItem Content="2" Tag="2"/>
+                                <ComboBoxItem Content="3" Tag="3"/>
+                                <ComboBoxItem Content="4" Tag="4"/>
+                                <ComboBoxItem Content="5" Tag="5"/>
+                            </ComboBox>
+                        </StackPanel>
+                        <ProgressBar Name="progressScan" Margin="0,0,0,5" Visibility="Collapsed"
+                                     Foreground="{DynamicResource AccentBrush}"
+                                     Background="{DynamicResource ControlBackgroundBrush}"
+                                     Height="10"/>
+                        <TextBlock Name="lblScanStatus" Text="" Margin="0,0,0,5" FontSize="11"
+                                   Foreground="{DynamicResource AccentBrush}" Height="12"/>
+                        <ListBox Name="lstAddresses" Height="80" Margin="0,5,0,5"
+                                 Style="{DynamicResource ThemedListBox}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                            <Button x:Name="btnTestPointer" Content="{DynamicResource Str_Main_Test}"
+                                    Style="{DynamicResource ThemedButton}" Width="70" Margin="5,0,0,0"
+                                    Click="btnTestPointer_Click" />
+                            <Button x:Name="btnSavePointers" Content="{DynamicResource Str_Save}"
+                                    Style="{DynamicResource ThemedButton}" Width="70" Margin="5,0,0,0"
+                                    Click="btnSavePointers_Click"/>
+                            <Button x:Name="btnLoadPointers" Content="{DynamicResource Str_Main_Load}"
+                                    Style="{DynamicResource ThemedButton}" Width="70" Margin="5,0,0,0"
+                                    Click="btnLoadPointers_Click"/>
+                        </StackPanel>
+                    </StackPanel>
+                </GroupBox>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Kısayol AyarlarÄ± -->
+            <GroupBox Header="{DynamicResource Str_Grp_Shortcuts}" 
+              Style="{DynamicResource ThemedGroupBox}" 
+              Margin="0,8,423,10" Grid.ColumnSpan="2" Grid.Row="4">
+                <StackPanel x:Name="HotkeySettingsPanel" Margin="5">
+
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
+                        <Label Content="{DynamicResource Str_Lbl_HotkeyOcr}" 
+                       Style="{DynamicResource ThemedLabel}" Width="110"/>
+
+                        <local:HotkeyInputControl Hotkey="{Binding ToggleOcrHotkey, Mode=TwoWay}" 
+                                          Width="150" Margin="5,0"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
+                        <Label Content="{DynamicResource Str_Lbl_HotkeyWindow}" 
+                       Style="{DynamicResource ThemedLabel}" Width="110"/>
+
+                        <local:HotkeyInputControl Hotkey="{Binding ToggleTranslateWindowHotkey, Mode=TwoWay}" 
+                                          Width="150" Margin="5,0"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,5">
+                        <Label Content="{DynamicResource Str_Lbl_HotkeyService}" 
+                       Style="{DynamicResource ThemedLabel}" Width="110"/>
+
+                        <local:HotkeyInputControl Hotkey="{Binding SwitchTranslationServiceHotkey, Mode=TwoWay}" 
+                                          Width="150" Margin="5,0"/>
+                    </StackPanel>
+
+                </StackPanel>
+            </GroupBox>
+
+            <!-- Log Alanı -->
+            <GroupBox Header="{DynamicResource Str_Main_Log}" Grid.Row="3" Grid.Column="1"
+                       Style="{DynamicResource ThemedGroupBox}" Margin="4,625,5,10" Grid.RowSpan="2">
+                <ListBox Name="txtOutput" Style="{DynamicResource ThemedListBox}" ItemsSource="{Binding LogEntries, RelativeSource={RelativeSource AncestorType=Window}}"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.CanContentScroll="True"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         IsSynchronizedWithCurrentItem="False"
+                         MaxHeight="220">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding FullText}" TextWrapping="Wrap"/>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </GroupBox>
+        </Grid>
+    </ScrollViewer>
+</Window>
