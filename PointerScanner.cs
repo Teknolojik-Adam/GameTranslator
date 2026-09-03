@@ -1,14 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace GameTranslatorUltimate
 {
-  //
     public class PointerPath
     {
         public string ModuleName { get; set; } = string.Empty;
@@ -17,295 +16,847 @@ namespace GameTranslatorUltimate
 
         public override string ToString()
         {
-            return $"\"{ModuleName}\"+0x{BaseOffset:X}" + (Offsets.Any() ? ", " + string.Join(", ", Offsets.Select(o => "0x" + o.ToString("X"))) : "");
+            IEnumerable<int> offsets =
+                Offsets ?? Enumerable.Empty<int>();
+
+            string result =
+                $"\"{ModuleName}\"+0x{BaseOffset:X}";
+
+            string offsetText =
+                string.Join(
+                    ", ",
+                    offsets.Select(FormatOffset));
+
+            if (!string.IsNullOrWhiteSpace(offsetText))
+            {
+                result += ", " + offsetText;
+            }
+
+            return result;
+        }
+
+        private static string FormatOffset(int offset)
+        {
+            if (offset < 0)
+            {
+                return "-0x" +
+                       Math.Abs((long)offset).ToString("X");
+            }
+
+            return "0x" +
+                   offset.ToString("X");
         }
     }
 
     public class PointerScanner : IDisposable
     {
+        private sealed class AddressCacheEntry
+        {
+            public IntPtr Address { get; set; }
+            public DateTime ExpiresAtUtc { get; set; }
+        }
+
+        private const int MaxScanOffset = 0x1000;
+        private const int MaxPointerDepth = 8;
+        private const int MaxFoundPaths = 2000;
+        private const int MaxSearchRegionSize = 512 * 1024 * 1024;
+
+        private static readonly TimeSpan AddressCacheLifetime =
+            TimeSpan.FromMilliseconds(250);
+
         private readonly Process _process;
         private readonly ProcessModule _mainModule;
         private readonly ILogger _logger;
         private readonly IMemoryService _memoryService;
-        private readonly Dictionary<PointerPath, IntPtr> _addressCache = new Dictionary<PointerPath, IntPtr>(new PointerPathComparer());
-        private readonly object _cacheLockObject = new object();
-        private bool _disposed = false;
 
-        public PointerScanner(Process process, IMemoryService memoryService, ILogger logger = null)
+        private readonly object _cacheLock =
+            new object();
+
+        private readonly object _memoryLock =
+            new object();
+
+        private readonly Dictionary<string, AddressCacheEntry> _addressCache =
+            new Dictionary<string, AddressCacheEntry>(
+                StringComparer.OrdinalIgnoreCase);
+
+        private int _disposed;
+
+        public PointerScanner(
+            Process process,
+            IMemoryService memoryService,
+            ILogger logger = null)
         {
-            _process = process ?? throw new ArgumentNullException(nameof(process));
-            _mainModule = process.MainModule ?? throw new ArgumentException("Sürecin bir ana modülü olmalıdır.", nameof(process));
-            _memoryService = memoryService ?? throw new ArgumentNullException(nameof(memoryService));
+            _process =
+                process ?? throw new ArgumentNullException(nameof(process));
+
+            _memoryService =
+                memoryService ?? throw new ArgumentNullException(nameof(memoryService));
+
             _logger = logger;
-        }
 
-        public async Task<List<PointerPath>> FindPointers(IntPtr targetAddress, int maxDepth = 3, IntPtr? searchRegionStart = null, int? searchRegionSize = null)
-        {
-            return await Task.Run(() =>
+            try
             {
-                var paths = new List<PointerPath>();
-                var visitedAddresses = new HashSet<IntPtr>();
+                _mainModule =
+                    process.MainModule;
 
-                IntPtr regionStart = searchRegionStart ?? _mainModule.BaseAddress;
-                int regionSize = searchRegionSize ?? _mainModule.ModuleMemorySize;
-                byte[] memoryDump = new byte[regionSize];
-
-                if (!MemoryService.ReadProcessMemory(_process.Handle, regionStart, memoryDump, memoryDump.Length, out _))
+                if (_mainModule == null)
                 {
-                    int errorCode = Marshal.GetLastWin32Error();
-                    _logger?.LogError($"Bellek okunamadı: 0x{regionStart.ToInt64():X} - {_process.ProcessName}. Hata Kodu: {errorCode}");
-                    return paths;
+                    throw new ArgumentException(
+                        "Sürecin bir ana modülü olmalıdır.",
+                        nameof(process));
                 }
-
-                _logger?.LogInformation($"Pointer taraması başlatıldı. Hedef: 0x{targetAddress.ToInt64():X}, Derinlik: {maxDepth}");
-
-                // Doğrudan offset (Pointer olmayan)
-                long relativeTargetAddress = targetAddress.ToInt64() - _mainModule.BaseAddress.ToInt64();
-                if (relativeTargetAddress >= 0 && relativeTargetAddress < regionSize)
-                {
-                    var directPath = new PointerPath
-                    {
-                        ModuleName = _mainModule.ModuleName,
-                        BaseOffset = relativeTargetAddress,
-                        Offsets = new List<int>()
-                    };
-                    paths.Add(directPath);
-                    _logger?.LogInformation($"Doğrudan adres yolu bulundu: {directPath}");
-                }
-
-                // Pointer araması
-                SearchPointersRecursive(targetAddress, new List<int>(), maxDepth, memoryDump, regionStart, visitedAddresses, paths);
-
-                var distinctPaths = paths.Distinct(new PointerPathComparer()).ToList();
-
-                _logger?.LogInformation($"Tarama tamamlandı. {distinctPaths.Count} benzersiz pointer yolu bulundu.");
-                return distinctPaths;
-            });
-        }
-
-        private void SearchPointersRecursive(IntPtr currentTargetAddress, List<int> currentPathOffsets, int depth, byte[] memoryDump, IntPtr memoryBase, HashSet<IntPtr> visitedAddresses, List<PointerPath> foundPaths)
-        {
-            // Özyineleme derinliğini ve döngüleri kontrol et
-            if (depth <= 0 || visitedAddresses.Contains(currentTargetAddress) || currentTargetAddress == IntPtr.Zero) return;
-            visitedAddresses.Add(currentTargetAddress);
-
-            int pointerSize = IntPtr.Size;
-            long targetValue = currentTargetAddress.ToInt64();
-            const int MAX_SCAN_OFFSET = 0x1000; // Pointer'lar için tipik maksimum offset (4096 bayt)
-
-            // Bellek dökümü içinde potansiyel pointer'ları ara
-            for (int i = 0; i <= memoryDump.Length - pointerSize; i += pointerSize)
+            }
+            catch (Exception ex)
             {
-                try
-                {
-                    long potentialPointerValue = (pointerSize == 8) ? BitConverter.ToInt64(memoryDump, i) : BitConverter.ToInt32(memoryDump, i);
-
-                    // Potansiyel pointer'ın hedef adrese belirli bir offset ile işaret edip etmediğini kontrol et
-                    for (int offset = -MAX_SCAN_OFFSET; offset <= MAX_SCAN_OFFSET; offset += 4) // Offset'ler genellikle 4'ün katlarıdır
-                    {
-                        if (potentialPointerValue + offset == targetValue)
-                        {
-                            IntPtr addressOfPointer = IntPtr.Add(memoryBase, i); // Bu, potansiyel pointer değerini içeren adres
-
-                            // Bu adresin ana modül içinde olduğundan emin ol
-                            long relativeAddressOfPointer = addressOfPointer.ToInt64() - _mainModule.BaseAddress.ToInt64();
-
-                            if (relativeAddressOfPointer >= 0 && relativeAddressOfPointer < _mainModule.ModuleMemorySize)
-                            {
-                                // Yeni bir offset listesi oluştur: bu seviyenin offsetini öne ekle
-                                var newOffsetsForThisPath = new List<int> { offset };
-                                newOffsetsForThisPath.AddRange(currentPathOffsets); // Önceki offset'leri bunun arkasına ekle
-
-                                var path = new PointerPath
-                                {
-                                    ModuleName = _mainModule.ModuleName,
-                                    BaseOffset = relativeAddressOfPointer, // Modül tabanından pointer'ın kendisine olan offset
-                                    Offsets = newOffsetsForThisPath
-                                };
-                                
-                                // Aynı yolu birden fazla eklememek için kontrol et
-                                if (!foundPaths.Contains(path, new PointerPathComparer()))
-                                {
-                                    foundPaths.Add(path);
-                                    _logger?.LogInformation($"Pointer yolu bulundu: {path}");
-                                }
-                                
-                                // Daha derin pointer'lar için özyinelemeli ara
-                                if (depth > 1)
-                                {
-                                    SearchPointersRecursive(addressOfPointer, newOffsetsForThisPath, depth - 1, memoryDump, memoryBase, visitedAddresses, foundPaths);
-                                }
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning($"Bellek okuma hatası dizin 0x{i:X}: {ex.Message}");
-                }
+                throw new ArgumentException(
+                    "Sürecin ana modülüne erişilemedi.",
+                    nameof(process),
+                    ex);
             }
         }
 
-        public async Task<PointerStabilityResult> CheckPointerStability(PointerPath path, int checkCount = 10, int intervalMs = 100)
+        public async Task<List<PointerPath>> FindPointers(
+            IntPtr targetAddress,
+            int maxDepth = 3,
+            IntPtr? searchRegionStart = null,
+            int? searchRegionSize = null)
         {
-            return await Task.Run(async () =>
+            ThrowIfDisposed();
+
+            if (targetAddress == IntPtr.Zero)
             {
-                var stabilityResult = new PointerStabilityResult
-                {
-                    Path = path,
-                    IsStable = true,
-                    SuccessRate = 100.0,
-                    AddressConsistency = 100.0,
-                    ValueConsistency = 100.0,
-                    StabilityScore = 100.0
-                };
+                return new List<PointerPath>();
+            }
 
-                if (_process == null || _process.HasExited)
-                {
-                    stabilityResult.IsStable = false;
-                    stabilityResult.Message = "Process kapalı veya geçersiz.";
-                    stabilityResult.SuccessRate = 0.0;
-                    stabilityResult.AddressConsistency = 0.0;
-                    stabilityResult.ValueConsistency = 0.0;
-                    stabilityResult.StabilityScore = 0.0;
-                    return stabilityResult;
-                }
-
-                var addresses = new List<IntPtr>();
-                var values = new List<string>();
-
-                for (int i = 0; i < checkCount; i++)
-                {
-                    IntPtr resolvedAddress = ResolveAddressFromPath(path);
-                    if (resolvedAddress == IntPtr.Zero)
-                    {
-                        stabilityResult.IsStable = false;
-                        stabilityResult.Message = $"Adres çözümlenemedi (Deneme {i + 1}/{checkCount})";
-                        stabilityResult.SuccessRate = (double)i / checkCount * 100;
-                        stabilityResult.AddressConsistency = 0.0;
-                        stabilityResult.ValueConsistency = 0.0;
-                        stabilityResult.StabilityScore = 0.0;
-                        return stabilityResult;
-                    }
-
-                    addresses.Add(resolvedAddress);
-
-                    string value = _memoryService.TryReadStringDeep(resolvedAddress);
-                    if (string.IsNullOrWhiteSpace(value))
-                    {
-                        stabilityResult.IsStable = false;
-                        stabilityResult.Message = $"Değer okunamadı (Deneme {i + 1}/{checkCount})";
-                        stabilityResult.SuccessRate = (double)i / checkCount * 100;
-                        stabilityResult.AddressConsistency = 0.0;
-                        stabilityResult.ValueConsistency = 0.0;
-                        stabilityResult.StabilityScore = 0.0;
-                        return stabilityResult;
-                    }
-
-                    values.Add(value);
-
-                    await Task.Delay(intervalMs);
-                }
-
-                // Sonuçları analiz et
-                int successfulSamples = checkCount;
-                double successRate = (double)successfulSamples / checkCount * 100;
-
-                var distinctAddresses = addresses.Distinct().ToList();
-                double addressConsistency = distinctAddresses.Count == 1 ? 100.0 : (double)distinctAddresses.Count / checkCount * 100;
-
-                var distinctValues = values.Distinct().ToList();
-                double valueConsistency = distinctValues.Count == 1 ? 100.0 : (double)distinctValues.Count / checkCount * 100;
-
-                double stabilityScore = (successRate * 0.5) + (addressConsistency * 0.3) + (valueConsistency * 0.2);
-                bool isStable = stabilityScore >= 80;
-
-                stabilityResult.IsStable = isStable;
-                stabilityResult.Message = $"Kararlılık: {successRate:F1}% ({successfulSamples}/{checkCount} başarılı)";
-                stabilityResult.LastKnownAddress = addresses.LastOrDefault();
-                stabilityResult.SuccessRate = successRate;
-                stabilityResult.AddressConsistency = addressConsistency;
-                stabilityResult.ValueConsistency = valueConsistency;
-                stabilityResult.StabilityScore = stabilityScore;
-
-                // Detaylı log
-                _logger?.LogInformation($"=== Pointer Stability Test Sonuçları ===");
-                _logger?.LogInformation($"Path: {path}");
-                _logger?.LogInformation($"Başarı Oranı: {successRate:F1}%");
-                _logger?.LogInformation($"Adres Tutarlılığı: {addressConsistency:F1}% ({distinctAddresses.Count} farklı adres)");
-                _logger?.LogInformation($"Değer Tutarlılığı: {valueConsistency:F1}% ({distinctValues.Count} farklı değer)");
-                _logger?.LogInformation($"Stabilite Skoru: {stabilityScore:F1}/100");
-                _logger?.LogInformation($"Sonuç: {(isStable ? "KARLI ✅" : "KARARSIZ ⚠️")}");
-                
-                return stabilityResult;
-            });
-        }
-
-        private IntPtr ResolveAddressFromPath(PointerPath path)
-        {
-            if (path == null) return IntPtr.Zero;
-
-            lock (_cacheLockObject)
+            if (!IsProcessAlive())
             {
-                // Önbellekten kontrol et
-                if (_addressCache.TryGetValue(path, out IntPtr cachedAddress))
+                return new List<PointerPath>();
+            }
+
+            if (maxDepth < 1)
+                maxDepth = 1;
+
+            if (maxDepth > MaxPointerDepth)
+                maxDepth = MaxPointerDepth;
+
+            return await Task.Run(() =>
+            {
+                IntPtr regionStart =
+                    searchRegionStart ??
+                    _mainModule.BaseAddress;
+
+                int regionSize =
+                    searchRegionSize ??
+                    _mainModule.ModuleMemorySize;
+
+                if (regionStart == IntPtr.Zero ||
+                    regionSize <= 0)
                 {
-                    _logger?.LogInformation($"Pointer yolu önbellekten alındı: {path}");
-                    return cachedAddress;
+                    return new List<PointerPath>();
                 }
+
+                if (regionSize > MaxSearchRegionSize)
+                {
+                    _logger?.LogWarning(
+                        $"Pointer tarama bölgesi çok büyük: {regionSize:N0} byte.");
+
+                    regionSize =
+                        MaxSearchRegionSize;
+                }
+
+                byte[] memoryDump =
+                    new byte[regionSize];
+
+                bool readSuccess;
 
                 try
                 {
-                    ProcessModule module = _process.Modules.Cast<ProcessModule>().FirstOrDefault(m => m.ModuleName.Equals(path.ModuleName, StringComparison.OrdinalIgnoreCase));
-                    if (module == null)
-                    {
-                        _logger?.LogWarning($"Modül bulunamadı: {path.ModuleName}");
-                        return IntPtr.Zero;
-                    }
-
-                    IntPtr currentAddress = IntPtr.Add(module.BaseAddress, (int)path.BaseOffset);
-                    _logger?.LogInformation($"Başlangıç adresi: 0x{currentAddress.ToInt64():X} ({module.ModuleName} + 0x{path.BaseOffset:X})");
-
-                    foreach (var offset in path.Offsets)
-                    {
-                        var pointerBytes = _memoryService.ReadBytes(currentAddress, IntPtr.Size);
-                        if (pointerBytes.Length == 0)
-                        {
-                            _logger?.LogWarning($"Pointer okuma başarısız: 0x{currentAddress.ToInt64():X}");
-                            return IntPtr.Zero;
-                        }
-                        long pointerValue = IntPtr.Size == 8 ? BitConverter.ToInt64(pointerBytes, 0) : BitConverter.ToInt32(pointerBytes, 0);
-                        currentAddress = new IntPtr(pointerValue);
-                        if (currentAddress == IntPtr.Zero)
-                        {
-                            _logger?.LogWarning("Pointer değeri sıfır.");
-                            return IntPtr.Zero;
-                        }
-                        currentAddress = IntPtr.Add(currentAddress, offset);
-                        _logger?.LogInformation($" -> Offset 0x{offset:X} uygulandı. Yeni adres: 0x{currentAddress.ToInt64():X}");
-                    }
-
-                    // Önbelleğe kaydet
-                    _addressCache[path] = currentAddress;
-                    _logger?.LogInformation($"Pointer yolu çözümlendi ve önbelleğe eklendi: {path}");
-                    
-                    return currentAddress;
+                    readSuccess =
+                        MemoryService.ReadProcessMemory(
+                            _process.Handle,
+                            regionStart,
+                            memoryDump,
+                            memoryDump.Length,
+                            out _);
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError("Adres yolu çözümlenirken hata oluştu.", ex);
+                    _logger?.LogError(
+                        "Pointer taraması için bellek okunamadı.",
+                        ex);
+
+                    return new List<PointerPath>();
+                }
+
+                if (!readSuccess)
+                {
+                    int errorCode =
+                        Marshal.GetLastWin32Error();
+
+                    _logger?.LogError(
+                        $"Bellek okunamadı: 0x{regionStart.ToInt64():X}. Hata kodu: {errorCode}");
+
+                    return new List<PointerPath>();
+                }
+
+                int pointerSize =
+                    GetTargetPointerSize();
+
+                var comparer =
+                    new PointerPathComparer();
+
+                var foundPaths =
+                    new HashSet<PointerPath>(
+                        comparer);
+
+                long mainModuleStart =
+                    _mainModule.BaseAddress.ToInt64();
+
+                long mainModuleEnd =
+                    mainModuleStart +
+                    _mainModule.ModuleMemorySize;
+
+                long targetValue =
+                    targetAddress.ToInt64();
+
+                if (targetValue >= mainModuleStart &&
+                    targetValue < mainModuleEnd)
+                {
+                    foundPaths.Add(
+                        new PointerPath
+                        {
+                            ModuleName =
+                                _mainModule.ModuleName,
+
+                            BaseOffset =
+                                targetValue -
+                                mainModuleStart,
+
+                            Offsets =
+                                new List<int>()
+                        });
+                }
+
+                SearchPointersRecursive(
+                    targetAddress,
+                    new List<int>(),
+                    maxDepth,
+                    memoryDump,
+                    regionStart,
+                    pointerSize,
+                    new HashSet<long>(),
+                    foundPaths);
+
+                List<PointerPath> result =
+                    foundPaths
+                        .Take(MaxFoundPaths)
+                        .OrderBy(x =>
+                            x.Offsets != null
+                                ? x.Offsets.Count
+                                : 0)
+                        .ThenBy(x => x.BaseOffset)
+                        .ToList();
+
+                _logger?.LogInformation(
+                    $"Pointer taraması tamamlandı. {result.Count} yol bulundu.");
+
+                return result;
+            }).ConfigureAwait(false);
+        }
+
+        private void SearchPointersRecursive(
+            IntPtr targetAddress,
+            List<int> currentOffsets,
+            int depth,
+            byte[] memoryDump,
+            IntPtr memoryBase,
+            int pointerSize,
+            HashSet<long> currentBranch,
+            HashSet<PointerPath> foundPaths)
+        {
+            if (depth <= 0 ||
+                targetAddress == IntPtr.Zero ||
+                foundPaths.Count >= MaxFoundPaths)
+            {
+                return;
+            }
+
+            long targetValue =
+                targetAddress.ToInt64();
+
+            if (!currentBranch.Add(targetValue))
+                return;
+
+            try
+            {
+                int scanStep =
+                    pointerSize == 8
+                        ? 4
+                        : pointerSize;
+
+                for (int i = 0;
+                     i <= memoryDump.Length - pointerSize;
+                     i += scanStep)
+                {
+                    if (foundPaths.Count >= MaxFoundPaths)
+                        break;
+
+                    long pointerValue =
+                        ReadPointerValue(
+                            memoryDump,
+                            i,
+                            pointerSize);
+
+                    if (pointerValue == 0)
+                        continue;
+
+                    long difference =
+                        targetValue -
+                        pointerValue;
+
+                    if (difference < -MaxScanOffset ||
+                        difference > MaxScanOffset)
+                    {
+                        continue;
+                    }
+
+                    if (difference % 4 != 0)
+                        continue;
+
+                    int offset =
+                        (int)difference;
+
+                    long pointerStorageAddress =
+                        memoryBase.ToInt64() +
+                        i;
+
+                    IntPtr addressOfPointer =
+                        new IntPtr(
+                            pointerStorageAddress);
+
+                    var newOffsets =
+                        new List<int>(
+                            currentOffsets.Count + 1);
+
+                    newOffsets.Add(offset);
+                    newOffsets.AddRange(
+                        currentOffsets);
+
+                    long moduleStart =
+                        _mainModule.BaseAddress.ToInt64();
+
+                    long moduleEnd =
+                        moduleStart +
+                        _mainModule.ModuleMemorySize;
+
+                    if (pointerStorageAddress >= moduleStart &&
+                        pointerStorageAddress < moduleEnd)
+                    {
+                        foundPaths.Add(
+                            new PointerPath
+                            {
+                                ModuleName =
+                                    _mainModule.ModuleName,
+
+                                BaseOffset =
+                                    pointerStorageAddress -
+                                    moduleStart,
+
+                                Offsets =
+                                    newOffsets
+                            });
+                    }
+
+                    if (depth > 1)
+                    {
+                        SearchPointersRecursive(
+                            addressOfPointer,
+                            newOffsets,
+                            depth - 1,
+                            memoryDump,
+                            memoryBase,
+                            pointerSize,
+                            currentBranch,
+                            foundPaths);
+                    }
+                }
+            }
+            finally
+            {
+                currentBranch.Remove(
+                    targetValue);
+            }
+        }
+
+        public async Task<PointerStabilityResult> CheckPointerStability(
+            PointerPath path,
+            int checkCount = 10,
+            int intervalMs = 100)
+        {
+            ThrowIfDisposed();
+
+            var result =
+                new PointerStabilityResult
+                {
+                    Path = path
+                };
+
+            if (path == null)
+            {
+                result.Message =
+                    "Pointer yolu geçersiz.";
+
+                return result;
+            }
+
+            if (!IsProcessAlive())
+            {
+                result.Message =
+                    "Process kapalı veya geçersiz.";
+
+                return result;
+            }
+
+            if (checkCount < 2)
+                checkCount = 2;
+
+            if (checkCount > 100)
+                checkCount = 100;
+
+            if (intervalMs < 10)
+                intervalMs = 10;
+
+            if (intervalMs > 10000)
+                intervalMs = 10000;
+
+            var addresses =
+                new List<IntPtr>();
+
+            var values =
+                new List<string>();
+
+            int successfulSamples = 0;
+
+            for (int i = 0;
+                 i < checkCount;
+                 i++)
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                    break;
+
+                IntPtr address =
+                    ResolveAddressFromPath(
+                        path,
+                        false);
+
+                if (address != IntPtr.Zero)
+                {
+                    string value =
+                        null;
+
+                    try
+                    {
+                        lock (_memoryLock)
+                        {
+                            value =
+                                _memoryService.TryReadStringDeep(
+                                    address);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(
+                            $"Pointer değeri okunamadı: {ex.Message}");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        addresses.Add(
+                            address);
+
+                        values.Add(
+                            value);
+
+                        successfulSamples++;
+                    }
+                }
+
+                if (i < checkCount - 1)
+                {
+                    await Task.Delay(
+                            intervalMs)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            double successRate =
+                (double)successfulSamples /
+                checkCount *
+                100.0;
+
+            double addressConsistency =
+                CalculateConsistency(
+                    addresses.Count,
+                    addresses.Distinct().Count());
+
+            double valueConsistency =
+                CalculateConsistency(
+                    values.Count,
+                    values.Distinct(
+                        StringComparer.Ordinal).Count());
+
+            double stabilityScore =
+                successRate * 0.50 +
+                addressConsistency * 0.35 +
+                valueConsistency * 0.15;
+
+            stabilityScore =
+                Math.Max(
+                    0,
+                    Math.Min(
+                        100,
+                        stabilityScore));
+
+            bool isStable =
+                successRate >= 80 &&
+                addressConsistency >= 80 &&
+                stabilityScore >= 80;
+
+            IntPtr lastAddress =
+                addresses.LastOrDefault();
+
+            result.IsStable =
+                isStable;
+
+            result.Message =
+                $"Kararlılık: {stabilityScore:F1}% | Başarı: {successRate:F1}% ({successfulSamples}/{checkCount})";
+
+            result.LastKnownAddress =
+                lastAddress;
+
+            result.SuccessRate =
+                successRate;
+
+            result.AddressConsistency =
+                addressConsistency;
+
+            result.ValueConsistency =
+                valueConsistency;
+
+            result.StabilityScore =
+                stabilityScore;
+
+            if (lastAddress != IntPtr.Zero)
+            {
+                SetCachedAddress(
+                    path,
+                    lastAddress);
+            }
+
+            _logger?.LogInformation(
+                $"Pointer testi tamamlandı: {path} | " +
+                $"Başarı %{successRate:F1} | " +
+                $"Adres %{addressConsistency:F1} | " +
+                $"Değer %{valueConsistency:F1} | " +
+                $"Skor %{stabilityScore:F1} | " +
+                $"{(isStable ? "KARARLI" : "KARARSIZ")}");
+
+            return result;
+        }
+
+        private IntPtr ResolveAddressFromPath(
+            PointerPath path,
+            bool allowCache = true)
+        {
+            if (path == null ||
+                !IsProcessAlive())
+            {
+                return IntPtr.Zero;
+            }
+
+            if (allowCache)
+            {
+                IntPtr cached =
+                    GetCachedAddress(path);
+
+                if (cached != IntPtr.Zero)
+                    return cached;
+            }
+
+            lock (_memoryLock)
+            {
+                try
+                {
+                    ProcessModule module =
+                        _process.Modules
+                            .Cast<ProcessModule>()
+                            .FirstOrDefault(x =>
+                                string.Equals(
+                                    x.ModuleName,
+                                    path.ModuleName,
+                                    StringComparison.OrdinalIgnoreCase));
+
+                    if (module == null)
+                    {
+                        _logger?.LogWarning(
+                            $"Modül bulunamadı: {path.ModuleName}");
+
+                        return IntPtr.Zero;
+                    }
+
+                    long current =
+                        module.BaseAddress.ToInt64() +
+                        path.BaseOffset;
+
+                    int pointerSize =
+                        GetTargetPointerSize();
+
+                    IEnumerable<int> offsets =
+                        path.Offsets ??
+                        Enumerable.Empty<int>();
+
+                    foreach (int offset in offsets)
+                    {
+                        IntPtr currentAddress =
+                            new IntPtr(current);
+
+                        byte[] pointerBytes =
+                            _memoryService.ReadBytes(
+                                currentAddress,
+                                pointerSize);
+
+                        if (pointerBytes == null ||
+                            pointerBytes.Length < pointerSize)
+                        {
+                            return IntPtr.Zero;
+                        }
+
+                        long pointerValue =
+                            ReadPointerValue(
+                                pointerBytes,
+                                0,
+                                pointerSize);
+
+                        if (pointerValue == 0)
+                            return IntPtr.Zero;
+
+                        current =
+                            pointerValue +
+                            offset;
+                    }
+
+                    IntPtr resolvedAddress =
+                        new IntPtr(current);
+
+                    if (allowCache)
+                    {
+                        SetCachedAddress(
+                            path,
+                            resolvedAddress);
+                    }
+
+                    return resolvedAddress;
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(
+                        "Pointer adresi çözümlenirken hata oluştu.",
+                        ex);
+
                     return IntPtr.Zero;
                 }
             }
         }
 
+        private IntPtr GetCachedAddress(
+            PointerPath path)
+        {
+            string key =
+                BuildPathKey(path);
+
+            lock (_cacheLock)
+            {
+                AddressCacheEntry entry;
+
+                if (!_addressCache.TryGetValue(
+                    key,
+                    out entry))
+                {
+                    return IntPtr.Zero;
+                }
+
+                if (DateTime.UtcNow >
+                    entry.ExpiresAtUtc)
+                {
+                    _addressCache.Remove(key);
+
+                    return IntPtr.Zero;
+                }
+
+                return entry.Address;
+            }
+        }
+
+        private void SetCachedAddress(
+            PointerPath path,
+            IntPtr address)
+        {
+            if (path == null ||
+                address == IntPtr.Zero)
+            {
+                return;
+            }
+
+            string key =
+                BuildPathKey(path);
+
+            lock (_cacheLock)
+            {
+                RemoveExpiredCacheEntries();
+
+                _addressCache[key] =
+                    new AddressCacheEntry
+                    {
+                        Address =
+                            address,
+
+                        ExpiresAtUtc =
+                            DateTime.UtcNow +
+                            AddressCacheLifetime
+                    };
+            }
+        }
+
+        private void RemoveExpiredCacheEntries()
+        {
+            DateTime now =
+                DateTime.UtcNow;
+
+            string[] keys =
+                _addressCache
+                    .Where(x =>
+                        now >
+                        x.Value.ExpiresAtUtc)
+                    .Select(x => x.Key)
+                    .ToArray();
+
+            foreach (string key in keys)
+            {
+                _addressCache.Remove(key);
+            }
+        }
+
+        private static double CalculateConsistency(
+            int sampleCount,
+            int uniqueCount)
+        {
+            if (sampleCount <= 0)
+                return 0;
+
+            if (sampleCount == 1 ||
+                uniqueCount <= 1)
+            {
+                return 100;
+            }
+
+            double variation =
+                (double)(uniqueCount - 1) /
+                (sampleCount - 1);
+
+            double consistency =
+                (1.0 - variation) *
+                100.0;
+
+            return Math.Max(
+                0,
+                Math.Min(
+                    100,
+                    consistency));
+        }
+
+        private long ReadPointerValue(
+            byte[] data,
+            int index,
+            int pointerSize)
+        {
+            if (pointerSize == 8)
+            {
+                return BitConverter.ToInt64(
+                    data,
+                    index);
+            }
+
+            return BitConverter.ToUInt32(
+                data,
+                index);
+        }
+
+        private int GetTargetPointerSize()
+        {
+            if (!Environment.Is64BitOperatingSystem)
+                return 4;
+
+            try
+            {
+                bool isWow64;
+
+                if (IsWow64Process(
+                    _process.Handle,
+                    out isWow64))
+                {
+                    return isWow64
+                        ? 4
+                        : 8;
+                }
+            }
+            catch
+            {
+            }
+
+            return IntPtr.Size;
+        }
+
+        private bool IsProcessAlive()
+        {
+            try
+            {
+                return _process != null &&
+                       !_process.HasExited;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string BuildPathKey(
+            PointerPath path)
+        {
+            if (path == null)
+                return string.Empty;
+
+            IEnumerable<int> offsets =
+                path.Offsets ??
+                Enumerable.Empty<int>();
+
+            return
+                (path.ModuleName ?? string.Empty)
+                    .ToUpperInvariant() +
+                "|" +
+                path.BaseOffset +
+                "|" +
+                string.Join(
+                    ",",
+                    offsets);
+        }
+
         public void ClearCache()
         {
-            lock (_cacheLockObject)
+            ThrowIfDisposed();
+
+            lock (_cacheLock)
             {
-                int count = _addressCache.Count;
                 _addressCache.Clear();
-                _logger?.LogInformation($"PointerScanner önbelleği temizlendi ({count} adet)");
             }
         }
 
@@ -313,125 +864,223 @@ namespace GameTranslatorUltimate
         {
             get
             {
-                lock (_cacheLockObject)
+                ThrowIfDisposed();
+
+                lock (_cacheLock)
                 {
+                    RemoveExpiredCacheEntries();
+
                     return _addressCache.Count;
                 }
             }
         }
-        /// PointerPath nesnelerini karşılaştırmak için Comparer
-        public class PointerPathComparer : IEqualityComparer<PointerPath>
+
+        public class PointerPathComparer :
+            IEqualityComparer<PointerPath>
         {
-            public bool Equals(PointerPath x, PointerPath y)
+            public bool Equals(
+                PointerPath x,
+                PointerPath y)
             {
-                if (x == null || y == null) return x == y;
-                return x.ModuleName == y.ModuleName &&
-                       x.BaseOffset == y.BaseOffset &&
-                       x.Offsets.SequenceEqual(y.Offsets);
+                if (ReferenceEquals(x, y))
+                    return true;
+
+                if (x == null ||
+                    y == null)
+                {
+                    return false;
+                }
+
+                if (!string.Equals(
+                        x.ModuleName,
+                        y.ModuleName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                if (x.BaseOffset !=
+                    y.BaseOffset)
+                {
+                    return false;
+                }
+
+                IEnumerable<int> xOffsets =
+                    x.Offsets ??
+                    Enumerable.Empty<int>();
+
+                IEnumerable<int> yOffsets =
+                    y.Offsets ??
+                    Enumerable.Empty<int>();
+
+                return xOffsets.SequenceEqual(
+                    yOffsets);
             }
 
-            public int GetHashCode(PointerPath obj)
+            public int GetHashCode(
+                PointerPath obj)
             {
-                if (obj == null) return 0;
-                
+                if (obj == null)
+                    return 0;
+
                 unchecked
                 {
-                    int hash = 17;
-                    hash = hash * 23 + (obj.ModuleName?.GetHashCode() ?? 0);
-                    hash = hash * 23 + obj.BaseOffset.GetHashCode();
-                    foreach (var offset in obj.Offsets)
+                    int hash =
+                        17;
+
+                    hash =
+                        hash * 23 +
+                        StringComparer.OrdinalIgnoreCase.GetHashCode(
+                            obj.ModuleName ??
+                            string.Empty);
+
+                    hash =
+                        hash * 23 +
+                        obj.BaseOffset.GetHashCode();
+
+                    if (obj.Offsets != null)
                     {
-                        hash = hash * 23 + offset.GetHashCode();
+                        foreach (int offset in
+                                 obj.Offsets)
+                        {
+                            hash =
+                                hash * 23 +
+                                offset.GetHashCode();
+                        }
                     }
+
                     return hash;
                 }
             }
         }
 
-        /// Byte dizilerini karşılaştırmak için Comparer
-        /// Kullanım: Dictionary, HashSet, Distinct, vs.
-        public class ByteArrayComparer : IEqualityComparer<byte[]>
+        public class ByteArrayComparer :
+            IEqualityComparer<byte[]>
         {
-            public bool Equals(byte[] x, byte[] y)
+            public bool Equals(
+                byte[] x,
+                byte[] y)
             {
-                if (x == null || y == null) 
-                    return x == y;
-                
-                if (x.Length != y.Length) 
-                    return false;
-                
-                for (int i = 0; i < x.Length; i++)
+                if (ReferenceEquals(x, y))
+                    return true;
+
+                if (x == null ||
+                    y == null)
                 {
-                    if (x[i] != y[i]) 
+                    return false;
+                }
+
+                if (x.Length != y.Length)
+                    return false;
+
+                for (int i = 0;
+                     i < x.Length;
+                     i++)
+                {
+                    if (x[i] != y[i])
                         return false;
                 }
-                
+
                 return true;
             }
 
-            public int GetHashCode(byte[] obj)
+            public int GetHashCode(
+                byte[] obj)
             {
-                if (obj == null) 
+                if (obj == null)
                     return 0;
-                
+
                 unchecked
                 {
-                    int hash = 17;
-                    foreach (var b in obj)
+                    int hash =
+                        17;
+
+                    for (int i = 0;
+                         i < obj.Length;
+                         i++)
                     {
-                        hash = hash * 23 + b.GetHashCode();
+                        hash =
+                            hash * 23 +
+                            obj[i];
                     }
+
                     return hash;
                 }
             }
-            /// İki byte dizisi arasındaki benzerlik oranını hesaplar (0.0 - 1.0)
-            public double CalculateSimilarity(byte[] x, byte[] y)
+
+            public double CalculateSimilarity(
+                byte[] x,
+                byte[] y)
             {
-                if (x == null || y == null) 
-                    return 0.0;
-
-                int minLength = Math.Min(x.Length, y.Length);
-                int maxLength = Math.Max(x.Length, y.Length);
-                
-                if (maxLength == 0) 
-                    return 0.0;
-
-                int matchingBytes = 0;
-                for (int i = 0; i < minLength; i++)
+                if (x == null ||
+                    y == null)
                 {
-                    if (x[i] == y[i]) 
-                        matchingBytes++;
+                    return 0;
                 }
 
-                return (double)matchingBytes / maxLength;
+                int maxLength =
+                    Math.Max(
+                        x.Length,
+                        y.Length);
+
+                if (maxLength == 0)
+                    return 1;
+
+                int minLength =
+                    Math.Min(
+                        x.Length,
+                        y.Length);
+
+                int matchingBytes =
+                    0;
+
+                for (int i = 0;
+                     i < minLength;
+                     i++)
+                {
+                    if (x[i] == y[i])
+                    {
+                        matchingBytes++;
+                    }
+                }
+
+                return
+                    (double)matchingBytes /
+                    maxLength;
+            }
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(
+                    ref _disposed) != 0)
+            {
+                throw new ObjectDisposedException(
+                    nameof(PointerScanner));
             }
         }
 
         public void Dispose()
         {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if (!_disposed)
+            if (Interlocked.Exchange(
+                    ref _disposed,
+                    1) != 0)
             {
-                if (disposing)
-                {
-                    lock (_cacheLockObject)
-                    {
-                        _addressCache.Clear();
-                    }
-                    _logger?.LogInformation("PointerScanner kapatıldı");
-                }
-                _disposed = true;
+                return;
+            }
+
+            lock (_cacheLock)
+            {
+                _addressCache.Clear();
             }
         }
 
-        ~PointerScanner()
-        {
-            Dispose(false);
-        }
+        [DllImport(
+            "kernel32.dll",
+            SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWow64Process(
+            IntPtr processHandle,
+            out bool wow64Process);
     }
 }

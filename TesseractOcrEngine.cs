@@ -1,238 +1,796 @@
 ﻿using OpenCvSharp;
 using OpenCvSharp.Extensions;
 using System;
-using System.IO;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Tesseract;
 
 namespace GameTranslatorUltimate
 {
-    public class TesseractOcrEngine : IOcrEngine
+    public class TesseractOcrEngine : IOcrEngine, IDisposable
     {
+        private sealed class EngineHolder : IDisposable
+        {
+            public TesseractEngine Engine { get; }
+            public SemaphoreSlim Gate { get; }
+
+            public EngineHolder(TesseractEngine engine)
+            {
+                Engine = engine;
+                Gate = new SemaphoreSlim(1, 1);
+            }
+
+            public void Dispose()
+            {
+                Engine?.Dispose();
+                Gate?.Dispose();
+            }
+        }
+
+        private sealed class OcrCandidate
+        {
+            public string Text { get; set; }
+            public float Confidence { get; set; }
+        }
+
+        private const float EarlyAcceptConfidence = 0.82f;
+        private const float MinimumConfidence = 0.35f;
+
         private readonly ILogger _logger;
+        private readonly AppSettings _appSettings;
+        private readonly string _tessDataPath;
+
+        private readonly ConcurrentDictionary<string, Lazy<EngineHolder>> _engineCache =
+            new ConcurrentDictionary<string, Lazy<EngineHolder>>(
+                StringComparer.OrdinalIgnoreCase);
+
+        private bool _disposed;
 
         public OcrEngineType EngineType => OcrEngineType.Tesseract;
 
-        private readonly AppSettings _appSettings;
-
-        public TesseractOcrEngine(ILogger logger, AppSettings appSettings = null)
+        public TesseractOcrEngine(
+            ILogger logger,
+            AppSettings appSettings = null)
         {
-            _logger = logger;
+            _logger =
+                logger ?? throw new ArgumentNullException(nameof(logger));
+
             _appSettings = appSettings;
+
+            _tessDataPath =
+                Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory,
+                    "tessdata");
+
+            if (!Directory.Exists(_tessDataPath))
+            {
+                _logger.LogWarning(
+                    $"Tesseract dil klasörü bulunamadı: {_tessDataPath}");
+            }
         }
 
-        public async Task<string> RecognizeTextAsync(Bitmap image, string language, PageSegMode psm = PageSegMode.Auto)
+        public async Task<string> RecognizeTextAsync(
+            Bitmap image,
+            string language,
+            PageSegMode psm = PageSegMode.Auto)
         {
-            if (image == null)
+            ThrowIfDisposed();
+
+            if (image == null ||
+                image.Width <= 0 ||
+                image.Height <= 0)
             {
-                _logger.LogWarning("Görsel verisi sağlanmadı, tanıma işlemi atlandı.");
                 return string.Empty;
             }
 
-            var adaptiveResult = await TryRecognizeWithStrategy(image, language, psm, Preprocess_AdaptiveThreshold);
-            _logger.LogInformation($"[Tesseract-Adaptif] Sonuç: '{adaptiveResult.Text}', Güvenilirlik: {adaptiveResult.Confidence:P}");
+            string resolvedLanguage =
+                ResolveLanguage(language);
 
-            if (adaptiveResult.Confidence > 0.82)
+            bool handwriting =
+                _appSettings?.EnableHandwritingMode == true;
+
+            EngineHolder holder =
+                GetEngineHolder(
+                    resolvedLanguage,
+                    handwriting);
+
+            if (holder == null)
+                return string.Empty;
+
+            PageSegMode effectivePsm =
+                ResolvePageSegMode(
+                    image,
+                    psm);
+
+            OcrCandidate otsu =
+                await TryRecognizeAsync(
+                    holder,
+                    image,
+                    effectivePsm,
+                    PreprocessOtsu);
+
+            if (IsEarlyAccept(otsu))
+                return otsu.Text;
+
+            OcrCandidate adaptive =
+                await TryRecognizeAsync(
+                    holder,
+                    image,
+                    effectivePsm,
+                    PreprocessAdaptive);
+
+            OcrCandidate best =
+                SelectBest(
+                    otsu,
+                    adaptive);
+
+            if (best == null ||
+                string.IsNullOrWhiteSpace(best.Text))
             {
-                return adaptiveResult.Text;
-            }
-
-            var optimalResult = await TryRecognizeWithStrategy(image, language, PageSegMode.Auto, Preprocess_OptimalThreshold);
-            _logger.LogInformation($"[Tesseract-Optimal] Sonuç: '{optimalResult.Text}', Güvenilirlik: {optimalResult.Confidence:P}");
-
-            string finalResult = adaptiveResult.Confidence > optimalResult.Confidence ? adaptiveResult.Text : optimalResult.Text;
-            float finalConfidence = Math.Max(adaptiveResult.Confidence, optimalResult.Confidence);
-
-            // Güven skoru aşırı düşükse halüsinasyonları (olmayan şeyleri okumayı) önlemek için boş döndür
-            if (finalConfidence < 0.65)
-            {
-                _logger.LogWarning($"OCR metin buldu ({finalResult}) ancak güven skoru (%{finalConfidence * 100:F0}) çok düşük olduğu için metin çöpe atıldı.");
                 return string.Empty;
             }
 
-            return finalResult;
+            if (best.Confidence < MinimumConfidence)
+            {
+                _logger.LogWarning(
+                    $"Tesseract sonucu düşük güven nedeniyle reddedildi. " +
+                    $"Dil: {resolvedLanguage}, Güven: %{best.Confidence * 100:F0}");
+
+                return string.Empty;
+            }
+
+            return best.Text;
         }
 
-        private async Task<(string Text, float Confidence)> TryRecognizeWithStrategy(Bitmap image, string language, PageSegMode psm, Func<Bitmap, Pix> preprocessStrategy)
+        private async Task<OcrCandidate> TryRecognizeAsync(
+            EngineHolder holder,
+            Bitmap image,
+            PageSegMode psm,
+            Func<Bitmap, Pix> preprocess)
         {
-            return await Task.Run(() =>
+            Pix pix = null;
+
+            try
             {
+                pix =
+                    await Task.Run(
+                        () => preprocess(image));
+
+                if (pix == null)
+                {
+                    return EmptyCandidate();
+                }
+
+                await holder.Gate
+                    .WaitAsync()
+                    .ConfigureAwait(false);
+
                 try
                 {
-                    using (var preprocessedPix = preprocessStrategy(image))
+                    return await Task.Run(() =>
                     {
-                        // Prefer absolute tessdata path from app base directory to avoid relative path issues
-                        string baseDir = AppDomain.CurrentDomain.BaseDirectory ?? ".";
-                        string tessPath = Path.Combine(baseDir, "tessdata");
-                        _logger?.LogInformation($"Tesseract attempt - process bitness: {(Environment.Is64BitProcess ? "64-bit" : "32-bit")}");
-                        _logger?.LogInformation($"Trying tessdata path: {tessPath}");
-                        if (!Directory.Exists(tessPath)) _logger?.LogWarning($"tessdata directory not found at: {tessPath}");
-
-                        TesseractEngine engine = null;
-                        Exception creationException = null;
-                        try
+                        using (Page page =
+                               holder.Engine.Process(
+                                   pix,
+                                   psm))
                         {
-                            engine = new TesseractEngine(tessPath, language, EngineMode.Default);
-                        }
-                        catch (Exception ex)
-                        {
-                            creationException = ex;
-                            _logger?.LogError($"TesseractEngine creation failed for path '{tessPath}'. Will try relative './tessdata'.", ex);
-                        }
+                            string text =
+                                CleanOcrText(
+                                    page.GetText());
 
-                        if (engine == null)
-                        {
-                            try
+                            float confidence =
+                                page.GetMeanConfidence();
+
+                            return new OcrCandidate
                             {
-                                engine = new TesseractEngine("./tessdata", language, EngineMode.Default);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger?.LogError($"TesseractEngine creation failed for relative path './tessdata' as well.", ex);
-                                // log earlier exception if present
-                                if (creationException != null)
-                                {
-                                    _logger?.LogError("Earlier engine creation error:", creationException);
-                                }
-                                return (string.Empty, 0f);
-                            }
+                                Text = text,
+                                Confidence = confidence
+                            };
                         }
-
-                        using (engine)
-                        {
-                            engine.DefaultPageSegMode = psm;
-                            engine.SetVariable("user_defined_dpi", "300");
-
-                            // El yazısı modu ayarları
-                            if (_appSettings?.EnableHandwritingMode == true)
-                            {
-                                ConfigureHandwritingMode(engine);
-                            }
-
-                            using (var page = engine.Process(preprocessedPix))
-                            {
-                                var text = page.GetText()?.Trim().Replace("\n", " ").Replace("  ", " ") ?? string.Empty;
-                                var confidence = page.GetMeanConfidence();
-                                return (text, confidence);
-                            }
-                        }
-                    }
+                    }).ConfigureAwait(false);
                 }
-                catch (Exception ex)
+                finally
                 {
-                    // Be explicit about common native issues
-                    if (ex is DllNotFoundException || ex is BadImageFormatException)
-                    {
-                        _logger?.LogError($"Native Tesseract library load failed (possible VC++ redistributable or bitness mismatch): {ex.Message}", ex);
-                    }
-                    else
-                    {
-                        _logger?.LogError($"Tesseract OCR stratejisi {preprocessStrategy.Method.Name} başarısız oldu.", ex);
-                    }
-                    return (string.Empty, 0f);
-                }
-            });
-        }
-
-        private Pix Preprocess_AdaptiveThreshold(Bitmap image)
-        {
-            try
-            {
-                using (var mat = BitmapConverter.ToMat(image))
-                using (var gray = mat.CvtColor(ColorConversionCodes.BGR2GRAY))
-                using (var thresholded = new Mat())
-                {
-                    Cv2.AdaptiveThreshold(gray, thresholded, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, 11, 2);
-                    return PixConverter.ToPix(BitmapConverter.ToBitmap(thresholded));
+                    holder.Gate.Release();
                 }
             }
-            catch
+            catch (DllNotFoundException ex)
             {
-                return PixConverter.ToPix(image);
-            }
-        }
+                _logger.LogError(
+                    "Tesseract native kütüphanesi yüklenemedi.",
+                    ex);
 
-        private Pix Preprocess_OptimalThreshold(Bitmap image)
-        {
-            try
+                return EmptyCandidate();
+            }
+            catch (BadImageFormatException ex)
             {
-                int optimalThreshold = FindOptimalThreshold(image);
-                if (optimalThreshold == -1) optimalThreshold = 128;
+                _logger.LogError(
+                    "Tesseract native kütüphanesi mimari uyumsuzluğu nedeniyle yüklenemedi.",
+                    ex);
 
-                using (var mat = BitmapConverter.ToMat(image))
-                using (var gray = mat.CvtColor(ColorConversionCodes.BGR2GRAY))
-                using (var blurred = new Mat())
-                using (var thresholded = new Mat())
-                {
-                    Cv2.MedianBlur(gray, blurred, 3);
-                    Cv2.Threshold(blurred, thresholded, optimalThreshold, 255, ThresholdTypes.Binary);
-                    return PixConverter.ToPix(BitmapConverter.ToBitmap(thresholded));
-                }
-            }
-            catch
-            {
-                return PixConverter.ToPix(image);
-            }
-        }
-
-        private int FindOptimalThreshold(Bitmap image)
-        {
-            try
-            {
-                if (image == null) return -1;
-                using (var mat = BitmapConverter.ToMat(image))
-                using (var grayMat = mat.CvtColor(ColorConversionCodes.BGR2GRAY))
-                {
-                    return Enumerable.Range(8, 11)
-                                     .Select(i => i * 10)
-                                     .Select(threshold =>
-                                     {
-                                         using (var binary = grayMat.Threshold(threshold, 255, ThresholdTypes.Binary))
-                                         using (var laplacian = binary.Laplacian(MatType.CV_64F))
-                                         {
-                                             Cv2.MeanStdDev(laplacian, out _, out Scalar stddev);
-                                             return new { Threshold = threshold, Variance = stddev.Val0 * stddev.Val0 };
-                                         }
-                                     })
-                                     .OrderByDescending(x => x.Variance)
-                                     .FirstOrDefault()?.Threshold ?? -1;
-                }
-            }
-            catch
-            {
-                return -1;
-            }
-        }
-        /// Tesseract'ı el yazısı tanıma için yapılandırır
-        private void ConfigureHandwritingMode(TesseractEngine engine)
-        {
-            try
-            {
-                // El yazısı için optimize edilmiş ayarlar
-                engine.SetVariable("tessedit_char_whitelist", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?;:()[]{}\"'");
-                engine.SetVariable("classify_bln_numeric_mode", "0");
-                engine.SetVariable("textord_min_linesize", "2.5");
-                engine.SetVariable("textord_old_baselines", "1");
-                engine.SetVariable("textord_old_xheight", "1");
-                engine.SetVariable("textord_min_xheight", "8");
-                engine.SetVariable("textord_force_make_prop_words", "F");
-                engine.SetVariable("tessedit_enable_doc_dict", "0");
-                engine.SetVariable("load_system_dawg", "0");
-                engine.SetVariable("load_freq_dawg", "0");
-                engine.SetVariable("load_punc_dawg", "0");
-                engine.SetVariable("load_number_dawg", "0");
-                engine.SetVariable("load_unambig_dawg", "0");
-                engine.SetVariable("load_bigram_dawg", "0");
-                engine.SetVariable("load_fixed_length_dawgs", "0");
-
-                _logger?.LogInformation("El yazısı modu etkinleştirildi");
+                return EmptyCandidate();
             }
             catch (Exception ex)
             {
-                _logger?.LogError("El yazısı modu yapılandırılırken hata oluştu", ex);
+                _logger.LogError(
+                    $"Tesseract OCR işlemi başarısız oldu: {preprocess.Method.Name}",
+                    ex);
+
+                return EmptyCandidate();
             }
+            finally
+            {
+                pix?.Dispose();
+            }
+        }
+
+        private EngineHolder GetEngineHolder(
+            string language,
+            bool handwriting)
+        {
+            string key =
+                $"{language}|{(handwriting ? "handwriting" : "normal")}";
+
+            try
+            {
+                Lazy<EngineHolder> lazy =
+                    _engineCache.GetOrAdd(
+                        key,
+                        _ => new Lazy<EngineHolder>(
+                            () => CreateEngine(
+                                language,
+                                handwriting),
+                            LazyThreadSafetyMode.ExecutionAndPublication));
+
+                EngineHolder holder =
+                    lazy.Value;
+
+                if (holder == null)
+                {
+                    _engineCache.TryRemove(
+                        key,
+                        out _);
+                }
+
+                return holder;
+            }
+            catch (Exception ex)
+            {
+                _engineCache.TryRemove(
+                    key,
+                    out _);
+
+                _logger.LogError(
+                    $"Tesseract motoru oluşturulamadı. Dil: {language}",
+                    ex);
+
+                return null;
+            }
+        }
+
+        private EngineHolder CreateEngine(
+            string language,
+            bool handwriting)
+        {
+            if (!Directory.Exists(_tessDataPath))
+            {
+                _logger.LogError(
+                    $"Tesseract klasörü bulunamadı: {_tessDataPath}");
+
+                return null;
+            }
+
+            try
+            {
+                var engine =
+                    new TesseractEngine(
+                        _tessDataPath,
+                        language,
+                        EngineMode.Default);
+
+                engine.SetVariable(
+                    "user_defined_dpi",
+                    "300");
+
+                engine.SetVariable(
+                    "preserve_interword_spaces",
+                    "1");
+
+                if (handwriting)
+                {
+                    ConfigureHandwritingMode(
+                        engine);
+                }
+
+                _logger.LogInformation(
+                    $"Tesseract motoru hazırlandı. Dil: {language}");
+
+                return new EngineHolder(
+                    engine);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    $"Tesseract motoru başlatılamadı. Dil: {language}",
+                    ex);
+
+                return null;
+            }
+        }
+
+        private string ResolveLanguage(
+            string language)
+        {
+            string normalized =
+                NormalizeLanguage(language);
+
+            if (HasLanguageData(normalized))
+                return normalized;
+
+            _logger.LogWarning(
+                $"Tesseract dil paketi bulunamadı: {normalized}");
+
+            if (HasLanguageData("eng"))
+            {
+                _logger.LogWarning(
+                    "OCR dili İngilizceye fallback yapıldı.");
+
+                return "eng";
+            }
+
+            return normalized;
+        }
+
+        private bool HasLanguageData(
+            string language)
+        {
+            if (string.IsNullOrWhiteSpace(language))
+                return false;
+
+            string[] languages =
+                language.Split(
+                    new[] { '+' },
+                    StringSplitOptions.RemoveEmptyEntries);
+
+            if (languages.Length == 0)
+                return false;
+
+            return languages.All(item =>
+                File.Exists(
+                    Path.Combine(
+                        _tessDataPath,
+                        item + ".traineddata")));
+        }
+
+        private string NormalizeLanguage(
+            string language)
+        {
+            if (string.IsNullOrWhiteSpace(language))
+                return "eng";
+
+            string[] parts =
+                language.Split(
+                    new[] { '+' },
+                    StringSplitOptions.RemoveEmptyEntries);
+
+            if (parts.Length > 1)
+            {
+                return string.Join(
+                    "+",
+                    parts.Select(
+                        NormalizeSingleLanguage));
+            }
+
+            return NormalizeSingleLanguage(
+                language);
+        }
+
+        private string NormalizeSingleLanguage(
+            string language)
+        {
+            string value =
+                language
+                    .Trim()
+                    .ToLowerInvariant();
+
+            switch (value)
+            {
+                case "en":
+                case "en-us":
+                case "en-gb":
+                case "english":
+                case "eng":
+                    return "eng";
+
+                case "tr":
+                case "tr-tr":
+                case "turkish":
+                case "tur":
+                    return "tur";
+
+                case "ja":
+                case "ja-jp":
+                case "japanese":
+                case "jpn":
+                    return "jpn";
+
+                case "de":
+                case "de-de":
+                case "german":
+                case "ger":
+                case "deu":
+                    return "deu";
+
+                case "fr":
+                case "fr-fr":
+                case "french":
+                case "fre":
+                case "fra":
+                    return "fra";
+
+                case "ru":
+                case "ru-ru":
+                case "russian":
+                case "rus":
+                    return "rus";
+
+                case "es":
+                case "es-es":
+                case "spanish":
+                case "spa":
+                    return "spa";
+
+                case "it":
+                case "it-it":
+                case "italian":
+                case "ita":
+                    return "ita";
+
+                case "pt":
+                case "pt-br":
+                case "pt-pt":
+                case "portuguese":
+                case "por":
+                    return "por";
+
+                case "ko":
+                case "ko-kr":
+                case "korean":
+                case "kor":
+                    return "kor";
+
+                case "zh":
+                case "zh-cn":
+                case "zh-hans":
+                case "chi_sim":
+                    return "chi_sim";
+
+                case "zh-tw":
+                case "zh-hk":
+                case "zh-hant":
+                case "chi_tra":
+                    return "chi_tra";
+
+                default:
+                    return language.Trim();
+            }
+        }
+
+        private PageSegMode ResolvePageSegMode(
+            Bitmap image,
+            PageSegMode requested)
+        {
+            if (requested != PageSegMode.Auto)
+                return requested;
+
+            if (image.Height <= 120 &&
+                image.Width >= image.Height * 2.5)
+            {
+                return PageSegMode.SingleLine;
+            }
+
+            if (image.Height <= 300)
+            {
+                return PageSegMode.SingleBlock;
+            }
+
+            return PageSegMode.Auto;
+        }
+
+        private Pix PreprocessOtsu(
+            Bitmap image)
+        {
+            using (Mat source =
+                   BitmapConverter.ToMat(image))
+            using (Mat gray =
+                   ConvertToGray(source))
+            using (Mat prepared =
+                   ResizeForOcr(gray))
+            using (Mat blurred =
+                   new Mat())
+            using (Mat thresholded =
+                   new Mat())
+            {
+                Cv2.GaussianBlur(
+                    prepared,
+                    blurred,
+                    new OpenCvSharp.Size(3, 3),
+                    0);
+
+                Cv2.Threshold(
+                    blurred,
+                    thresholded,
+                    0,
+                    255,
+                    ThresholdTypes.Binary |
+                    ThresholdTypes.Otsu);
+
+                NormalizePolarity(
+                    thresholded);
+
+                return ConvertMatToPix(
+                    thresholded);
+            }
+        }
+
+        private Pix PreprocessAdaptive(
+            Bitmap image)
+        {
+            using (Mat source =
+                   BitmapConverter.ToMat(image))
+            using (Mat gray =
+                   ConvertToGray(source))
+            using (Mat prepared =
+                   ResizeForOcr(gray))
+            using (Mat denoised =
+                   new Mat())
+            using (Mat thresholded =
+                   new Mat())
+            {
+                Cv2.GaussianBlur(
+                    prepared,
+                    denoised,
+                    new OpenCvSharp.Size(3, 3),
+                    0);
+
+                Cv2.AdaptiveThreshold(
+                    denoised,
+                    thresholded,
+                    255,
+                    AdaptiveThresholdTypes.GaussianC,
+                    ThresholdTypes.Binary,
+                    31,
+                    9);
+
+                NormalizePolarity(
+                    thresholded);
+
+                return ConvertMatToPix(
+                    thresholded);
+            }
+        }
+
+        private Mat ConvertToGray(
+            Mat source)
+        {
+            var gray =
+                new Mat();
+
+            if (source.Channels() == 1)
+            {
+                source.CopyTo(
+                    gray);
+
+                return gray;
+            }
+
+            if (source.Channels() == 4)
+            {
+                Cv2.CvtColor(
+                    source,
+                    gray,
+                    ColorConversionCodes.BGRA2GRAY);
+
+                return gray;
+            }
+
+            Cv2.CvtColor(
+                source,
+                gray,
+                ColorConversionCodes.BGR2GRAY);
+
+            return gray;
+        }
+
+        private Mat ResizeForOcr(
+            Mat gray)
+        {
+            var result =
+                new Mat();
+
+            double scale = 1.0;
+
+            if (gray.Rows < 60)
+                scale = 3.0;
+            else if (gray.Rows < 120)
+                scale = 2.0;
+            else if (gray.Rows < 220)
+                scale = 1.5;
+
+            if (scale <= 1.0)
+            {
+                gray.CopyTo(
+                    result);
+
+                return result;
+            }
+
+            Cv2.Resize(
+              gray,
+            result,
+           new OpenCvSharp.Size(0, 0),
+             scale,
+         scale,
+        InterpolationFlags.Cubic);
+
+            return result;
+        }
+
+        private void NormalizePolarity(
+            Mat image)
+        {
+            Scalar mean =
+                Cv2.Mean(image);
+
+            if (mean.Val0 < 127)
+            {
+                Cv2.BitwiseNot(
+                    image,
+                    image);
+            }
+        }
+
+        private Pix ConvertMatToPix(
+            Mat mat)
+        {
+            using (Bitmap bitmap =
+                   BitmapConverter.ToBitmap(mat))
+            {
+                return PixConverter.ToPix(
+                    bitmap);
+            }
+        }
+
+        private string CleanOcrText(
+            string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            string result =
+                text.Trim();
+
+            result =
+                Regex.Replace(
+                    result,
+                    @"\r\n|\r|\n",
+                    " ");
+
+            result =
+                Regex.Replace(
+                    result,
+                    @"[ \t]{2,}",
+                    " ");
+
+            return result.Trim();
+        }
+
+        private OcrCandidate SelectBest(
+            params OcrCandidate[] candidates)
+        {
+            return candidates
+                .Where(candidate =>
+                    candidate != null &&
+                    !string.IsNullOrWhiteSpace(candidate.Text))
+                .OrderByDescending(
+                    candidate => candidate.Confidence)
+                .ThenByDescending(
+                    candidate => candidate.Text.Length)
+                .FirstOrDefault();
+        }
+
+        private bool IsEarlyAccept(
+            OcrCandidate candidate)
+        {
+            return candidate != null &&
+                   !string.IsNullOrWhiteSpace(candidate.Text) &&
+                   candidate.Confidence >= EarlyAcceptConfidence;
+        }
+
+        private OcrCandidate EmptyCandidate()
+        {
+            return new OcrCandidate
+            {
+                Text = string.Empty,
+                Confidence = 0f
+            };
+        }
+
+        private void ConfigureHandwritingMode(
+            TesseractEngine engine)
+        {
+            TrySetVariable(
+                engine,
+                "classify_bln_numeric_mode",
+                "0");
+
+            TrySetVariable(
+                engine,
+                "preserve_interword_spaces",
+                "1");
+
+            TrySetVariable(
+                engine,
+                "tessedit_enable_doc_dict",
+                "0");
+        }
+
+        private void TrySetVariable(
+            TesseractEngine engine,
+            string name,
+            string value)
+        {
+            try
+            {
+                engine.SetVariable(
+                    name,
+                    value);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    $"Tesseract ayarı uygulanamadı: {name}={value}, {ex.Message}");
+            }
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(
+                    nameof(TesseractOcrEngine));
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+
+            foreach (KeyValuePair<string, Lazy<EngineHolder>> pair
+                     in _engineCache)
+            {
+                try
+                {
+                    if (pair.Value.IsValueCreated)
+                    {
+                        pair.Value.Value?.Dispose();
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            _engineCache.Clear();
         }
     }
 }

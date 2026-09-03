@@ -13,338 +13,1288 @@ namespace GameTranslatorUltimate
 
         public OcrAccuracyService(ILogger logger)
         {
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _logger =
+                logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task<OcrAccuracyScore> CalculateAccuracyAsync(string recognizedText, string groundTruth)
+        public async Task<OcrAccuracyScore> CalculateAccuracyAsync(
+            string recognizedText,
+            string groundTruth)
         {
             return await Task.Run(() =>
             {
-                var score = new OcrAccuracyScore();
+                var score =
+                    new OcrAccuracyScore();
 
-                if (string.IsNullOrEmpty(groundTruth))
+                if (string.IsNullOrWhiteSpace(groundTruth))
                 {
-                    _logger.LogWarning("Referans metin boÅŸ, doÄŸruluk hesaplanamÄ±yor");
+                    _logger.LogWarning(
+                        "Referans metin boş. OCR doğruluğu hesaplanamadı.");
+
                     return score;
                 }
 
-                var normalizedRecognized = NormalizeText(recognizedText ?? "");
-                var normalizedGroundTruth = NormalizeText(groundTruth);
+                string recognized =
+                    recognizedText ?? string.Empty;
 
-                score.CharacterAccuracy = CalculateCharacterAccuracy(normalizedRecognized, normalizedGroundTruth, score);
-                score.WordAccuracy = CalculateWordAccuracy(normalizedRecognized, normalizedGroundTruth, score);
-                score.LineAccuracy = CalculateLineAccuracy(recognizedText ?? "", groundTruth, score); // SatÄ±r doÄŸruluÄŸunu kontrol etmek iÃ§in
-                score.ConfidenceScore = CalculateConfidenceScore(normalizedRecognized, normalizedGroundTruth);
-                score.OverallScore = CalculateOverallScore(score);
+                string reference =
+                    groundTruth ?? string.Empty;
 
-                score.DetailedMetrics["CharacterErrorRate"] = 1.0 - score.CharacterAccuracy;
-                score.DetailedMetrics["WordErrorRate"] = 1.0 - score.WordAccuracy;
-                score.DetailedMetrics["LineErrorRate"] = 1.0 - score.LineAccuracy;
-                score.DetailedMetrics["ConfidenceScore"] = score.ConfidenceScore;
+                string normalizedRecognized =
+                    NormalizeText(recognized);
 
-                _logger.LogInformation($"DoÄŸruluk hesaplandÄ± - Genel: {score.OverallScore:P}, Karakter: {score.CharacterAccuracy:P}, Kelime: {score.WordAccuracy:P}");
-                
+                string normalizedGroundTruth =
+                    NormalizeText(reference);
+
+                score.CharacterAccuracy =
+                    CalculateCharacterAccuracy(
+                        normalizedRecognized,
+                        normalizedGroundTruth,
+                        score);
+
+                score.WordAccuracy =
+                    CalculateWordAccuracy(
+                        normalizedRecognized,
+                        normalizedGroundTruth,
+                        score);
+
+                score.LineAccuracy =
+                    CalculateLineAccuracy(
+                        recognized,
+                        reference,
+                        score);
+
+                score.ConfidenceScore =
+                    CalculateConfidenceScore(
+                        normalizedRecognized,
+                        normalizedGroundTruth);
+
+                score.OverallScore =
+                    CalculateOverallScore(
+                        score);
+
+                score.DetailedMetrics["CharacterErrorRate"] =
+                    1.0 -
+                    score.CharacterAccuracy;
+
+                score.DetailedMetrics["WordErrorRate"] =
+                    1.0 -
+                    score.WordAccuracy;
+
+                score.DetailedMetrics["LineErrorRate"] =
+                    1.0 -
+                    score.LineAccuracy;
+
+                score.DetailedMetrics["ConfidenceScore"] =
+                    score.ConfidenceScore;
+
+                _logger.LogInformation(
+                    $"OCR doğruluğu hesaplandı. Genel: {score.OverallScore:P2}, Karakter: {score.CharacterAccuracy:P2}, Kelime: {score.WordAccuracy:P2}");
+
                 return score;
-            });
+            }).ConfigureAwait(false);
         }
 
-        public async Task<OcrAccuracyScore> CalculateAccuracyWithImageAsync(Bitmap image, string recognizedText, string groundTruth)
+        public async Task<OcrAccuracyScore> CalculateAccuracyWithImageAsync(
+            Bitmap image,
+            string recognizedText,
+            string groundTruth)
         {
-            var score = await CalculateAccuracyAsync(recognizedText, groundTruth);
-            
-            if (image != null)
-            {
-                var imageConfidence = CalculateImageBasedConfidence(image, recognizedText);
-                score.ConfidenceScore = (score.ConfidenceScore + imageConfidence) / 2.0;
-                score.DetailedMetrics["ImageConfidence"] = imageConfidence;
-                score.OverallScore = CalculateOverallScore(score); // Genel skoru yeniden hesapla
-            }
+            OcrAccuracyScore score =
+                await CalculateAccuracyAsync(
+                        recognizedText,
+                        groundTruth)
+                    .ConfigureAwait(false);
+
+            if (image == null)
+                return score;
+
+            double imageConfidence =
+                CalculateImageBasedConfidence(
+                    image,
+                    recognizedText);
+
+            score.ConfidenceScore =
+                Clamp01(
+                    score.ConfidenceScore * 0.75 +
+                    imageConfidence * 0.25);
+
+            score.DetailedMetrics["ImageConfidence"] =
+                imageConfidence;
+
+            score.OverallScore =
+                CalculateOverallScore(
+                    score);
 
             return score;
         }
 
-        public async Task<OcrAccuracyReport> GenerateDetailedReportAsync(List<OcrTestResult> testResults)
+        public async Task<OcrAccuracyReport> GenerateDetailedReportAsync(
+            List<OcrTestResult> testResults)
         {
             return await Task.Run(() =>
             {
-                var report = new OcrAccuracyReport { GeneratedAt = DateTime.Now, TotalTests = testResults.Count };
+                List<OcrTestResult> results =
+                    testResults == null
+                        ? new List<OcrTestResult>()
+                        : testResults
+                            .Where(result => result != null)
+                            .ToList();
 
-                if (!testResults.Any())
+                var report =
+                    new OcrAccuracyReport
+                    {
+                        GeneratedAt =
+                            DateTime.Now,
+
+                        TotalTests =
+                            results.Count
+                    };
+
+                if (results.Count == 0)
                 {
-                    _logger.LogWarning("Rapor oluÅŸturmak iÃ§in test sonucu saÄŸlanmadÄ±");
+                    _logger.LogWarning(
+                        "OCR doğruluk raporu için test sonucu bulunamadı.");
+
+                    report.Recommendations =
+                        GenerateRecommendations(
+                            report);
+
                     return report;
                 }
 
-                var engineGroups = testResults.GroupBy(t => t.EngineType);
+                IEnumerable<IGrouping<OcrEngineType, OcrTestResult>> engineGroups =
+                    results.GroupBy(
+                        result =>
+                            result.EngineType);
 
-                foreach (var group in engineGroups)
+                foreach (IGrouping<OcrEngineType, OcrTestResult> group
+                         in engineGroups)
                 {
-                    var summary = new EngineAccuracySummary { EngineType = group.Key, TestCount = group.Count() };
-                    var validScores = group.Where(t => t.AccuracyScore != null).Select(t => t.AccuracyScore).ToList();
-                    
-                    if (validScores.Any())
+                    var summary =
+                        new EngineAccuracySummary
+                        {
+                            EngineType =
+                                group.Key,
+
+                            TestCount =
+                                group.Count()
+                        };
+
+                    List<OcrAccuracyScore> validScores =
+                        group
+                            .Where(
+                                result =>
+                                    result.AccuracyScore != null)
+                            .Select(
+                                result =>
+                                    result.AccuracyScore)
+                            .ToList();
+
+                    if (validScores.Count > 0)
                     {
-                        summary.AverageAccuracy = validScores.Average(s => s.OverallScore);
-                        summary.BestAccuracy = validScores.Max(s => s.OverallScore);
-                        summary.WorstAccuracy = validScores.Min(s => s.OverallScore);
-                        summary.CharacterAccuracy = validScores.Average(s => s.CharacterAccuracy);
-                        summary.WordAccuracy = validScores.Average(s => s.WordAccuracy);
-                        summary.LineAccuracy = validScores.Average(s => s.LineAccuracy);
+                        summary.AverageAccuracy =
+                            validScores.Average(
+                                score =>
+                                    score.OverallScore);
+
+                        summary.BestAccuracy =
+                            validScores.Max(
+                                score =>
+                                    score.OverallScore);
+
+                        summary.WorstAccuracy =
+                            validScores.Min(
+                                score =>
+                                    score.OverallScore);
+
+                        summary.CharacterAccuracy =
+                            validScores.Average(
+                                score =>
+                                    score.CharacterAccuracy);
+
+                        summary.WordAccuracy =
+                            validScores.Average(
+                                score =>
+                                    score.WordAccuracy);
+
+                        summary.LineAccuracy =
+                            validScores.Average(
+                                score =>
+                                    score.LineAccuracy);
                     }
 
-                    var processingTimes = group.Select(t => t.ProcessingTime.TotalMilliseconds).ToList();
-                    if (processingTimes.Any())
+                    List<double> processingTimes =
+                        group
+                            .Select(
+                                result =>
+                                    result
+                                        .ProcessingTime
+                                        .TotalMilliseconds)
+                            .Where(
+                                milliseconds =>
+                                    milliseconds >= 0)
+                            .ToList();
+
+                    if (processingTimes.Count > 0)
                     {
-                        summary.AverageProcessingTime = processingTimes.Average();
+                        summary.AverageProcessingTime =
+                            processingTimes.Average();
                     }
 
-                    summary.CommonErrors = FindCommonErrors(group);
-                    report.EngineSummaries[group.Key] = summary;
+                    summary.CommonErrors =
+                        FindCommonErrors(
+                            group);
+
+                    report.EngineSummaries[group.Key] =
+                        summary;
                 }
 
-                var allAccuracies = testResults.Where(t => t.AccuracyScore != null).Select(t => t.AccuracyScore.OverallScore).ToList();
-                if (allAccuracies.Any())
+                List<double> accuracies =
+                    results
+                        .Where(
+                            result =>
+                                result.AccuracyScore != null)
+                        .Select(
+                            result =>
+                                result.AccuracyScore.OverallScore)
+                        .ToList();
+
+                if (accuracies.Count > 0)
                 {
-                    report.OverallAccuracy = allAccuracies.Average();
+                    report.OverallAccuracy =
+                        accuracies.Average();
                 }
 
-                if (report.EngineSummaries.Any())
+                if (report.EngineSummaries.Count > 0)
                 {
-                    report.BestPerformingEngine = report.EngineSummaries.OrderByDescending(kvp => kvp.Value.AverageAccuracy).First().Key;
+                    report.BestPerformingEngine =
+                        report.EngineSummaries
+                            .OrderByDescending(
+                                pair =>
+                                    pair.Value.AverageAccuracy)
+                            .ThenBy(
+                                pair =>
+                                    pair.Value.AverageProcessingTime)
+                            .First()
+                            .Key;
                 }
 
-                report.Trends = GenerateTrends(testResults);
-                report.Recommendations = GenerateRecommendations(report);
+                report.Trends =
+                    GenerateTrends(
+                        results);
 
-                _logger.LogInformation($"DetaylÄ± rapor oluÅŸturuldu: {report.TotalTests} test, genel doÄŸruluk: {report.OverallAccuracy:P}");
-                
+                report.Recommendations =
+                    GenerateRecommendations(
+                        report);
+
+                _logger.LogInformation(
+                    $"OCR doğruluk raporu oluşturuldu. Test: {report.TotalTests}, Doğruluk: {report.OverallAccuracy:P2}");
+
                 return report;
-            });
+            }).ConfigureAwait(false);
         }
 
-        public async Task<OcrAccuracyScore> CalculateConfidenceScoreAsync(string recognizedText, Bitmap sourceImage)
+        public async Task<OcrAccuracyScore> CalculateConfidenceScoreAsync(
+            string recognizedText,
+            Bitmap sourceImage)
         {
             return await Task.Run(() =>
             {
-                var score = new OcrAccuracyScore();
-                if (string.IsNullOrEmpty(recognizedText)) return score;
+                var score =
+                    new OcrAccuracyScore();
 
-                var textConfidence = CalculateTextBasedConfidence(recognizedText);
-                var imageConfidence = sourceImage != null ? CalculateImageBasedConfidence(sourceImage, recognizedText) : 0.5;
-                
-                score.ConfidenceScore = (textConfidence + imageConfidence) / 2.0;
-                score.OverallScore = score.ConfidenceScore;
-                
-                score.DetailedMetrics["TextConfidence"] = textConfidence;
-                score.DetailedMetrics["ImageConfidence"] = imageConfidence;
-                
+                if (string.IsNullOrWhiteSpace(
+                    recognizedText))
+                {
+                    return score;
+                }
+
+                double textConfidence =
+                    CalculateTextBasedConfidence(
+                        recognizedText);
+
+                double imageConfidence =
+                    sourceImage != null
+                        ? CalculateImageBasedConfidence(
+                            sourceImage,
+                            recognizedText)
+                        : 0.5;
+
+                score.ConfidenceScore =
+                    Clamp01(
+                        textConfidence * 0.80 +
+                        imageConfidence * 0.20);
+
+                score.OverallScore =
+                    score.ConfidenceScore;
+
+                score.DetailedMetrics["TextConfidence"] =
+                    textConfidence;
+
+                score.DetailedMetrics["ImageConfidence"] =
+                    imageConfidence;
+
                 return score;
-            });
+            }).ConfigureAwait(false);
         }
 
-        private string NormalizeText(string text)
+        private string NormalizeText(
+            string text)
         {
-            if (string.IsNullOrEmpty(text)) return "";
-            text = Regex.Replace(text, @"\s+", " ").Trim().ToLowerInvariant();
-            text = Regex.Replace(text, @"[^\w\s]", "");
-            return text;
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            string result =
+                text.Replace("\r\n", "\n")
+                    .Replace('\r', '\n')
+                    .Trim()
+                    .ToLowerInvariant();
+
+            result =
+                Regex.Replace(
+                    result,
+                    @"\s+",
+                    " ");
+
+            result =
+                Regex.Replace(
+                    result,
+                    @"[^\p{L}\p{N}\s]",
+                    string.Empty);
+
+            return result.Trim();
         }
 
-        private double CalculateCharacterAccuracy(string recognized, string groundTruth, OcrAccuracyScore score)
+        private double CalculateCharacterAccuracy(
+            string recognized,
+            string groundTruth,
+            OcrAccuracyScore score)
         {
-            if (string.IsNullOrEmpty(groundTruth)) return 0;
-            score.ErrorDetails.AddRange(AnalyzeCharacterErrors(recognized, groundTruth));
-            var distance = LevenshteinDistance(recognized, groundTruth);
-            score.TotalCharacters = groundTruth.Length;
-            score.CharacterErrors = distance;
-            return Math.Max(0, 1.0 - (double)distance / groundTruth.Length);
-        }
-
-        private double CalculateWordAccuracy(string recognized, string groundTruth, OcrAccuracyScore score)
-        {
-            if (string.IsNullOrEmpty(groundTruth)) return 0;
-            var recognizedWords = recognized.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            var groundTruthWords = groundTruth.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            score.ErrorDetails.AddRange(AnalyzeWordErrors(recognizedWords, groundTruthWords));
-            var distance = LevenshteinDistance(recognizedWords, groundTruthWords);
-            score.TotalWords = groundTruthWords.Length;
-            score.WordErrors = distance;
-            return Math.Max(0, 1.0 - (double)distance / groundTruthWords.Length);
-        }
-
-        private double CalculateLineAccuracy(string recognized, string groundTruth, OcrAccuracyScore score)
-        {
-            if (string.IsNullOrEmpty(groundTruth)) return 0;
-            var recognizedLines = recognized.Split('\n');
-            var groundTruthLines = groundTruth.Split('\n');
-            var distance = LevenshteinDistance(recognizedLines, groundTruthLines);
-            score.TotalLines = groundTruthLines.Length;
-            score.LineErrors = distance;
-            return Math.Max(0, 1.0 - (double)distance / groundTruthLines.Length);
-        }
-
-        private double CalculateConfidenceScore(string recognized, string groundTruth)
-        {
-            if (string.IsNullOrEmpty(recognized)) return 0;
-            double confidence = 0.5;
-            if (!string.IsNullOrEmpty(groundTruth))
+            if (string.IsNullOrEmpty(
+                groundTruth))
             {
-                confidence += (Math.Min(recognized.Length, groundTruth.Length) / (double)Math.Max(recognized.Length, groundTruth.Length)) * 0.3;
+                return 0;
             }
-            if (recognized.Length > 0)
+
+            int distance =
+                LevenshteinDistance(
+                    recognized,
+                    groundTruth);
+
+            score.TotalCharacters =
+                groundTruth.Length;
+
+            score.CharacterErrors =
+                distance;
+
+            score.ErrorDetails.AddRange(
+                AnalyzeCharacterErrors(
+                    recognized,
+                    groundTruth));
+
+            return Clamp01(
+                1.0 -
+                (double)distance /
+                groundTruth.Length);
+        }
+
+        private double CalculateWordAccuracy(
+            string recognized,
+            string groundTruth,
+            OcrAccuracyScore score)
+        {
+            string[] recognizedWords =
+                SplitWords(
+                    recognized);
+
+            string[] groundTruthWords =
+                SplitWords(
+                    groundTruth);
+
+            score.TotalWords =
+                groundTruthWords.Length;
+
+            if (groundTruthWords.Length == 0)
             {
-                confidence += ((double)recognized.Distinct().Count() / recognized.Length) * 0.1;
+                score.WordErrors =
+                    recognizedWords.Length;
+
+                return recognizedWords.Length == 0
+                    ? 1.0
+                    : 0.0;
             }
-            if (recognized.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Length > 3) confidence += 0.1;
-            return Math.Min(1.0, confidence);
+
+            int distance =
+                LevenshteinDistance(
+                    recognizedWords,
+                    groundTruthWords);
+
+            score.WordErrors =
+                distance;
+
+            score.ErrorDetails.AddRange(
+                AnalyzeWordErrors(
+                    recognizedWords,
+                    groundTruthWords));
+
+            return Clamp01(
+                1.0 -
+                (double)distance /
+                groundTruthWords.Length);
         }
 
-        private double CalculateTextBasedConfidence(string text)
+        private double CalculateLineAccuracy(
+            string recognized,
+            string groundTruth,
+            OcrAccuracyScore score)
         {
-            if (string.IsNullOrEmpty(text)) return 0;
-            double confidence = 0.5;
-            if (text.Length > 10) confidence += 0.2;
-            else if (text.Length > 5) confidence += 0.1;
-            confidence += ((double)text.Distinct().Count() / text.Length) * 0.2;
-            if (text.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Length > 2) confidence += 0.1;
-            var commonChars = "abcdefghijklmnopqrstuvwxyz0123456789";
-            var commonCharCount = text.ToLowerInvariant().Count(c => commonChars.Contains(c));
-            confidence += ((double)commonCharCount / text.Length) * 0.2;
-            return Math.Min(1.0, confidence);
-        }
+            string[] recognizedLines =
+                SplitLines(
+                    recognized);
 
-        private double CalculateImageBasedConfidence(Bitmap image, string recognizedText)
-        {
-            if (image == null || string.IsNullOrEmpty(recognizedText)) return 0.5;
-            double confidence = 0.5;
-            if ((image.Width * image.Height) > 100000) confidence += 0.2;
-            double aspectRatio = (double)image.Width / image.Height;
-            if (aspectRatio > 1.5) confidence += 0.1;
-            return Math.Max(0, Math.Min(1.0, confidence));
-        }
+            string[] groundTruthLines =
+                SplitLines(
+                    groundTruth);
 
-        private double CalculateOverallScore(OcrAccuracyScore score)
-        {
-            return (score.CharacterAccuracy * 0.4) + (score.WordAccuracy * 0.4) + (score.LineAccuracy * 0.1) + (score.ConfidenceScore * 0.1);
-        }
+            score.TotalLines =
+                groundTruthLines.Length;
 
-       
-        private int LevenshteinDistance(string source, string target)
-        {
-            if (string.IsNullOrEmpty(source)) return target?.Length ?? 0;
-            if (string.IsNullOrEmpty(target)) return source.Length;
-            
-            var matrix = new int[source.Length + 1, target.Length + 1];
-            for (int i = 0; i <= source.Length; i++) matrix[i, 0] = i;
-            for (int j = 0; j <= target.Length; j++) matrix[0, j] = j;
-            
-            for (int i = 1; i <= source.Length; i++)
+            if (groundTruthLines.Length == 0)
             {
-                for (int j = 1; j <= target.Length; j++)
+                score.LineErrors =
+                    recognizedLines.Length;
+
+                return recognizedLines.Length == 0
+                    ? 1.0
+                    : 0.0;
+            }
+
+            int distance =
+                LevenshteinDistance(
+                    recognizedLines,
+                    groundTruthLines);
+
+            score.LineErrors =
+                distance;
+
+            return Clamp01(
+                1.0 -
+                (double)distance /
+                groundTruthLines.Length);
+        }
+
+        private double CalculateConfidenceScore(
+            string recognized,
+            string groundTruth)
+        {
+            if (string.IsNullOrWhiteSpace(
+                recognized))
+            {
+                return 0;
+            }
+
+            double confidence =
+                CalculateTextBasedConfidence(
+                    recognized);
+
+            if (string.IsNullOrWhiteSpace(
+                groundTruth))
+            {
+                return confidence;
+            }
+
+            int maxLength =
+                Math.Max(
+                    recognized.Length,
+                    groundTruth.Length);
+
+            if (maxLength == 0)
+                return 1.0;
+
+            double lengthSimilarity =
+                (double)Math.Min(
+                    recognized.Length,
+                    groundTruth.Length) /
+                maxLength;
+
+            int distance =
+                LevenshteinDistance(
+                    recognized,
+                    groundTruth);
+
+            double editSimilarity =
+                Clamp01(
+                    1.0 -
+                    (double)distance /
+                    maxLength);
+
+            return Clamp01(
+                confidence * 0.35 +
+                lengthSimilarity * 0.20 +
+                editSimilarity * 0.45);
+        }
+
+        private double CalculateTextBasedConfidence(
+            string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return 0;
+
+            string value =
+                text.Trim();
+
+            int length =
+                value.Length;
+
+            if (length == 0)
+                return 0;
+
+            double confidence =
+                0.35;
+
+            if (length >= 20)
+                confidence += 0.10;
+            else if (length >= 8)
+                confidence += 0.07;
+            else if (length >= 3)
+                confidence += 0.03;
+
+            int readableCharacters =
+                value.Count(
+                    character =>
+                        char.IsLetterOrDigit(character) ||
+                        char.IsWhiteSpace(character) ||
+                        char.IsPunctuation(character));
+
+            double readableRatio =
+                (double)readableCharacters /
+                length;
+
+            confidence +=
+                readableRatio *
+                0.30;
+
+            int lettersOrDigits =
+                value.Count(
+                    char.IsLetterOrDigit);
+
+            double contentRatio =
+                (double)lettersOrDigits /
+                length;
+
+            confidence +=
+                contentRatio *
+                0.15;
+
+            int controlCharacters =
+                value.Count(
+                    char.IsControl);
+
+            if (controlCharacters > 0)
+            {
+                confidence -=
+                    Math.Min(
+                        0.25,
+                        (double)controlCharacters /
+                        length);
+            }
+
+            int replacementCharacters =
+                value.Count(
+                    character =>
+                        character == '\uFFFD');
+
+            if (replacementCharacters > 0)
+            {
+                confidence -=
+                    Math.Min(
+                        0.30,
+                        replacementCharacters *
+                        0.05);
+            }
+
+            int repeatedNoise =
+                CountRepeatedNoise(
+                    value);
+
+            if (repeatedNoise > 0)
+            {
+                confidence -=
+                    Math.Min(
+                        0.20,
+                        repeatedNoise *
+                        0.02);
+            }
+
+            string[] words =
+                SplitWords(
+                    value);
+
+            if (words.Length >= 2)
+            {
+                confidence +=
+                    0.05;
+            }
+
+            return Clamp01(
+                confidence);
+        }
+
+        private double CalculateImageBasedConfidence(
+            Bitmap image,
+            string recognizedText)
+        {
+            if (image == null)
+                return 0.5;
+
+            if (string.IsNullOrWhiteSpace(
+                recognizedText))
+            {
+                return 0.25;
+            }
+
+            if (image.Width <= 0 ||
+                image.Height <= 0)
+            {
+                return 0.25;
+            }
+
+            double confidence =
+                0.50;
+
+            double characters =
+                Math.Max(
+                    1,
+                    recognizedText.Trim().Length);
+
+            double pixelsPerCharacter =
+                (double)image.Width *
+                image.Height /
+                characters;
+
+            if (pixelsPerCharacter >= 400)
+                confidence += 0.10;
+            else if (pixelsPerCharacter < 40)
+                confidence -= 0.10;
+
+            double heightPerLine =
+                image.Height /
+                (double)Math.Max(
+                    1,
+                    SplitLines(recognizedText).Length);
+
+            if (heightPerLine >= 16)
+                confidence += 0.10;
+            else if (heightPerLine < 8)
+                confidence -= 0.10;
+
+            double aspectRatio =
+                (double)image.Width /
+                image.Height;
+
+            if (aspectRatio >= 0.2 &&
+                aspectRatio <= 20.0)
+            {
+                confidence +=
+                    0.05;
+            }
+
+            return Clamp01(
+                confidence);
+        }
+
+        private double CalculateOverallScore(
+            OcrAccuracyScore score)
+        {
+            if (score == null)
+                return 0;
+
+            return Clamp01(
+                score.CharacterAccuracy * 0.40 +
+                score.WordAccuracy * 0.40 +
+                score.LineAccuracy * 0.15 +
+                score.ConfidenceScore * 0.05);
+        }
+
+        private int LevenshteinDistance(
+            string source,
+            string target)
+        {
+            source =
+                source ?? string.Empty;
+
+            target =
+                target ?? string.Empty;
+
+            if (source.Length == 0)
+                return target.Length;
+
+            if (target.Length == 0)
+                return source.Length;
+
+            if (source.Length > target.Length)
+            {
+                string temp =
+                    source;
+
+                source =
+                    target;
+
+                target =
+                    temp;
+            }
+
+            int[] previous =
+                new int[source.Length + 1];
+
+            int[] current =
+                new int[source.Length + 1];
+
+            for (int i = 0;
+                 i <= source.Length;
+                 i++)
+            {
+                previous[i] = i;
+            }
+
+            for (int j = 1;
+                 j <= target.Length;
+                 j++)
+            {
+                current[0] =
+                    j;
+
+                for (int i = 1;
+                     i <= source.Length;
+                     i++)
                 {
-                    var cost = source[i - 1] == target[j - 1] ? 0 : 1;
-                    matrix[i, j] = Math.Min(Math.Min(matrix[i - 1, j] + 1, matrix[i, j - 1] + 1), matrix[i - 1, j - 1] + cost);
+                    int cost =
+                        source[i - 1] ==
+                        target[j - 1]
+                            ? 0
+                            : 1;
+
+                    current[i] =
+                        Math.Min(
+                            Math.Min(
+                                current[i - 1] + 1,
+                                previous[i] + 1),
+                            previous[i - 1] + cost);
+                }
+
+                int[] swap =
+                    previous;
+
+                previous =
+                    current;
+
+                current =
+                    swap;
+            }
+
+            return previous[source.Length];
+        }
+
+        private int LevenshteinDistance<T>(
+            T[] source,
+            T[] target)
+            where T : IEquatable<T>
+        {
+            source =
+                source ?? new T[0];
+
+            target =
+                target ?? new T[0];
+
+            if (source.Length == 0)
+                return target.Length;
+
+            if (target.Length == 0)
+                return source.Length;
+
+            if (source.Length > target.Length)
+            {
+                T[] temp =
+                    source;
+
+                source =
+                    target;
+
+                target =
+                    temp;
+            }
+
+            int[] previous =
+                new int[source.Length + 1];
+
+            int[] current =
+                new int[source.Length + 1];
+
+            for (int i = 0;
+                 i <= source.Length;
+                 i++)
+            {
+                previous[i] = i;
+            }
+
+            EqualityComparer<T> comparer =
+                EqualityComparer<T>.Default;
+
+            for (int j = 1;
+                 j <= target.Length;
+                 j++)
+            {
+                current[0] =
+                    j;
+
+                for (int i = 1;
+                     i <= source.Length;
+                     i++)
+                {
+                    int cost =
+                        comparer.Equals(
+                            source[i - 1],
+                            target[j - 1])
+                            ? 0
+                            : 1;
+
+                    current[i] =
+                        Math.Min(
+                            Math.Min(
+                                current[i - 1] + 1,
+                                previous[i] + 1),
+                            previous[i - 1] + cost);
+                }
+
+                int[] swap =
+                    previous;
+
+                previous =
+                    current;
+
+                current =
+                    swap;
+            }
+
+            return previous[source.Length];
+        }
+
+        private List<string> FindCommonErrors(
+            IEnumerable<OcrTestResult> testResults)
+        {
+            var errorPatterns =
+                new Dictionary<string, int>(
+                    StringComparer.Ordinal);
+
+            if (testResults == null)
+                return new List<string>();
+
+            foreach (OcrTestResult result in testResults)
+            {
+                if (result == null ||
+                    result.AccuracyScore == null ||
+                    result.AccuracyScore.ErrorDetails == null)
+                {
+                    continue;
+                }
+
+                foreach (string error in
+                         result.AccuracyScore.ErrorDetails)
+                {
+                    if (string.IsNullOrWhiteSpace(error))
+                        continue;
+
+                    int count;
+
+                    if (errorPatterns.TryGetValue(
+                        error,
+                        out count))
+                    {
+                        errorPatterns[error] =
+                            count + 1;
+                    }
+                    else
+                    {
+                        errorPatterns[error] =
+                            1;
+                    }
                 }
             }
-            return matrix[source.Length, target.Length];
+
+            return errorPatterns
+                .OrderByDescending(
+                    pair =>
+                        pair.Value)
+                .ThenBy(
+                    pair =>
+                        pair.Key)
+                .Take(5)
+                .Select(
+                    pair =>
+                        $"{pair.Key} ({pair.Value} kez)")
+                .ToList();
         }
 
-  
-        private int LevenshteinDistance<T>(T[] source, T[] target) where T : IEquatable<T>
+        private List<AccuracyTrend> GenerateTrends(
+            List<OcrTestResult> testResults)
         {
-            if (source == null || source.Length == 0) return target?.Length ?? 0;
-            if (target == null || target.Length == 0) return source.Length;
-            
-            var matrix = new int[source.Length + 1, target.Length + 1];
-            for (int i = 0; i <= source.Length; i++) matrix[i, 0] = i;
-            for (int j = 0; j <= target.Length; j++) matrix[0, j] = j;
-            
-            for (int i = 1; i <= source.Length; i++)
-            {
-                for (int j = 1; j <= target.Length; j++)
-                {
-                    var cost = source[i - 1].Equals(target[j - 1]) ? 0 : 1;
-                    matrix[i, j] = Math.Min(Math.Min(matrix[i - 1, j] + 1, matrix[i, j - 1] + 1), matrix[i - 1, j - 1] + cost);
-                }
-            }
-            return matrix[source.Length, target.Length];
-        }
+            var trends =
+                new List<AccuracyTrend>();
 
-        private List<string> FindCommonErrors(IEnumerable<OcrTestResult> testResults)
-        {
-            var errorPatterns = new Dictionary<string, int>();
-            foreach (var result in testResults.Where(t => t.AccuracyScore?.ErrorDetails != null))
-            {
-                foreach (var error in result.AccuracyScore.ErrorDetails)
-                {
-                    if (errorPatterns.ContainsKey(error)) errorPatterns[error]++;
-                    else errorPatterns[error] = 1;
-                }
-            }
-            return errorPatterns.OrderByDescending(kvp => kvp.Value).Take(5).Select(kvp => $"{kvp.Key} ({kvp.Value} kez)").ToList();
-        }
+            if (testResults == null)
+                return trends;
 
-        private List<AccuracyTrend> GenerateTrends(List<OcrTestResult> testResults)
-        {
-            var trends = new List<AccuracyTrend>();
-            var dailyGroups = testResults.Where(t => t.AccuracyScore != null).GroupBy(t => t.TestTime.Date).OrderBy(g => g.Key);
+            var dailyGroups =
+                testResults
+                    .Where(
+                        result =>
+                            result != null &&
+                            result.AccuracyScore != null)
+                    .GroupBy(
+                        result =>
+                            result.TestTime.Date)
+                    .OrderBy(
+                        group =>
+                            group.Key);
+
             foreach (var group in dailyGroups)
             {
-                foreach (var engineGroup in group.GroupBy(t => t.EngineType))
+                foreach (var engineGroup in
+                         group.GroupBy(
+                             result =>
+                                 result.EngineType))
                 {
-                    trends.Add(new AccuracyTrend
-                    {
-                        Date = group.Key,
-                        Accuracy = engineGroup.Average(t => t.AccuracyScore.OverallScore),
-                        EngineType = engineGroup.Key,
-                        TestCategory = "GÃ¼nlÃ¼k Ortalama"
-                    });
+                    trends.Add(
+                        new AccuracyTrend
+                        {
+                            Date =
+                                group.Key,
+
+                            Accuracy =
+                                engineGroup.Average(
+                                    result =>
+                                        result.AccuracyScore.OverallScore),
+
+                            EngineType =
+                                engineGroup.Key,
+
+                            TestCategory =
+                                "Günlük Ortalama"
+                        });
                 }
             }
+
             return trends;
         }
 
-        private Dictionary<string, object> GenerateRecommendations(OcrAccuracyReport report)
+        private Dictionary<string, object> GenerateRecommendations(
+            OcrAccuracyReport report)
         {
-            var recommendations = new Dictionary<string, object> { ["BestEngine"] = report.BestPerformingEngine.ToString() };
-            if (report.OverallAccuracy < 0.8)
+            var recommendations =
+                new Dictionary<string, object>();
+
+            if (report == null)
+                return recommendations;
+
+            if (report.EngineSummaries != null &&
+                report.EngineSummaries.Count > 0)
             {
-                recommendations["AccuracyImprovement"] = "Genel doÄŸruluk %80'in altÄ±nda. GÃ¶rÃ¼ntÃ¼ Ã¶n iÅŸlemeyi iyileÅŸtirmeyi veya farklÄ± OCR motorlarÄ± denemeyi dÃ¼ÅŸÃ¼nÃ¼n.";
+                recommendations["BestEngine"] =
+                    report.BestPerformingEngine.ToString();
             }
-            foreach (var summary in report.EngineSummaries.Values)
+
+            if (report.TotalTests > 0 &&
+                report.OverallAccuracy < 0.80)
             {
-                if (summary.AverageAccuracy < 0.7)
+                recommendations["AccuracyImprovement"] =
+                    "Genel OCR doğruluğu %80'in altında. Görüntü ön işleme veya OCR motoru ayarları iyileştirilebilir.";
+            }
+
+            if (report.EngineSummaries != null)
+            {
+                foreach (EngineAccuracySummary summary in
+                         report.EngineSummaries.Values)
                 {
-                    recommendations[$"{summary.EngineType}Improvement"] = $"{summary.EngineType} dÃ¼ÅŸÃ¼k doÄŸruluÄŸa sahip ({summary.AverageAccuracy:P}). Parametre ayarÄ± yapmayÄ± veya farklÄ± Ã¶n iÅŸleme kullanmayÄ± dÃ¼ÅŸÃ¼nÃ¼n.";
+                    if (summary == null ||
+                        summary.TestCount == 0)
+                    {
+                        continue;
+                    }
+
+                    if (summary.AverageAccuracy < 0.70)
+                    {
+                        recommendations[
+                            summary.EngineType +
+                            "Improvement"] =
+                            $"{summary.EngineType} için ortalama OCR doğruluğu düşük ({summary.AverageAccuracy:P1}).";
+                    }
                 }
             }
+
             return recommendations;
         }
 
-        private List<string> AnalyzeCharacterErrors(string recognized, string groundTruth)
+        private List<string> AnalyzeCharacterErrors(
+            string recognized,
+            string groundTruth)
         {
-            var errors = new List<string>();
-            int minLength = Math.Min(recognized.Length, groundTruth.Length);
-            for (int i = 0; i < minLength; i++)
+            var errors =
+                new List<string>();
+
+            recognized =
+                recognized ?? string.Empty;
+
+            groundTruth =
+                groundTruth ?? string.Empty;
+
+            int maxDetails =
+                10;
+
+            int minLength =
+                Math.Min(
+                    recognized.Length,
+                    groundTruth.Length);
+
+            for (int i = 0;
+                 i < minLength &&
+                 errors.Count < maxDetails;
+                 i++)
             {
-                if (recognized[i] != groundTruth[i])
+                if (recognized[i] ==
+                    groundTruth[i])
                 {
-                    errors.Add($"'{groundTruth[i]}' -> '{recognized[i]}'");
+                    continue;
                 }
+
+                errors.Add(
+                    $"'{groundTruth[i]}' -> '{recognized[i]}'");
             }
+
+            if (errors.Count < maxDetails &&
+                recognized.Length <
+                groundTruth.Length)
+            {
+                int missing =
+                    groundTruth.Length -
+                    recognized.Length;
+
+                errors.Add(
+                    $"Eksik karakter: {missing}");
+            }
+            else if (errors.Count < maxDetails &&
+                     recognized.Length >
+                     groundTruth.Length)
+            {
+                int extra =
+                    recognized.Length -
+                    groundTruth.Length;
+
+                errors.Add(
+                    $"Fazla karakter: {extra}");
+            }
+
             return errors;
         }
 
-        private List<string> AnalyzeWordErrors(string[] recognizedWords, string[] groundTruthWords)
+        private List<string> AnalyzeWordErrors(
+            string[] recognizedWords,
+            string[] groundTruthWords)
         {
-            var errors = new List<string>();
-            var missingWords = groundTruthWords.Except(recognizedWords).ToList();
-            var extraWords = recognizedWords.Except(groundTruthWords).ToList();
-            
-            foreach(var word in missingWords.Take(3)) errors.Add($"Eksik: '{word}'");
-            foreach(var word in extraWords.Take(3)) errors.Add($"Fazla: '{word}'");
+            recognizedWords =
+                recognizedWords ??
+                new string[0];
+
+            groundTruthWords =
+                groundTruthWords ??
+                new string[0];
+
+            var errors =
+                new List<string>();
+
+            Dictionary<string, int> recognizedCounts =
+                BuildWordCounts(
+                    recognizedWords);
+
+            Dictionary<string, int> groundTruthCounts =
+                BuildWordCounts(
+                    groundTruthWords);
+
+            foreach (KeyValuePair<string, int> pair in
+                     groundTruthCounts)
+            {
+                int recognizedCount;
+
+                recognizedCounts.TryGetValue(
+                    pair.Key,
+                    out recognizedCount);
+
+                int missing =
+                    pair.Value -
+                    recognizedCount;
+
+                for (int i = 0;
+                     i < missing &&
+                     errors.Count < 5;
+                     i++)
+                {
+                    errors.Add(
+                        $"Eksik: '{pair.Key}'");
+                }
+
+                if (errors.Count >= 5)
+                    return errors;
+            }
+
+            foreach (KeyValuePair<string, int> pair in
+                     recognizedCounts)
+            {
+                int referenceCount;
+
+                groundTruthCounts.TryGetValue(
+                    pair.Key,
+                    out referenceCount);
+
+                int extra =
+                    pair.Value -
+                    referenceCount;
+
+                for (int i = 0;
+                     i < extra &&
+                     errors.Count < 5;
+                     i++)
+                {
+                    errors.Add(
+                        $"Fazla: '{pair.Key}'");
+                }
+
+                if (errors.Count >= 5)
+                    return errors;
+            }
 
             return errors;
+        }
+
+        private static Dictionary<string, int> BuildWordCounts(
+            IEnumerable<string> words)
+        {
+            var result =
+                new Dictionary<string, int>(
+                    StringComparer.Ordinal);
+
+            if (words == null)
+                return result;
+
+            foreach (string word in words)
+            {
+                if (string.IsNullOrWhiteSpace(word))
+                    continue;
+
+                int count;
+
+                if (result.TryGetValue(
+                    word,
+                    out count))
+                {
+                    result[word] =
+                        count + 1;
+                }
+                else
+                {
+                    result[word] =
+                        1;
+                }
+            }
+
+            return result;
+        }
+
+        private static string[] SplitWords(
+            string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return new string[0];
+
+            return text.Split(
+                new[]
+                {
+                    ' ',
+                    '\t',
+                    '\r',
+                    '\n'
+                },
+                StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        private static string[] SplitLines(
+            string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return new string[0];
+
+            return text
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n')
+                .Split(
+                    new[] { '\n' },
+                    StringSplitOptions.None)
+                .Select(
+                    line =>
+                        line.Trim())
+                .ToArray();
+        }
+
+        private static int CountRepeatedNoise(
+            string text)
+        {
+            if (string.IsNullOrEmpty(text) ||
+                text.Length < 3)
+            {
+                return 0;
+            }
+
+            int count =
+                0;
+
+            for (int i = 2;
+                 i < text.Length;
+                 i++)
+            {
+                char character =
+                    text[i];
+
+                if (char.IsLetterOrDigit(character) ||
+                    char.IsWhiteSpace(character))
+                {
+                    continue;
+                }
+
+                if (text[i - 1] == character &&
+                    text[i - 2] == character)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static double Clamp01(
+            double value)
+        {
+            if (double.IsNaN(value) ||
+                double.IsInfinity(value))
+            {
+                return 0;
+            }
+
+            if (value < 0)
+                return 0;
+
+            if (value > 1)
+                return 1;
+
+            return value;
         }
     }
 }

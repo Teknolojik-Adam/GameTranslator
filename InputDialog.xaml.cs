@@ -1,34 +1,49 @@
-﻿using System.Windows;
+﻿using System;
+using System.Windows;
 
 namespace GameTranslatorUltimate
 {
     public partial class InputDialog : Window
     {
-        public InputDialog(string question, string defaultAnswer = "")
+        public InputDialog(
+            string question,
+            string defaultAnswer = "")
         {
             InitializeComponent();
 
-            // Eğer MainWindow'dan dolu bir soru metni geldiyse onu yaz.
-            // Boş geldiyse XAML'daki "{DynamicResource Str_Input_Question}" geçerli kalır.
-            if (!string.IsNullOrEmpty(question))
+            if (!string.IsNullOrWhiteSpace(question))
             {
-                lblQuestion.Text = question;
+                lblQuestion.Text =
+                    question.Trim();
             }
 
-            txtAnswer.Text = defaultAnswer;
+            txtAnswer.Text =
+                defaultAnswer ?? string.Empty;
         }
 
-        private void btnDialogOk_Click(object sender, RoutedEventArgs e)
+        public string Answer
         {
-            this.DialogResult = true;
+            get
+            {
+                return txtAnswer.Text ??
+                       string.Empty;
+            }
         }
 
-        private void Window_ContentRendered(object sender, System.EventArgs e)
+        private void btnDialogOk_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            DialogResult =
+                true;
+        }
+
+        private void Window_ContentRendered(
+            object sender,
+            EventArgs e)
         {
             txtAnswer.SelectAll();
             txtAnswer.Focus();
         }
-
-        public string Answer => txtAnswer.Text;
     }
 }

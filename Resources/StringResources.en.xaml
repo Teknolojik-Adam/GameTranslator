@@ -11,76 +11,119 @@
     <system:String x:Key="Str_Stop">Stop</system:String>
 
     <!-- MainWindow -->
-    <system:String x:Key="Str_Main_Title">Real-time Game Translation Tool</system:String>
-    <system:String x:Key="Str_Main_ProcessLabel">Process:</system:String>
+    <system:String x:Key="Str_Main_Title">GameTranslatorUltimate</system:String>
+    <system:String x:Key="Str_Main_ProcessLabel">Application:</system:String>
     <system:String x:Key="Str_Main_Refresh">Refresh</system:String>
     <system:String x:Key="Str_Main_ThemeLabel">Theme:</system:String>
     <system:String x:Key="Str_Main_LanguageLabel">Language:</system:String>
     <system:String x:Key="Str_Theme_Light">Light</system:String>
     <system:String x:Key="Str_Theme_Dark">Dark</system:String>
     <system:String x:Key="Str_Status_Ready">Ready.</system:String>
+    <system:String x:Key="Str_Main_Subtitle">OCR  •  RAM  •  Pointer  •  In-game translation</system:String>
+
     <system:String x:Key="Str_Main_OriginalText">Original Text</system:String>
     <system:String x:Key="Str_Main_TranslatedText">Translated Text</system:String>
+
     <system:String x:Key="Str_Main_RamTranslation">RAM Translation</system:String>
     <system:String x:Key="Str_Main_StartRam">Start RAM Translation</system:String>
     <system:String x:Key="Str_Main_StopRam">Stop RAM Translation</system:String>
     <system:String x:Key="Str_Main_SetupNewPath">Setup New Translation Path...</system:String>
+
     <system:String x:Key="Str_Main_OpenVideoOcr">Open Video OCR</system:String>
+
     <system:String x:Key="Str_Main_MemoryAddress">Memory Address (Hex):</system:String>
+    <system:String x:Key="Str_Main_RamHint">Start translating text from memory. Select the target application first.</system:String>
+
     <system:String x:Key="Str_Main_TranslationService">Translation Service:</system:String>
+    <system:String x:Key="Str_Main_TranslationSettings">Translation Settings</system:String>
+    <system:String x:Key="Str_Main_OllamaSaveHint">Save the settings to keep these changes.</system:String>
+
     <system:String x:Key="Str_Main_OcrLanguage">OCR Language:</system:String>
     <system:String x:Key="Str_Main_TargetLanguage">Target Language:</system:String>
+
     <system:String x:Key="Str_Main_OcrColorFilter">OCR Color Filter</system:String>
     <system:String x:Key="Str_Main_SkewCorrection">Skew Correction</system:String>
     <system:String x:Key="Str_Main_HandwritingMode">Handwriting Mode</system:String>
-    <system:String x:Key="Str_Main_SuperResolution">Super Resolution (Low Res)</system:String>
-    <system:String x:Key="Str_Main_AnomalyDetection">Anomaly Detection (Filter Abnormal)</system:String>
-    <system:String x:Key="Str_Main_MachineLearning">Machine Learning (Text Improvement)</system:String>
+    <system:String x:Key="Str_Main_SuperResolution">Super Resolution (For Low Resolution)</system:String>
+
+    <system:String x:Key="Str_Main_AnomalyDetection">Anomaly Detection (Filter Abnormal Text)</system:String>
+    <system:String x:Key="Str_Main_MachineLearning">Machine Learning (Text Enhancement)</system:String>
     <system:String x:Key="Str_Main_TextCorrection">Text Correction (Fix OCR Errors)</system:String>
-    <system:String x:Key="Str_Main_ContextAnalysis">Context Analysis (Game Terms)</system:String>
+    <system:String x:Key="Str_Main_ContextAnalysis">Context Analysis (Recognize Game Terms)</system:String>
+
+    <system:String x:Key="Str_Main_AdvancedTextProcessing">Advanced Text Processing</system:String>
+    <system:String x:Key="Str_Main_AdvancedTextHint">Enable the OCR and text enhancement options you need.</system:String>
+
     <system:String x:Key="Str_Main_MlStats">ML Statistics</system:String>
     <system:String x:Key="Str_Main_AnomalyStats">Anomaly Statistics</system:String>
     <system:String x:Key="Str_Main_ClearMl">Clear ML History</system:String>
     <system:String x:Key="Str_Main_ClearAnomaly">Clear Anomaly History</system:String>
     <system:String x:Key="Str_Main_ClearCaches">Clear All Caches</system:String>
+
     <system:String x:Key="Str_Main_ViewLog">View Log File</system:String>
     <system:String x:Key="Str_Main_ClearLog">Clear Log File</system:String>
+
     <system:String x:Key="Str_Main_ReloadSettings">Reload Settings</system:String>
     <system:String x:Key="Str_Main_SaveSettings">Save Settings</system:String>
     <system:String x:Key="Str_Main_ResetSettings">Reset Settings</system:String>
+
     <system:String x:Key="Str_Main_SelectAppHint">Please select an application.</system:String>
+
     <system:String x:Key="Str_Main_ScreenTranslation">Screen Translation (OCR)</system:String>
     <system:String x:Key="Str_Main_ScreenOcrInfo">The selected game window will be scanned automatically.</system:String>
     <system:String x:Key="Str_Main_StartScreenOcr">Start Screen Translation</system:String>
     <system:String x:Key="Str_Main_StopScreenOcr">Stop Screen Translation</system:String>
+
     <system:String x:Key="Str_Main_OcrEngine">OCR Engine:</system:String>
     <system:String x:Key="Str_Ocr_Windows">Windows OCR</system:String>
     <system:String x:Key="Str_Ocr_Tesseract">Tesseract OCR</system:String>
+
     <system:String x:Key="Str_Main_TextDetectionMethod">Text Detection Method:</system:String>
     <system:String x:Key="Str_Main_TesseractPsm">OCR Reading Mode (Page Seg.):</system:String>
+
     <system:String x:Key="Str_Method_East">EAST Model</system:String>
     <system:String x:Key="Str_Method_OpenCV">OpenCV</system:String>
     <system:String x:Key="Str_Method_None">None (Full Screen)</system:String>
+
     <system:String x:Key="Str_Main_DnnModel">DNN Model:</system:String>
     <system:String x:Key="Str_Model_East">EAST (Text Detection)</system:String>
     <system:String x:Key="Str_Model_Crnn">CRNN (Text Recognition)</system:String>
-    <system:String x:Key="Str_Model_Paddle">PaddleOCR (Multi-lingual)</system:String>
-    <system:String x:Key="Str_Model_Custom">Custom (Custom Model)</system:String>
-    <system:String x:Key="Str_Main_RestartHint">Restart not required for these settings.</system:String>
+    <system:String x:Key="Str_Model_Paddle">PaddleOCR (Multilingual)</system:String>
+    <system:String x:Key="Str_Model_Custom">Custom Model</system:String>
+
+    <system:String x:Key="Str_Main_RestartHint">The application does not need to be restarted for these settings.</system:String>
+
     <system:String x:Key="Str_Main_VisualSettings">Visual Settings</system:String>
     <system:String x:Key="Str_Main_ToggleOverlay">Show/Hide Translation Window</system:String>
+
     <system:String x:Key="Str_Main_AdvancedPointerScan">Advanced Pointer Scan</system:String>
-    <system:String x:Key="Str_Main_ScanPattern">Pattern to search in RAM:</system:String>
+    <system:String x:Key="Str_Main_ScanPattern">Pattern to search for in RAM:</system:String>
     <system:String x:Key="Str_Main_Scan">Scan</system:String>
     <system:String x:Key="Str_Main_Encoding">Encoding:</system:String>
     <system:String x:Key="Str_Main_Depth">Depth:</system:String>
     <system:String x:Key="Str_Main_Test">Test</system:String>
     <system:String x:Key="Str_Main_Load">Load</system:String>
-    <system:String x:Key="Str_Main_HotkeySettings">Hotkey Settings</system:String>
-    <system:String x:Key="Str_Main_HotkeyOcr">OCR Hotkey:</system:String>
+
+    <system:String x:Key="Str_Main_OcrRegion">Select OCR Region</system:String>
+    <system:String x:Key="Str_Main_PointerMemoryCompare">Compare Memory</system:String>
+    <system:String x:Key="Str_Main_ClearPointerCache">Clear Pointer Cache</system:String>
+    <system:String x:Key="Str_Main_ListPointerCache">List Pointer Cache</system:String>
+
+    <system:String x:Key="Str_Grp_Shortcuts">Shortcut Settings</system:String>
+    <system:String x:Key="Str_Lbl_HotkeyOcr">OCR Shortcut:</system:String>
+    <system:String x:Key="Str_Lbl_HotkeyWindow">Translation Window:</system:String>
+    <system:String x:Key="Str_Lbl_HotkeyService">Switch Service:</system:String>
+
+    <system:String x:Key="Str_Main_HotkeySettings">Shortcut Settings</system:String>
+    <system:String x:Key="Str_Main_HotkeyOcr">OCR Shortcut:</system:String>
     <system:String x:Key="Str_Main_HotkeyTranslate">Translation Window:</system:String>
     <system:String x:Key="Str_Main_HotkeyService">Switch Service:</system:String>
+
     <system:String x:Key="Str_Main_Log">Log</system:String>
+    <system:String x:Key="Str_Main_Maintenance">Maintenance and Settings</system:String>
+
+    <system:String x:Key="Str_Main_ClearTranslationCache">Clear Translation Cache</system:String>
+    <system:String x:Key="Str_Main_SaveTranslationCache">Save Translation Cache</system:String>
 
     <!-- Language display names -->
     <system:String x:Key="Str_Lang_Turkish">Turkish</system:String>
@@ -89,32 +132,40 @@
     <!-- VideoOcrWindow -->
     <system:String x:Key="Str_Video_Title">Video OCR - Real-time Text Recognition</system:String>
     <system:String x:Key="Str_Video_Header">🎥 Video OCR - Real-time Text Recognition</system:String>
+
     <system:String x:Key="Str_Video_StatusStopped">Stopped</system:String>
     <system:String x:Key="Str_Video_NoFeed">No video feed</system:String>
+
     <system:String x:Key="Str_Video_OcrResults">OCR Results</system:String>
     <system:String x:Key="Str_Video_Engine">Engine:</system:String>
     <system:String x:Key="Str_Video_Confidence">Confidence:</system:String>
     <system:String x:Key="Str_Video_Frame">Frame:</system:String>
     <system:String x:Key="Str_Video_NoText">No text recognized yet...</system:String>
     <system:String x:Key="Str_Video_Accuracy">Accuracy:</system:String>
+
     <system:String x:Key="Str_Video_VideoSettings">Video Settings</system:String>
     <system:String x:Key="Str_Video_Cameras">Cameras:</system:String>
     <system:String x:Key="Str_Video_FrameRate">Frame Rate:</system:String>
     <system:String x:Key="Str_Video_Resolution">Resolution:</system:String>
+
     <system:String x:Key="Str_Video_OcrSettings">OCR Settings</system:String>
     <system:String x:Key="Str_Video_EnableComparison">Enable Engine Comparison</system:String>
     <system:String x:Key="Str_Video_EnableAccuracy">Enable Accuracy Scoring</system:String>
     <system:String x:Key="Str_Video_EnableRegion">Enable Region Detection</system:String>
     <system:String x:Key="Str_Video_ConfidenceThreshold">Confidence Threshold:</system:String>
+
     <system:String x:Key="Str_Video_ReferenceText">Reference Text (For Accuracy)</system:String>
     <system:String x:Key="Str_Video_ExpectedText">Expected Text:</system:String>
+
     <system:String x:Key="Str_Video_Controls">Controls</system:String>
     <system:String x:Key="Str_Video_Start">Start Video OCR</system:String>
+    <system:String x:Key="Str_Video_Stop">Stop Video OCR</system:String>
     <system:String x:Key="Str_Video_CaptureFrame">Capture Frame</system:String>
     <system:String x:Key="Str_Video_GenerateReport">Generate Report</system:String>
+
     <system:String x:Key="Str_Video_Stats">Statistics</system:String>
     <system:String x:Key="Str_Video_FramesProcessed">Frames Processed:</system:String>
-    <system:String x:Key="Str_Video_AvgTime">Avg Processing Time:</system:String>
+    <system:String x:Key="Str_Video_AvgTime">Average Processing Time:</system:String>
     <system:String x:Key="Str_Video_BestEngine">Best Engine:</system:String>
     <system:String x:Key="Str_Video_OverallAccuracy">Overall Accuracy:</system:String>
 
@@ -125,178 +176,237 @@
     <!-- AccuracyReportWindow -->
     <system:String x:Key="Str_Report_Title">OCR Accuracy Report</system:String>
     <system:String x:Key="Str_Report_Header">📊 OCR Accuracy Report</system:String>
+
+    <system:String x:Key="Str_Report_GeneratedOn">Generated on: {0}</system:String>
+
     <system:String x:Key="Str_Report_Summary">Summary</system:String>
     <system:String x:Key="Str_Report_TotalTests">Total Tests:</system:String>
     <system:String x:Key="Str_Report_OverallAccuracy">Overall Accuracy:</system:String>
     <system:String x:Key="Str_Report_BestEngine">Best Engine:</system:String>
+
     <system:String x:Key="Str_Report_EnginePerformance">Engine Performance</system:String>
     <system:String x:Key="Str_Report_Col_Engine">Engine</system:String>
     <system:String x:Key="Str_Report_Col_Tests">Tests</system:String>
-    <system:String x:Key="Str_Report_Col_AvgAccuracy">Avg Accuracy</system:String>
+    <system:String x:Key="Str_Report_Col_AvgAccuracy">Avg. Accuracy</system:String>
     <system:String x:Key="Str_Report_Col_BestAccuracy">Best Accuracy</system:String>
-    <system:String x:Key="Str_Report_Col_AvgTime">Avg Time (ms)</system:String>
+    <system:String x:Key="Str_Report_Col_AvgTime">Avg. Time (ms)</system:String>
+
     <system:String x:Key="Str_Report_DetailedStats">Detailed Statistics</system:String>
     <system:String x:Key="Str_Report_Tab_CharAccuracy">Character Accuracy</system:String>
     <system:String x:Key="Str_Report_Tab_WordAccuracy">Word Accuracy</system:String>
     <system:String x:Key="Str_Report_Tab_LineAccuracy">Line Accuracy</system:String>
+
     <system:String x:Key="Str_Report_Recommendations">Recommendations</system:String>
     <system:String x:Key="Str_Report_Col_Rec">Recommendation</system:String>
     <system:String x:Key="Str_Report_Col_Details">Details</system:String>
+
     <system:String x:Key="Str_Report_Export">Export Report</system:String>
+    <system:String x:Key="Str_Report_Close">Close</system:String>
+
+    <system:String x:Key="Str_Report_ExportDialogTitle">Export OCR Accuracy Report</system:String>
+    <system:String x:Key="Str_Report_ExportError">An error occurred while exporting the report: {0}</system:String>
+    <system:String x:Key="Str_Report_ExportErrorTitle">Export Error</system:String>
 
     <!-- InputDialog -->
     <system:String x:Key="Str_Input_Title">Input</system:String>
     <system:String x:Key="Str_Input_Question">Question:</system:String>
 
     <!-- HotkeyInputControl -->
-    <system:String x:Key="Str_Hotkey_Tooltip">Click here and press keys to assign a new hotkey.</system:String>
+    <system:String x:Key="Str_Hotkey_Tooltip">Click this field and press the keys you want to assign as a shortcut.</system:String>
 
     <!-- Logs -->
     <system:String x:Key="Str_Log_SelectProcessFirst">Please select a game/application first.</system:String>
     <system:String x:Key="Str_Log_EnterPattern">Please enter a pattern.</system:String>
     <system:String x:Key="Str_Log_ScanStarted">Scanning started...</system:String>
+
     <system:String x:Key="Str_Log_ProcessAttached">Successfully attached to process: {0} (PID: {1})</system:String>
-    <system:String x:Key="Str_Log_LargeMemory">Large memory area detected, using 8 MB chunk size</system:String>
-    <system:String x:Key="Str_Log_NormalMemory">Normal memory area, using 4 MB chunk size</system:String>
+
+    <system:String x:Key="Str_Log_LargeMemory">Large memory area detected, using an 8 MB chunk size</system:String>
+    <system:String x:Key="Str_Log_NormalMemory">Normal memory area, using a 4 MB chunk size</system:String>
+
     <system:String x:Key="Str_Log_PatternNotFound">Specified pattern not found.</system:String>
     <system:String x:Key="Str_Log_AddressesFound">{0} addresses found.</system:String>
+
     <system:String x:Key="Str_Log_ScanningAddress">Starting pointer scan: 0x{0:X} ({1}/{2})</system:String>
     <system:String x:Key="Str_Log_PathsFound">• {0} pointer paths found.</system:String>
+
     <system:String x:Key="Str_Log_StabilityTest">=== Quick Stability Test for Best Pointers ===</system:String>
     <system:String x:Key="Str_Log_TestError">❌ {0}: Test error - {1}</system:String>
+
     <system:String x:Key="Str_Log_ScanComplete">✅ Pointer scan complete. {0} paths found.</system:String>
     <system:String x:Key="Str_Log_NoPaths">⚠️ No pointer paths found.</system:String>
     <system:String x:Key="Str_Log_ScanCancelled">⛔ Pattern scan cancelled by user.</system:String>
     <system:String x:Key="Str_Log_ScanError">❌ Error during scan: {0}</system:String>
+
     <system:String x:Key="Str_Log_StoppingScan">Stopping pattern scan...</system:String>
-    <system:String x:Key="Str_Log_NoPathToTest">No pointer path to test found. Perform a scan first.</system:String>
+
+    <system:String x:Key="Str_Log_NoPathToTest">No pointer path is available for testing. Perform a scan first.</system:String>
     <system:String x:Key="Str_Log_ValidationStarted">Starting pointer validation test... ({0} pointers)</system:String>
     <system:String x:Key="Str_Log_ValidationResults">Pointer Validation Results:</system:String>
-    <system:String x:Key="Str_Log_ValidCount">Total {0}/{1} pointers valid.</system:String>
-    <system:String x:Key="Str_Log_BestPathTest">Starting stability test for best pointer: {0}</system:String>
+    <system:String x:Key="Str_Log_ValidCount">{0}/{1} pointers are valid.</system:String>
+
+    <system:String x:Key="Str_Log_BestPathTest">Starting stability test for the best pointer: {0}</system:String>
     <system:String x:Key="Str_Log_ServiceStability">=== PointerValidationService Stability Test ===</system:String>
     <system:String x:Key="Str_Log_ScannerStability">=== PointerScanner Stability Test ===</system:String>
     <system:String x:Key="Str_Log_AvgStability">=== Average Stability Score: {0:F1}/100 ===</system:String>
-    <system:String x:Key="Str_Log_Reliable">✅ This pointer seems reliable!</system:String>
+
+    <system:String x:Key="Str_Log_Reliable">✅ This pointer appears reliable!</system:String>
     <system:String x:Key="Str_Log_MediumReliable">⚠️ This pointer is moderately reliable.</system:String>
-    <system:String x:Key="Str_Log_Unreliable">❌ This pointer is not reliable, try other pointers.</system:String>
+    <system:String x:Key="Str_Log_Unreliable">❌ This pointer is not reliable. Try another pointer.</system:String>
+
     <system:String x:Key="Str_Log_TestErrorGeneric">Error during pointer test: {0}</system:String>
-    <system:String x:Key="Str_Log_NoPathToSave">No pointer found to save.</system:String>
+
+    <system:String x:Key="Str_Log_NoPathToSave">No pointer is available to save.</system:String>
     <system:String x:Key="Str_Log_Saved">Pointers saved: {0}</system:String>
-    <system:String x:Key="Str_Log_SaveError">Error during save: {0}</system:String>
+    <system:String x:Key="Str_Log_SaveError">Error while saving: {0}</system:String>
+
     <system:String x:Key="Str_Log_Loaded">{0} pointer paths loaded: {1}</system:String>
     <system:String x:Key="Str_Log_ValidatingLoaded">Automatically validating loaded pointers...</system:String>
     <system:String x:Key="Str_Log_ValidationComplete">Automatic validation complete: {0}/{1} pointers valid</system:String>
     <system:String x:Key="Str_Log_Filtered">Invalid pointers filtered. Remaining: {0}</system:String>
-    <system:String x:Key="Str_Log_QuickCheck">Quick stability check for best pointer: {0}</system:String>
+
+    <system:String x:Key="Str_Log_QuickCheck">Quick stability check for the best pointer: {0}</system:String>
     <system:String x:Key="Str_Log_QuickStability">Quick Stability: {0:F1}/100</system:String>
-    <system:String x:Key="Str_Log_StableReady">✅ Pointer seems stable, ready to use!</system:String>
-    <system:String x:Key="Str_Log_UnstableWarn">⚠️ Pointer might be unstable, full test recommended.</system:String>
+    <system:String x:Key="Str_Log_StableReady">✅ Pointer appears stable and ready to use!</system:String>
+    <system:String x:Key="Str_Log_UnstableWarn">⚠️ The pointer may be unstable. A full test is recommended.</system:String>
+
     <system:String x:Key="Str_Log_ValidationError">Automatic validation error: {0}</system:String>
-    <system:String x:Key="Str_Log_NoValidInFile">No valid pointers found in file.</system:String>
-    <system:String x:Key="Str_Log_LoadError">Error during load: {0}</system:String>
+    <system:String x:Key="Str_Log_NoValidInFile">No valid pointers were found in the file.</system:String>
+    <system:String x:Key="Str_Log_LoadError">Error while loading: {0}</system:String>
+
     <system:String x:Key="Str_Log_ListingProcesses">Listing running processes...</system:String>
     <system:String x:Key="Str_Log_ProcessesFound">{0} windowed applications found.</system:String>
     <system:String x:Key="Str_Log_ListError">Error loading process list: {0}</system:String>
+
     <system:String x:Key="Str_Log_ThemeChanged">Theme changed: {0}</system:String>
-    <system:String x:Key="Str_Log_ThemeError">Error occurred while changing theme.</system:String>
+    <system:String x:Key="Str_Log_ThemeError">An error occurred while changing the theme.</system:String>
+
     <system:String x:Key="Str_Log_OcrEngineChanged">OCR engine changed: {0}</system:String>
+
     <system:String x:Key="Str_Log_TestingOcr">Testing OCR services...</system:String>
     <system:String x:Key="Str_Log_SelectProcessTest">Please select a valid process for testing.</system:String>
     <system:String x:Key="Str_Log_WindowNotFound">Process window not found.</system:String>
-    <system:String x:Key="Str_Log_ScreenshotFailed">Screenshot could not be taken.</system:String>
-    <system:String x:Key="Str_Log_ScreenshotTaken">Screenshot taken: {0}x{1}</system:String>
+    <system:String x:Key="Str_Log_ScreenshotFailed">Could not capture a screenshot.</system:String>
+    <system:String x:Key="Str_Log_ScreenshotTaken">Screenshot captured: {0}x{1}</system:String>
+
     <system:String x:Key="Str_Log_TestingWindowsOcr">Testing WindowsOcrService...</system:String>
-    <system:String x:Key="Str_Log_WindowsOcrSuccess">WindowsOcrService successful! Recognized text: {0}</system:String>
-    <system:String x:Key="Str_Log_WindowsOcrFail">WindowsOcrService could not recognize text.</system:String>
+    <system:String x:Key="Str_Log_WindowsOcrSuccess">WindowsOcrService succeeded! Recognized text: {0}</system:String>
+    <system:String x:Key="Str_Log_WindowsOcrFail">WindowsOcrService could not recognize any text.</system:String>
     <system:String x:Key="Str_Log_WindowsOcrError">WindowsOcrService error: {0}</system:String>
+
     <system:String x:Key="Str_Log_TestingIOcr">Testing IOcrService...</system:String>
-    <system:String x:Key="Str_Log_IOcrSuccess">IOcrService successful! Recognized text: {0}</system:String>
-    <system:String x:Key="Str_Log_IOcrFail">IOcrService could not recognize text.</system:String>
+    <system:String x:Key="Str_Log_IOcrSuccess">IOcrService succeeded! Recognized text: {0}</system:String>
+    <system:String x:Key="Str_Log_IOcrFail">IOcrService could not recognize any text.</system:String>
     <system:String x:Key="Str_Log_IOcrError">IOcrService error: {0}</system:String>
+
     <system:String x:Key="Str_Log_TestingRegion">Testing OcrRegionProcessor...</system:String>
-    <system:String x:Key="Str_Log_RegionSuccess">OcrRegionProcessor successful! Recognized text: {0}</system:String>
+    <system:String x:Key="Str_Log_RegionSuccess">OcrRegionProcessor succeeded! Recognized text: {0}</system:String>
     <system:String x:Key="Str_Log_RegionFail">OcrRegionProcessor found {0} regions but no text.</system:String>
     <system:String x:Key="Str_Log_RegionError">OcrRegionProcessor error: {0}</system:String>
+
     <system:String x:Key="Str_Log_OcrTestError">OCR test error: {0}</system:String>
-    <system:String x:Key="Str_Log_OcrChangeError">Error occurred while changing OCR engine.</system:String>
+    <system:String x:Key="Str_Log_OcrChangeError">An error occurred while changing the OCR engine.</system:String>
+
     <system:String x:Key="Str_Log_MethodChanged">Text detection method changed: {0}</system:String>
-    <system:String x:Key="Str_Log_EastInfo">EAST model provides high accuracy text detection.</system:String>
+    <system:String x:Key="Str_Log_EastInfo">The EAST model provides high-accuracy text detection.</system:String>
     <system:String x:Key="Str_Log_OpenCvInfo">OpenCV contour detection is suitable for general text.</system:String>
-    <system:String x:Key="Str_Log_NoneInfo">All text will be scanned in full screen mode.</system:String>
-    <system:String x:Key="Str_Log_MethodError">Error occurred while changing text detection method.</system:String>
-    <system:String x:Key="Str_Log_EastIncompatible">EAST model is not compatible with Windows OCR. Switched to OpenCV contour detection.</system:String>
+    <system:String x:Key="Str_Log_NoneInfo">All text will be scanned in full-screen mode.</system:String>
+    <system:String x:Key="Str_Log_MethodError">An error occurred while changing the text detection method.</system:String>
+    <system:String x:Key="Str_Log_EastIncompatible">The EAST model is not compatible with Windows OCR. Switched to OpenCV contour detection.</system:String>
+
     <system:String x:Key="Str_Log_AnomalyEnabled">Anomaly detection enabled</system:String>
     <system:String x:Key="Str_Log_AnomalyDisabled">Anomaly detection disabled</system:String>
+
     <system:String x:Key="Str_Log_MlEnabled">Machine learning enabled</system:String>
     <system:String x:Key="Str_Log_MlDisabled">Machine learning disabled</system:String>
+
     <system:String x:Key="Str_Log_CorrectionEnabled">Text correction enabled</system:String>
     <system:String x:Key="Str_Log_CorrectionDisabled">Text correction disabled</system:String>
+
     <system:String x:Key="Str_Log_ContextEnabled">Context analysis enabled</system:String>
     <system:String x:Key="Str_Log_ContextDisabled">Context analysis disabled</system:String>
+
     <system:String x:Key="Str_Log_DnnChanged">DNN model changed: {0}</system:String>
-    <system:String x:Key="Str_Log_EastDesc">EAST: High accuracy text detection</system:String>
+    <system:String x:Key="Str_Log_EastDesc">EAST: High-accuracy text detection</system:String>
     <system:String x:Key="Str_Log_CrnnDesc">CRNN: Advanced text recognition</system:String>
-    <system:String x:Key="Str_Log_PaddleDesc">PaddleOCR: Multi-lingual OCR support</system:String>
-    <system:String x:Key="Str_Log_CustomDesc">Custom: Custom DNN model</system:String>
-    <system:String x:Key="Str_Log_DnnError">Error occurred while changing DNN model.</system:String>
+    <system:String x:Key="Str_Log_PaddleDesc">PaddleOCR: Multilingual OCR support</system:String>
+    <system:String x:Key="Str_Log_CustomDesc">Custom DNN model</system:String>
+    <system:String x:Key="Str_Log_DnnError">An error occurred while changing the DNN model.</system:String>
+
     <system:String x:Key="Str_Log_MlStats">ML statistics displayed: {0} texts processed</system:String>
-    <system:String x:Key="Str_Log_MlStatsError">Error getting ML statistics.</system:String>
+    <system:String x:Key="Str_Log_MlStatsError">An error occurred while retrieving ML statistics.</system:String>
+
     <system:String x:Key="Str_Log_AnomalyStats">Anomaly statistics displayed: {0} texts analyzed</system:String>
-    <system:String x:Key="Str_Log_AnomalyStatsError">Error getting anomaly statistics.</system:String>
-    <system:String x:Key="Str_Log_MlCleared">ML history successfully cleared</system:String>
-    <system:String x:Key="Str_Log_MlClearError">Error clearing ML history.</system:String>
-    <system:String x:Key="Str_Log_AnomalyCleared">Anomaly detection history successfully cleared</system:String>
-    <system:String x:Key="Str_Log_AnomalyClearError">Error clearing anomaly history.</system:String>
-    <system:String x:Key="Str_Log_CachesCleared">✅ All caches successfully cleared</system:String>
+    <system:String x:Key="Str_Log_AnomalyStatsError">An error occurred while retrieving anomaly statistics.</system:String>
+
+    <system:String x:Key="Str_Log_MlCleared">ML history cleared successfully</system:String>
+    <system:String x:Key="Str_Log_MlClearError">An error occurred while clearing ML history.</system:String>
+
+    <system:String x:Key="Str_Log_AnomalyCleared">Anomaly detection history cleared successfully</system:String>
+    <system:String x:Key="Str_Log_AnomalyClearError">An error occurred while clearing anomaly history.</system:String>
+
+    <system:String x:Key="Str_Log_CachesCleared">✅ All caches cleared successfully</system:String>
     <system:String x:Key="Str_Log_RecipesReloaded">✅ Game recipes reloaded</system:String>
     <system:String x:Key="Str_Log_SettingsReset">✅ Settings reset to defaults</system:String>
     <system:String x:Key="Str_Log_SettingsSaved">✅ Settings saved to disk</system:String>
-    <system:String x:Key="Str_Log_RamAnomaly">RAM Anomaly detected: {0} (Confidence: {1:F1}%)</system:String>
-    <system:String x:Key="Str_Log_ManualAnomaly">Manual Anomaly detected: {0} (Confidence: {1:F1}%)</system:String>
+
+    <system:String x:Key="Str_Log_RamAnomaly">RAM anomaly detected: {0} (Confidence: {1:F1}%)</system:String>
+    <system:String x:Key="Str_Log_ManualAnomaly">Manual anomaly detected: {0} (Confidence: {1:F1}%)</system:String>
     <system:String x:Key="Str_Log_OcrAnomaly">Anomaly detected: {0} (Confidence: {1:F1}%)</system:String>
+
     <system:String x:Key="Str_Log_MlImprovements">ML improvements: {0} (Confidence: {1:F1}%)</system:String>
-    <system:String x:Key="Str_Log_OcrNoText">OCR: Text not recognized</system:String>
+
+    <system:String x:Key="Str_Log_OcrNoText">OCR: No text recognized</system:String>
     <system:String x:Key="Str_Log_OcrStarted">Continuous OCR started. Process: {0}</system:String>
+
     <system:String x:Key="Str_Log_RamStopped">Automatic RAM translation stopped.</system:String>
     <system:String x:Key="Str_Log_ManualStopped">Manual RAM translation stopped.</system:String>
     <system:String x:Key="Str_Log_OcrStopped">Screen translation stopped.</system:String>
-    <system:String x:Key="Str_Log_NewRecipe">New translation path saved for '{0}'! Starting translation...</system:String>
+
+    <system:String x:Key="Str_Log_NewRecipe">A new translation path was saved for '{0}'! Starting translation...</system:String>
     <system:String x:Key="Str_Log_StartingManual">Starting real-time address reading: {0:X}</system:String>
+
     <system:String x:Key="Str_Log_AddressError">Address parsing error: {0}</system:String>
+
     <system:String x:Key="Str_Log_SelectApp">Please select an application.</system:String>
-    <system:String x:Key="Str_Log_AttachFail">Could not attach to application.</system:String>
-    <system:String x:Key="Str_Log_AddressResolveFail">Address could not be resolved! Path might be invalid or game updated.</system:String>
-    <system:String x:Key="Str_Log_AttachFailAdmin">Could not attach to application. Try running as administrator.</system:String>
+    <system:String x:Key="Str_Log_AttachFail">Could not attach to the application.</system:String>
+    <system:String x:Key="Str_Log_AddressResolveFail">The address could not be resolved. The path may be invalid or the game may have been updated.</system:String>
+    <system:String x:Key="Str_Log_AttachFailAdmin">Could not attach to the application. Try running as administrator.</system:String>
+
     <system:String x:Key="Str_Log_OverlayShown">Translation window shown.</system:String>
     <system:String x:Key="Str_Log_OverlayHidden">Translation window hidden.</system:String>
+
     <system:String x:Key="Str_Log_NewRegion">New OCR region selected: {0}</system:String>
     <system:String x:Key="Str_Log_LanguageChanged">Language changed: {0}</system:String>
 
     <!-- MessageBox Strings -->
     <system:String x:Key="Str_AppStartError">Application startup error: {0}</system:String>
     <system:String x:Key="Str_StartErrorTitle">Startup Error</system:String>
+
     <system:String x:Key="Str_CriticalError">Critical error: {0}</system:String>
     <system:String x:Key="Str_ErrorTitle">Error</system:String>
     <system:String x:Key="Str_DispatcherError">Error: {0}</system:String>
+
     <system:String x:Key="Str_ThemeInitError">Theme initialization error: {0}</system:String>
     <system:String x:Key="Str_ThemeErrorTitle">Theme Error</system:String>
-    <system:String x:Key="Str_VideoOcrError">Error occurred while opening Video OCR window: {0}</system:String>
-    <system:String x:Key="Str_InvalidInput">Invalid input format.</system:String>
-    <system:String x:Key="Str_InvalidInputTitle">Invalid Input</system:String>
-    <system:String x:Key="Str_LogFileNotFound">Log file not found.</system:String>
-    <system:String x:Key="Str_InfoTitle">Information</system:String>
-    <system:String x:Key="Str_LogCleared">Log file cleared successfully.</system:String>
-    <system:String x:Key="Str_SuccessTitle">Success</system:String>
-    <system:String x:Key="Str_ReportExported">Report exported successfully!</system:String>
-    <system:String x:Key="Str_ExportCompleteTitle">Export Complete</system:String>
     <system:String x:Key="Str_ThemeChangeError">Theme change error: {0}</system:String>
 
-    <system:String x:Key="Str_Msg_EnterPointerPath">Please enter the permanent pointer path found with Cheat Engine:</system:String>
+    <system:String x:Key="Str_VideoOcrError">An error occurred while opening the Video OCR window: {0}</system:String>
+
+    <system:String x:Key="Str_InvalidInput">Invalid input format.</system:String>
+    <system:String x:Key="Str_InvalidInputTitle">Invalid Input</system:String>
+
+    <system:String x:Key="Str_LogFileNotFound">Log file not found.</system:String>
+    <system:String x:Key="Str_InfoTitle">Information</system:String>
+
+    <system:String x:Key="Str_LogCleared">Log file cleared successfully.</system:String>
+    <system:String x:Key="Str_SuccessTitle">Success</system:String>
+
+    <system:String x:Key="Str_ReportExported">Report exported successfully!</system:String>
+    <system:String x:Key="Str_ExportCompleteTitle">Export Complete</system:String>
+
+    <!-- Pointer Dialog -->
+    <system:String x:Key="Str_Msg_EnterPointerPath">Please enter the permanent pointer path you found with Cheat Engine:</system:String>
     <system:String x:Key="Str_Msg_InvalidInputFormat">Invalid input format.</system:String>
 
-    <system:String x:Key="Str_Grp_Shortcuts">Shortcut Settings</system:String>
-    <system:String x:Key="Str_Lbl_HotkeyOcr">OCR Shortcut:</system:String>
-    <system:String x:Key="Str_Lbl_HotkeyWindow">Translation Window:</system:String>
-    <system:String x:Key="Str_Lbl_HotkeyService">Switch Service:</system:String>
 </ResourceDictionary>

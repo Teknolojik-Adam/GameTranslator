@@ -5,141 +5,478 @@ using System.Text.RegularExpressions;
 
 namespace GameTranslatorUltimate
 {
-    /// <summary>
-    /// OCR sonrası metinlerde sıkça rastlanan hataları, performansı ve doğruluğu
-    /// ön planda tutarak düzelten gelişmiş bir yardımcı sınıftır.
-    /// </summary>
     public static class OcrTextCorrector
     {
-        // Kurallar, en spesifik olandan en genele doğru sıralanmıştır.
-        private static readonly Dictionary<Regex, string> ContextualWordCorrections;
-        private static readonly Dictionary<Regex, string> GeneralRegexCorrections;
-        private static readonly Dictionary<string, string> SimpleStringCorrections;
-
-        static OcrTextCorrector()
+        private sealed class RegexCorrection
         {
-            // Sadece tam kelimeleri hedef alan, en güvenli kurallar.
-            ContextualWordCorrections = new Dictionary<Regex, string>
-            {
-                { new Regex(@"\btlie\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "the" },
-                { new Regex(@"\btlle\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "the" },
-                { new Regex(@"\bwitli\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "with" },
-                { new Regex(@"\bfroln\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "from" },
-                { new Regex(@"\byuor\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "your" },
-                { new Regex(@"\btaht\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "that" },
-                { new Regex(@"\btliat\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "that" },
-                { new Regex(@"\bcan 't\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "can't" }
-            };
+            public Regex Pattern { get; private set; }
+            public string Replacement { get; private set; }
+            public bool PreserveCase { get; private set; }
 
-            // Genel desenleri hedef alan Regex kuralları.
-            GeneralRegexCorrections = new Dictionary<Regex, string>
+            public RegexCorrection(
+                string pattern,
+                string replacement,
+                RegexOptions options,
+                bool preserveCase)
             {
-                { new Regex(@"\bl\b", RegexOptions.Compiled), "I" },
-                { new Regex(@"(?<=\d)[Oo](?=\d)", RegexOptions.Compiled), "0" }, // 'O' or 'o' between digits
-                { new Regex(@"(?<=\d)S(?=\d)", RegexOptions.Compiled), "5" },
-                { new Regex(@"(?<=\d)[Il](?=\d)", RegexOptions.Compiled), "1" }, // 'I' or 'l' between digits
-                { new Regex(@"(?<=\d)Z(?=\d)", RegexOptions.Compiled), "2" },
-                { new Regex(@"(?<=\d)B(?=\d)", RegexOptions.Compiled), "8" },
-                { new Regex(@"\s{2,}", RegexOptions.Compiled), " " },
-                { new Regex(@"\s+([.,!?;:])", RegexOptions.Compiled), "$1" }
-            };
+                Pattern = new Regex(
+                    pattern,
+                    options | RegexOptions.Compiled);
 
-            // Hızlı, basit ve güvenli metin değişimleri.
-            SimpleStringCorrections = new Dictionary<string, string>
-            {
-                { " l ", " I " }, { " l'", " I'" }, { "Il ", "I " },
-                { "ﬁ", "fi" }, { "ﬂ", "fl" }, { "ﬀ", "ff" },
-                { "he llo", "hello" }, { "leve l", "level" }, { "weicome", "welcome" },
-                { "go od", "good" }, { "t ime", "time" }, { "worid", "world" }
-            };
+                Replacement = replacement;
+                PreserveCase = preserveCase;
+            }
         }
 
-        public static string CorrectText(string ocrText, bool preserveCase = true, ILogger logger = null)
+        private sealed class StringCorrection
         {
-            if (string.IsNullOrWhiteSpace(ocrText)) return string.Empty;
+            public string Source { get; private set; }
+            public string Target { get; private set; }
 
-            string correctedText = ocrText;
+            public StringCorrection(
+                string source,
+                string target)
+            {
+                Source = source;
+                Target = target;
+            }
+        }
+
+        private static readonly RegexCorrection[] CommonCorrections =
+        {
+            new RegexCorrection(
+                @"(?<=\d)[Oo](?=\d)",
+                "0",
+                RegexOptions.None,
+                false),
+
+            new RegexCorrection(
+                @"(?<=\d)[Il](?=\d)",
+                "1",
+                RegexOptions.None,
+                false),
+
+            new RegexCorrection(
+                @"(?<=\d)S(?=\d)",
+                "5",
+                RegexOptions.None,
+                false),
+
+            new RegexCorrection(
+                @"(?<=\d)Z(?=\d)",
+                "2",
+                RegexOptions.None,
+                false),
+
+            new RegexCorrection(
+                @"(?<=\d)B(?=\d)",
+                "8",
+                RegexOptions.None,
+                false),
+
+            new RegexCorrection(
+                @"[ \t]{2,}",
+                " ",
+                RegexOptions.None,
+                false),
+
+            new RegexCorrection(
+                @"\s+([.,!?;:])",
+                "$1",
+                RegexOptions.None,
+                false)
+        };
+
+        private static readonly RegexCorrection[] EnglishCorrections =
+        {
+            new RegexCorrection(
+                @"\btlie\b",
+                "the",
+                RegexOptions.IgnoreCase,
+                true),
+
+            new RegexCorrection(
+                @"\btlle\b",
+                "the",
+                RegexOptions.IgnoreCase,
+                true),
+
+            new RegexCorrection(
+                @"\bwitli\b",
+                "with",
+                RegexOptions.IgnoreCase,
+                true),
+
+            new RegexCorrection(
+                @"\bfroln\b",
+                "from",
+                RegexOptions.IgnoreCase,
+                true),
+
+            new RegexCorrection(
+                @"\byuor\b",
+                "your",
+                RegexOptions.IgnoreCase,
+                true),
+
+            new RegexCorrection(
+                @"\btaht\b",
+                "that",
+                RegexOptions.IgnoreCase,
+                true),
+
+            new RegexCorrection(
+                @"\btliat\b",
+                "that",
+                RegexOptions.IgnoreCase,
+                true),
+
+            new RegexCorrection(
+                @"\bcan\s+'t\b",
+                "can't",
+                RegexOptions.IgnoreCase,
+                true),
+
+            new RegexCorrection(
+                @"\bl\b",
+                "I",
+                RegexOptions.None,
+                false)
+        };
+
+        private static readonly StringCorrection[] CommonStringCorrections =
+        {
+            new StringCorrection("ﬁ", "fi"),
+            new StringCorrection("ﬂ", "fl"),
+            new StringCorrection("ﬀ", "ff"),
+            new StringCorrection("ﬃ", "ffi"),
+            new StringCorrection("ﬄ", "ffl"),
+            new StringCorrection("\u00A0", " ")
+        };
+
+        private static readonly StringCorrection[] EnglishStringCorrections =
+        {
+            new StringCorrection(" l ", " I "),
+            new StringCorrection(" l'", " I'"),
+            new StringCorrection("Il ", "I "),
+            new StringCorrection("he llo", "hello"),
+            new StringCorrection("leve l", "level"),
+            new StringCorrection("weicome", "welcome"),
+            new StringCorrection("go od", "good"),
+            new StringCorrection("t ime", "time"),
+            new StringCorrection("worid", "world")
+        };
+
+        public static string CorrectText(
+            string ocrText,
+            bool preserveCase = true,
+            ILogger logger = null)
+        {
+            return CorrectText(
+                ocrText,
+                null,
+                preserveCase,
+                logger);
+        }
+
+        public static string CorrectText(
+            string ocrText,
+            string language,
+            bool preserveCase = true,
+            ILogger logger = null)
+        {
+            if (string.IsNullOrWhiteSpace(ocrText))
+                return string.Empty;
+
             try
             {
-                // 1. Adım: En güvenli olan tam kelime düzeltmeleri.
-                correctedText = ApplyRegexCorrections(correctedText, ContextualWordCorrections, preserveCase);
+                string result =
+                    NormalizeText(
+                        ocrText);
 
-                // 2. Adım: Genel desen düzeltmeleri.
-                correctedText = ApplyRegexCorrections(correctedText, GeneralRegexCorrections, preserveCase: false);
+                result =
+                    ApplyCorrections(
+                        result,
+                        CommonCorrections,
+                        preserveCase);
 
-                // 3. Adım: Hızlı ve basit metin değişimleri.
-                foreach (var correction in SimpleStringCorrections)
+                result =
+                    ApplyStringCorrections(
+                        result,
+                        CommonStringCorrections);
+
+                if (IsEnglish(language))
                 {
-                    correctedText = correctedText.Replace(correction.Key, correction.Value);
+                    result =
+                        ApplyCorrections(
+                            result,
+                            EnglishCorrections,
+                            preserveCase);
+
+                    result =
+                        ApplyStringCorrections(
+                            result,
+                            EnglishStringCorrections);
                 }
+
+                result =
+                    NormalizeText(
+                        result);
+
+                return result;
             }
             catch (Exception ex)
             {
-                logger?.LogError("OcrTextCorrector sırasında hata oluştu.", ex);
-                return ocrText.Trim(); // Hata durumunda orijinal metni döndür.
+                logger?.LogError(
+                    "OCR metin düzeltme işlemi sırasında hata oluştu.",
+                    ex);
+
+                return ocrText.Trim();
             }
-            return correctedText.Trim();
         }
 
-        private static string ApplyRegexCorrections(string text, Dictionary<Regex, string> corrections, bool preserveCase)
+        private static string ApplyCorrections(
+            string text,
+            IEnumerable<RegexCorrection> corrections,
+            bool preserveCase)
         {
-            foreach (var correction in corrections)
+            string result = text;
+
+            foreach (RegexCorrection correction in corrections)
             {
-                text = correction.Key.Replace(text, match =>
-                {
-                    string replacement = correction.Value;
-                    if (!preserveCase || match.Value.Length == 0) return replacement;
-
-                    if (match.Value.All(char.IsUpper))
-                        return replacement.ToUpper();
-                    if (char.IsUpper(match.Value[0]))
-                        return char.ToUpper(replacement[0]) + replacement.Substring(1);
-
-                    return replacement;
-                });
+                result =
+                    correction.Pattern.Replace(
+                        result,
+                        match =>
+                            GetReplacement(
+                                match,
+                                correction,
+                                preserveCase));
             }
-            return text;
+
+            return result;
         }
 
-        public static CorrectionStats GetCorrectionStats(string original, string corrected) => new CorrectionStats(original, corrected);
+        private static string GetReplacement(
+            Match match,
+            RegexCorrection correction,
+            bool preserveCase)
+        {
+            string replacement =
+                correction.Replacement;
+
+            if (!preserveCase ||
+                !correction.PreserveCase ||
+                string.IsNullOrEmpty(match.Value) ||
+                string.IsNullOrEmpty(replacement))
+            {
+                return replacement;
+            }
+
+            if (match.Value.All(char.IsUpper))
+            {
+                return replacement.ToUpperInvariant();
+            }
+
+            if (char.IsUpper(match.Value[0]))
+            {
+                if (replacement.Length == 1)
+                {
+                    return replacement.ToUpperInvariant();
+                }
+
+                return
+                    char.ToUpperInvariant(
+                        replacement[0]) +
+                    replacement.Substring(1);
+            }
+
+            return replacement;
+        }
+
+        private static string ApplyStringCorrections(
+            string text,
+            IEnumerable<StringCorrection> corrections)
+        {
+            string result = text;
+
+            foreach (StringCorrection correction in corrections)
+            {
+                result =
+                    result.Replace(
+                        correction.Source,
+                        correction.Target);
+            }
+
+            return result;
+        }
+
+        private static string NormalizeText(
+            string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            string result =
+                text.Replace("\r\n", "\n")
+                    .Replace('\r', '\n')
+                    .Replace('\t', ' ')
+                    .Trim();
+
+            result =
+                Regex.Replace(
+                    result,
+                    @"[ ]{2,}",
+                    " ");
+
+            result =
+                Regex.Replace(
+                    result,
+                    @" *\n *",
+                    "\n");
+
+            return result;
+        }
+
+        private static bool IsEnglish(
+            string language)
+        {
+            if (string.IsNullOrWhiteSpace(language))
+                return false;
+
+            string value =
+                language
+                    .Trim()
+                    .ToLowerInvariant();
+
+            return
+                value == "eng" ||
+                value == "en" ||
+                value == "en-us" ||
+                value == "en-gb" ||
+                value == "english";
+        }
+
+        public static CorrectionStats GetCorrectionStats(
+            string original,
+            string corrected)
+        {
+            return new CorrectionStats(
+                original,
+                corrected);
+        }
     }
 
-    public class CorrectionStats
+    public sealed class CorrectionStats
     {
-        public int OriginalLength { get; }
-        public int CorrectedLength { get; }
-        public int CharactersChanged { get; }
-        public bool WasModified { get; }
+        public int OriginalLength { get; private set; }
+        public int CorrectedLength { get; private set; }
+        public int CharactersChanged { get; private set; }
+        public bool WasModified { get; private set; }
 
-        public CorrectionStats(string original, string corrected)
+        public CorrectionStats(
+            string original,
+            string corrected)
         {
-            OriginalLength = original?.Length ?? 0;
-            CorrectedLength = corrected?.Length ?? 0;
-            WasModified = original != corrected;
-            CharactersChanged = WasModified ? LevenshteinDistance(original, corrected) : 0;
+            string source =
+                original ?? string.Empty;
+
+            string target =
+                corrected ?? string.Empty;
+
+            OriginalLength =
+                source.Length;
+
+            CorrectedLength =
+                target.Length;
+
+            WasModified =
+                !string.Equals(
+                    source,
+                    target,
+                    StringComparison.Ordinal);
+
+            CharactersChanged =
+                WasModified
+                    ? LevenshteinDistance(
+                        source,
+                        target)
+                    : 0;
         }
 
-        // Değişen karakter sayısını daha doğru hesaplamak için Levenshtein mesafesi algoritması.
-        private static int LevenshteinDistance(string s, string t)
+        private static int LevenshteinDistance(
+            string source,
+            string target)
         {
-            if (string.IsNullOrEmpty(s)) return t?.Length ?? 0;
-            if (string.IsNullOrEmpty(t)) return s.Length;
+            if (string.IsNullOrEmpty(source))
+                return target?.Length ?? 0;
 
-            int n = s.Length; int m = t.Length;
-            int[,] d = new int[n + 1, m + 1];
-            for (int i = 0; i <= n; d[i, 0] = i++) ;
-            for (int j = 0; j <= m; d[0, j] = j++) ;
-            for (int i = 1; i <= n; i++)
+            if (string.IsNullOrEmpty(target))
+                return source.Length;
+
+            if (source.Length > target.Length)
             {
-                for (int j = 1; j <= m; j++)
-                {
-                    int cost = (t[j - 1] == s[i - 1]) ? 0 : 1;
-                    d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
-                }
+                string temp = source;
+                source = target;
+                target = temp;
             }
-            return d[n, m];
+
+            int[] previous =
+                new int[source.Length + 1];
+
+            int[] current =
+                new int[source.Length + 1];
+
+            for (int i = 0;
+                 i <= source.Length;
+                 i++)
+            {
+                previous[i] = i;
+            }
+
+            for (int j = 1;
+                 j <= target.Length;
+                 j++)
+            {
+                current[0] = j;
+
+                for (int i = 1;
+                     i <= source.Length;
+                     i++)
+                {
+                    int cost =
+                        source[i - 1] ==
+                        target[j - 1]
+                            ? 0
+                            : 1;
+
+                    current[i] =
+                        Math.Min(
+                            Math.Min(
+                                current[i - 1] + 1,
+                                previous[i] + 1),
+                            previous[i - 1] + cost);
+                }
+
+                int[] temp =
+                    previous;
+
+                previous =
+                    current;
+
+                current =
+                    temp;
+            }
+
+            return previous[source.Length];
         }
 
-        public override string ToString() => $"Modified: {WasModified}, Changes: {CharactersChanged}, Length: {OriginalLength} -> {CorrectedLength}";
+        public override string ToString()
+        {
+            return
+                $"Modified: {WasModified}, " +
+                $"Changes: {CharactersChanged}, " +
+                $"Length: {OriginalLength} -> {CorrectedLength}";
+        }
     }
 }

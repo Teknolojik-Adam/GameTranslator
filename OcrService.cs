@@ -3,792 +3,2370 @@ using OpenCvSharp.Dnn;
 using OpenCvSharp.Extensions;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Tesseract;
-using CvPoint = OpenCvSharp.Point;
 
 namespace GameTranslatorUltimate
 {
     public class OcrService : IOcrService, IDisposable
     {
-        #region Win32 Imports and Constants
-    
-        [DllImport("user32.dll")] private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
-        [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-        [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool PrintWindow(
+            IntPtr hWnd,
+            IntPtr hdcBlt,
+            uint nFlags);
 
-        #endregion
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool GetWindowRect(
+            IntPtr hWnd,
+            out RECT lpRect);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
 
         private readonly ILogger _logger;
         private readonly AppSettings _appSettings;
         private readonly Dictionary<OcrEngineType, IOcrEngine> _ocrEngines;
+        private readonly SemaphoreSlim _eastLock;
+
         private readonly Net _eastNet;
-        private const string EastModelPath = "frozen_east_text_detection.pb";
-        private bool _disposed = false;
+        private readonly string _eastModelPath;
 
-        public OcrService(ILogger logger, AppSettings appSettings)
+        private readonly object _regionCacheLock = new object();
+        private List<System.Drawing.Rectangle> _cachedRegions;
+        private long _cachedRegionsTicks;
+        private int _cachedWidth;
+        private int _cachedHeight;
+        private TextDetectionMethod _cachedMethod;
+        private const int RegionCacheMs = 850;
+
+        private int _disposed;
+
+        public OcrService(
+            ILogger logger,
+            AppSettings appSettings)
         {
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
-            _ocrEngines = new Dictionary<OcrEngineType, IOcrEngine>
-            {
-                { OcrEngineType.Tesseract, new TesseractOcrEngine(logger, appSettings) },
-                { OcrEngineType.WindowsOcr, new WindowsOcrEngine(logger) }
-            };
+            _logger =
+                logger ?? throw new ArgumentNullException(nameof(logger));
 
-            if (File.Exists(EastModelPath))
+            _appSettings =
+                appSettings ?? throw new ArgumentNullException(nameof(appSettings));
+
+            _eastLock =
+                new SemaphoreSlim(1, 1);
+
+            _ocrEngines =
+                new Dictionary<OcrEngineType, IOcrEngine>
+                {
+                    {
+                        OcrEngineType.Tesseract,
+                        new TesseractOcrEngine(
+                            logger,
+                            appSettings)
+                    },
+                    {
+                        OcrEngineType.WindowsOcr,
+                        new WindowsOcrEngine(logger)
+                    }
+                };
+
+            _eastModelPath =
+                Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory,
+                    "frozen_east_text_detection.pb");
+
+            if (File.Exists(_eastModelPath))
             {
-                _eastNet = CvDnn.ReadNet(EastModelPath);
-                _logger.LogInformation("EAST metin algÄ±lama modeli baÅŸarÄ±yla yÃ¼klendi.");
+                try
+                {
+                    _eastNet =
+                        CvDnn.ReadNet(
+                            _eastModelPath);
+
+                    _logger.LogInformation(
+                        "EAST metin algılama modeli yüklendi.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        $"EAST modeli yüklenemedi: {_eastModelPath}",
+                        ex);
+
+                    _eastNet = null;
+                }
             }
             else
             {
-                _logger.LogError($"EAST model bulunamadÄ±: {Path.GetFullPath(EastModelPath)}. GeliÅŸmiÅŸ metin algÄ±lama yapÄ±lamayacak.");
+                _logger.LogWarning(
+                    $"EAST modeli bulunamadı: {_eastModelPath}");
+
                 _eastNet = null;
             }
         }
 
-        public async Task<string> GetTextFromImage(Bitmap image, string language, bool invertColors = false)
+        public async Task<string> GetTextFromImage(
+            Bitmap image,
+            string language,
+            bool invertColors = false)
         {
-            if (image == null) return string.Empty;
+            ThrowIfDisposed();
 
-            using (var processedImage = PreprocessImageForOcr(image, invertColors))
+            if (image == null)
+                return string.Empty;
+
+            using (Bitmap processed =
+                   PreprocessImageForOcr(
+                       image,
+                       invertColors))
             {
-                if (processedImage == null) return string.Empty;
+                if (processed == null)
+                    return string.Empty;
 
-                return await RecognizeTextInRegionsAsync(processedImage, language);
+                return await RecognizePreparedImageAsync(
+                        processed,
+                        language)
+                    .ConfigureAwait(false);
             }
         }
 
-        public async Task<string> GetTextAdaptiveAsync(Bitmap image, string language)
+        public async Task<string> GetTextAdaptiveAsync(
+            Bitmap image,
+            string language)
         {
-            if (image == null) return string.Empty;
-            if (_ocrEngines.TryGetValue(_appSettings.OcrEngine, out var engine))
+            ThrowIfDisposed();
+
+            if (image == null)
+                return string.Empty;
+
+            IOcrEngine engine;
+
+            if (!_ocrEngines.TryGetValue(
+                    _appSettings.OcrEngine,
+                    out engine))
             {
-                var psmToUse = (Tesseract.PageSegMode)_appSettings.SelectedTesseractPageSegMode;
-                return await engine.RecognizeTextAsync(image, language, psmToUse);
+                _logger.LogError(
+                    $"Seçilen OCR motoru bulunamadı: {_appSettings.OcrEngine}");
+
+                return string.Empty;
             }
-            _logger.LogError($"SeÃ§ilen OCR motoru '{_appSettings.OcrEngine}' bulunamadÄ±.");
-            return string.Empty;
+
+            PageSegMode psm =
+                (PageSegMode)_appSettings.SelectedTesseractPageSegMode;
+
+            string result =
+                await engine
+                    .RecognizeTextAsync(
+                        image,
+                        language,
+                        psm)
+                    .ConfigureAwait(false);
+
+            return OcrTextCorrector.CorrectText(
+                result,
+                language,
+                true,
+                _logger);
         }
 
-        public async Task<string> RecognizeTextInRegionsAsync(Bitmap image, string language)
+        public async Task<string> RecognizeTextInRegionsAsync(
+            Bitmap image,
+            string language)
         {
-            if (image == null) return string.Empty;
+            ThrowIfDisposed();
 
-            using (var processedImage = PreprocessImageForOcr(image))
+            if (image == null)
+                return string.Empty;
+
+            using (Bitmap processed =
+                   PreprocessImageForOcr(image))
             {
-                if (processedImage == null) return string.Empty;
+                if (processed == null)
+                    return string.Empty;
 
-                if (_appSettings.TextDetectionMethod == TextDetectionMethod.None)
+                return await RecognizePreparedImageAsync(
+                        processed,
+                        language)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        private async Task<string> RecognizePreparedImageAsync(
+            Bitmap processedImage,
+            string language)
+        {
+            if (processedImage == null)
+                return string.Empty;
+
+            if (_appSettings.TextDetectionMethod ==
+                TextDetectionMethod.None)
+            {
+                return await GetTextAdaptiveAsync(
+                        processedImage,
+                        language)
+                    .ConfigureAwait(false);
+            }
+
+            List<System.Drawing.Rectangle> regions =
+                FindTextRegions(
+                    processedImage);
+
+            if (regions == null ||
+                regions.Count == 0)
+            {
+                return await GetTextAdaptiveAsync(
+                        processedImage,
+                        language)
+                    .ConfigureAwait(false);
+            }
+
+            regions =
+                OrderAndMergeRegions(
+                    regions,
+                    processedImage.Width,
+                    processedImage.Height);
+
+            if (regions.Count == 0)
+            {
+                return await GetTextAdaptiveAsync(
+                        processedImage,
+                        language)
+                    .ConfigureAwait(false);
+            }
+
+            var recognizedTexts =
+                new List<string>();
+
+            foreach (System.Drawing.Rectangle region in regions)
+            {
+                string text =
+                    await RecognizeTextInSingleRegionAsync(
+                            processedImage,
+                            region,
+                            language)
+                        .ConfigureAwait(false);
+
+                if (!string.IsNullOrWhiteSpace(text))
                 {
-                    return await GetTextAdaptiveAsync(processedImage, language);
+                    recognizedTexts.Add(text);
                 }
+            }
 
-                var regions = FindTextRegions(processedImage);
-                if (!regions.Any())
+            if (recognizedTexts.Count == 0)
+            {
+                return await GetTextAdaptiveAsync(
+                        processedImage,
+                        language)
+                    .ConfigureAwait(false);
+            }
+
+            return OcrTextCorrector.CorrectText(
+                string.Join(" ", recognizedTexts),
+                language,
+                true,
+                _logger);
+        }
+
+        private async Task<string> RecognizeTextInSingleRegionAsync(
+            Bitmap sourceImage,
+            System.Drawing.Rectangle region,
+            string language)
+        {
+            using (Bitmap regionImage =
+                   CropImage(
+                       sourceImage,
+                       region))
+            {
+                if (regionImage == null)
+                    return string.Empty;
+
+                int padding =
+                    Math.Max(
+                        6,
+                        Math.Min(
+                            24,
+                            regionImage.Height / 5));
+
+                using (Bitmap paddedImage =
+                       AddPaddingToBitmap(
+                           regionImage,
+                           padding))
                 {
-                    _logger.LogWarning("Metin bÃ¶lgesi algÄ±lanamadÄ±. Tam gÃ¶rÃ¼ntÃ¼ taranÄ±yor.");
-                    return await GetTextAdaptiveAsync(processedImage, language);
+                    if (paddedImage == null)
+                        return string.Empty;
+
+                    return await GetTextAdaptiveAsync(
+                            paddedImage,
+                            language)
+                        .ConfigureAwait(false);
                 }
-
-                _logger.LogInformation($"{regions.Count} adet metin bÃ¶lgesi bulundu.");
-
-                var tasks = regions.Select(region => RecognizeTextInSingleRegionAsync(processedImage, region, language));
-                var recognizedTexts = await Task.WhenAll(tasks);
-
-                return string.Join(" ", recognizedTexts.Where(t => !string.IsNullOrWhiteSpace(t)));
             }
         }
 
-        private async Task<string> RecognizeTextInSingleRegionAsync(Bitmap sourceImage, System.Drawing.Rectangle region, string language)
+        private Bitmap AddPaddingToBitmap(
+            Bitmap original,
+            int paddingSize)
         {
-            using (var regionImage = CropImage(sourceImage, region))
+            if (original == null)
+                return null;
+
+            if (paddingSize < 0)
+                paddingSize = 0;
+
+            var padded =
+                new Bitmap(
+                    original.Width + paddingSize * 2,
+                    original.Height + paddingSize * 2,
+                    System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+
+            using (Graphics graphics =
+                   Graphics.FromImage(padded))
             {
-                if (regionImage == null) return string.Empty;
-                
-                // OCR YanÄ±lmalarÄ±nÄ± Ã–nlemek iÃ§in SÄ±nÄ±r Ã‡izgisi (Padding) Ekleme
-                using (var paddedImage = AddPaddingToBitmap(regionImage, 15)) // 15 piksel siyah Ã§erÃ§eve
+                graphics.Clear(Color.White);
+
+                graphics.DrawImageUnscaled(
+                    original,
+                    paddingSize,
+                    paddingSize);
+            }
+
+            return padded;
+        }
+
+        public List<System.Drawing.Rectangle> FindTextRegions(
+            Bitmap sourceImage)
+        {
+            ThrowIfDisposed();
+
+            if (sourceImage == null)
+            {
+                return new List<System.Drawing.Rectangle>();
+            }
+
+            if (_appSettings.TextDetectionMethod ==
+                TextDetectionMethod.None)
+            {
+                return FullImageRegion(
+                    sourceImage);
+            }
+
+            lock (_regionCacheLock)
+            {
+                if (_cachedRegions != null && _cachedWidth == sourceImage.Width && _cachedHeight == sourceImage.Height && _cachedMethod == _appSettings.TextDetectionMethod)
                 {
-                    return await GetTextAdaptiveAsync(paddedImage, language);
+                    long elapsedMs = (Stopwatch.GetTimestamp() - _cachedRegionsTicks) * 1000 / Stopwatch.Frequency;
+                    if (elapsedMs < RegionCacheMs)
+                    {
+                        return new List<System.Drawing.Rectangle>(_cachedRegions);
+                    }
                 }
             }
-        }
 
-        private Bitmap AddPaddingToBitmap(Bitmap original, int paddingSize)
-        {
-            var paddedBitmap = new Bitmap(original.Width + paddingSize * 2, original.Height + paddingSize * 2);
-            using (var g = Graphics.FromImage(paddedBitmap))
+            List<System.Drawing.Rectangle> result;
+            if (_appSettings.TextDetectionMethod ==
+                TextDetectionMethod.East)
             {
-                g.Clear(Color.Black); // OCR motorlarÄ±nÄ±n zÄ±tlÄ±k algÄ±lamasÄ±nÄ± artÄ±rmak iÃ§in siyah arka plan
-                g.DrawImage(original, paddingSize, paddingSize);
-            }
-            return paddedBitmap;
-        }
-
-        public List<System.Drawing.Rectangle> FindTextRegions(Bitmap sourceImage)
-        {
-            if (_appSettings.TextDetectionMethod == TextDetectionMethod.None)
-            {
-                return new List<System.Drawing.Rectangle> { new System.Drawing.Rectangle(0, 0, sourceImage.Width, sourceImage.Height) };
-            }
-
-            if (_appSettings.TextDetectionMethod == TextDetectionMethod.East)
-            {
-                if (_eastNet == null || sourceImage == null)
+                if (_eastNet == null)
                 {
-                    _logger.LogWarning("EAST modeli yÃ¼klenmedi, tam ekran taranacak.");
-                    return new List<System.Drawing.Rectangle> { new System.Drawing.Rectangle(0, 0, sourceImage.Width, sourceImage.Height) };
+                    result = FullImageRegion(sourceImage);
                 }
-
-                return FindTextRegionsWithEast(sourceImage);
+                else
+                {
+                    result = FindTextRegionsWithEast(sourceImage);
+                }
             }
-
-            if (_appSettings.TextDetectionMethod == TextDetectionMethod.OpenCV)
+            else if (_appSettings.TextDetectionMethod ==
+                TextDetectionMethod.OpenCV)
             {
-                return FindTextRegionsWithOpenCV(sourceImage);
+                result = FindTextRegionsWithOpenCV(sourceImage);
+            }
+            else
+            {
+                result = FullImageRegion(sourceImage);
             }
 
-            return new List<System.Drawing.Rectangle> { new System.Drawing.Rectangle(0, 0, sourceImage.Width, sourceImage.Height) };
+            lock (_regionCacheLock)
+            {
+                _cachedRegions = new List<System.Drawing.Rectangle>(result);
+                _cachedWidth = sourceImage.Width;
+                _cachedHeight = sourceImage.Height;
+                _cachedMethod = _appSettings.TextDetectionMethod;
+                _cachedRegionsTicks = Stopwatch.GetTimestamp();
+            }
+            return result;
         }
 
-        private List<System.Drawing.Rectangle> FindTextRegionsWithEast(Bitmap sourceImage)
+        private List<System.Drawing.Rectangle> FindTextRegionsWithEast(
+            Bitmap sourceImage)
         {
+            if (sourceImage == null)
+                return new List<System.Drawing.Rectangle>();
+
+            if (_eastNet == null)
+            {
+                return FullImageRegion(
+                    sourceImage);
+            }
+
             try
             {
-                using (Mat src = BitmapConverter.ToMat(sourceImage))
+                using (Mat src =
+                       BitmapConverter.ToMat(sourceImage))
                 {
-                    int newW = (int)(src.Width / 32.0) * 32;
-                    int newH = (int)(src.Height / 32.0) * 32;
-                    if (newW <= 0 || newH <= 0)
+                    int newWidth =
+                        (src.Width / 32) * 32;
+
+                    int newHeight =
+                        (src.Height / 32) * 32;
+
+                    if (newWidth < 32)
+                        newWidth = 32;
+
+                    if (newHeight < 32)
+                        newHeight = 32;
+
+                    double ratioWidth =
+                        (double)src.Width /
+                        newWidth;
+
+                    double ratioHeight =
+                        (double)src.Height /
+                        newHeight;
+
+                    using (Mat blob =
+                           CvDnn.BlobFromImage(
+                               src,
+                               1.0,
+                               new OpenCvSharp.Size(
+                                   newWidth,
+                                   newHeight),
+                               new Scalar(
+                                   123.68,
+                                   116.78,
+                                   103.94),
+                               true,
+                               false))
                     {
-                        _logger.LogWarning($"Resim boyutu ({src.Width}x{src.Height}) EAST modeli iÃ§in Ã§ok kÃ¼Ã§Ã¼k.");
-                        return new List<System.Drawing.Rectangle>();
-                    }
-                    double rW = (double)src.Width / newW;
-                    double rH = (double)src.Height / newH;
-                    using (Mat blob = CvDnn.BlobFromImage(src, 1.0, new OpenCvSharp.Size(newW, newH), new Scalar(123.68, 116.78, 103.94), true, false))
-                    {
-                        _eastNet.SetInput(blob);
-                        string[] outNames = { "feature_fusion/Conv_7/Sigmoid", "feature_fusion/GELU_2/Sigmoid" };
-                        var output = new Mat[outNames.Length];
-                        _eastNet.Forward(output, outNames);
-                        using (Mat scores = output[0])
-                        using (Mat geometry = output[1])
+                        Mat[] output =
                         {
-                            var (boxes, confidences) = Decode(scores, geometry, 0.5f);
-                            CvDnn.NMSBoxes(boxes, confidences, 0.5f, 0.4f, out int[] indices);
-                            var finalRects = new List<System.Drawing.Rectangle>();
-                            foreach (int i in indices)
+                            new Mat(),
+                            new Mat()
+                        };
+
+                        try
+                        {
+                            _eastLock.Wait();
+
+                            try
                             {
-                                RotatedRect box = boxes[i];
-                                OpenCvSharp.Point2f[] vertices = box.Points();
-                                for (int j = 0; j < 4; j++)
+                                _eastNet.SetInput(blob);
+
+                                string[] outputNames =
                                 {
-                                    vertices[j].X = vertices[j].X * (float)rW;
-                                    vertices[j].Y = vertices[j].Y * (float)rH;
-                                }
-                                var boundingBox = Cv2.BoundingRect(vertices);
-                                int x = Math.Max(0, boundingBox.X);
-                                int y = Math.Max(0, boundingBox.Y);
-                                int width = Math.Min(sourceImage.Width - x, boundingBox.Width);
-                                int height = Math.Min(sourceImage.Height - y, boundingBox.Height);
-                                int padding = (int)(height * 0.1);
-                                x = Math.Max(0, x - padding);
-                                y = Math.Max(0, y - padding);
-                                width = Math.Min(sourceImage.Width - x, width + 2 * padding);
-                                height = Math.Min(sourceImage.Height - y, height + 2 * padding);
-                                if (width > 10 && height > 5)
-                                    finalRects.Add(new System.Drawing.Rectangle(x, y, width, height));
+                                    "feature_fusion/Conv_7/Sigmoid",
+                                    "feature_fusion/concat_3"
+                                };
+
+                                _eastNet.Forward(
+                                    output,
+                                    outputNames);
                             }
-                            return finalRects;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"FindTextRegionsWithEast failed (OpenCV issue?): {ex.Message}");
-                // Fallback: return full image
-                return new List<System.Drawing.Rectangle> { new System.Drawing.Rectangle(0, 0, sourceImage.Width, sourceImage.Height) };
-            }
-        }
-
-        private List<System.Drawing.Rectangle> FindTextRegionsWithOpenCV(Bitmap sourceImage)
-        {
-            try
-            {
-                using (Mat src = BitmapConverter.ToMat(sourceImage))
-                using (Mat gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
-                using (Mat binary = ApplyDynamicThresholding(gray))
-                {
-                    Mat denoised = new Mat();
-                    Cv2.MedianBlur(binary, denoised, 3);
-
-                    Mat kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new OpenCvSharp.Size(3, 3));
-                    Cv2.MorphologyEx(denoised, denoised, MorphTypes.Open, kernel);
-                    Cv2.MorphologyEx(denoised, denoised, MorphTypes.Close, kernel);
-
-                    Cv2.FindContours(denoised, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
-
-                    var regions = new List<System.Drawing.Rectangle>();
-                    foreach (var contour in contours)
-                    {
-                        var cvRect = Cv2.BoundingRect(contour);
-                        var rect = new System.Drawing.Rectangle(cvRect.X, cvRect.Y, cvRect.Width, cvRect.Height);
-
-                        if (rect.Width > 20 && rect.Height > 10 &&
-                            rect.Width < src.Width * 0.9 && rect.Height < src.Height * 0.9)
-                        {
-                            double aspectRatio = (double)rect.Width / rect.Height;
-                            if (aspectRatio > 1.5 || aspectRatio < 0.67)
+                            finally
                             {
-                                double area = Cv2.ContourArea(contour);
-                                double boundingArea = rect.Width * rect.Height;
-                                double solidity = area / boundingArea;
+                                _eastLock.Release();
+                            }
 
-                                if (solidity > 0.3)
+                            List<RotatedRect> boxes;
+                            List<float> confidences;
+
+                            Decode(
+                                output[0],
+                                output[1],
+                                0.50f,
+                                out boxes,
+                                out confidences);
+
+                            if (boxes.Count == 0)
+                            {
+                                return new List<System.Drawing.Rectangle>();
+                            }
+
+                            int[] indices;
+
+                            CvDnn.NMSBoxes(
+                                boxes,
+                                confidences,
+                                0.50f,
+                                0.40f,
+                                out indices);
+
+                            var regions =
+                                new List<System.Drawing.Rectangle>();
+
+                            foreach (int index in indices)
+                            {
+                                if (index < 0 ||
+                                    index >= boxes.Count)
+                                {
+                                    continue;
+                                }
+
+                                RotatedRect box =
+                                    boxes[index];
+
+                                Point2f[] vertices =
+                                    box.Points();
+
+                                for (int i = 0;
+                                     i < vertices.Length;
+                                     i++)
+                                {
+                                    vertices[i].X =
+                                        vertices[i].X *
+                                        (float)ratioWidth;
+
+                                    vertices[i].Y =
+                                        vertices[i].Y *
+                                        (float)ratioHeight;
+                                }
+
+                                OpenCvSharp.Rect cvRect =
+                                    Cv2.BoundingRect(
+                                        vertices);
+
+                                System.Drawing.Rectangle rect =
+                                    ExpandAndClampRegion(
+                                        new System.Drawing.Rectangle(
+                                            cvRect.X,
+                                            cvRect.Y,
+                                            cvRect.Width,
+                                            cvRect.Height),
+                                        sourceImage.Width,
+                                        sourceImage.Height,
+                                        Math.Max(
+                                            4,
+                                            cvRect.Height / 6));
+
+                                if (IsValidTextRegion(rect))
                                 {
                                     regions.Add(rect);
                                 }
                             }
+
+                            return RemoveDuplicateRegions(
+                                regions);
+                        }
+                        finally
+                        {
+                            for (int i = 0;
+                                 i < output.Length;
+                                 i++)
+                            {
+                                if (output[i] != null)
+                                {
+                                    output[i].Dispose();
+                                }
+                            }
                         }
                     }
-
-                    denoised.Dispose();
-                    kernel.Dispose();
-
-                    return regions;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"FindTextRegionsWithOpenCV failed (OpenCV issue?): {ex.Message}");
-                // Fallback: return full image
-                return new List<System.Drawing.Rectangle> { new System.Drawing.Rectangle(0, 0, sourceImage.Width, sourceImage.Height) };
+                _logger.LogWarning(
+                    $"EAST metin algılama başarısız oldu: {ex.Message}");
+
+                return FullImageRegion(
+                    sourceImage);
             }
         }
 
-        private Mat ApplyDynamicThresholding(Mat grayImage)
+        private List<System.Drawing.Rectangle> FindTextRegionsWithOpenCV(
+            Bitmap sourceImage)
         {
-            Mat binary = new Mat();
-
-            if (_appSettings.EnableDynamicThresholding)
+            if (sourceImage == null)
             {
-                double mean = Cv2.Mean(grayImage).Val0;
-                double stdDev = CalculateStandardDeviation(grayImage);
+                return new List<System.Drawing.Rectangle>();
+            }
 
-                if (stdDev < 30)
+            try
+            {
+                using (Mat src =
+                       BitmapConverter.ToMat(sourceImage))
+                using (Mat gray =
+                       ConvertToGray(src))
+                using (Mat binary =
+                       ApplyDynamicThresholding(gray))
+                using (Mat denoised =
+                       new Mat())
+                using (Mat kernel =
+                       Cv2.GetStructuringElement(
+                           MorphShapes.Rect,
+                           new OpenCvSharp.Size(15, 3)))
                 {
-                    Cv2.Threshold(grayImage, binary, 0, 255, ThresholdTypes.Otsu | ThresholdTypes.Binary);
+                    Cv2.MedianBlur(
+                        binary,
+                        denoised,
+                        3);
+
+                    Cv2.MorphologyEx(
+                        denoised,
+                        denoised,
+                        MorphTypes.Close,
+                        kernel);
+
+                    OpenCvSharp.Point[][] contours;
+                    HierarchyIndex[] hierarchy;
+
+                    Cv2.FindContours(
+                        denoised,
+                        out contours,
+                        out hierarchy,
+                        RetrievalModes.External,
+                        ContourApproximationModes.ApproxSimple);
+
+                    var regions =
+                        new List<System.Drawing.Rectangle>();
+
+                    if (contours == null)
+                        return regions;
+
+                    foreach (OpenCvSharp.Point[] contour in contours)
+                    {
+                        if (contour == null ||
+                            contour.Length == 0)
+                        {
+                            continue;
+                        }
+
+                        OpenCvSharp.Rect cvRect =
+                            Cv2.BoundingRect(
+                                contour);
+
+                        if (cvRect.Width < 12 ||
+                            cvRect.Height < 6)
+                        {
+                            continue;
+                        }
+
+                        if (cvRect.Width >=
+                                src.Width * 0.98 &&
+                            cvRect.Height >=
+                                src.Height * 0.98)
+                        {
+                            continue;
+                        }
+
+                        System.Drawing.Rectangle rect =
+                            ExpandAndClampRegion(
+                                new System.Drawing.Rectangle(
+                                    cvRect.X,
+                                    cvRect.Y,
+                                    cvRect.Width,
+                                    cvRect.Height),
+                                sourceImage.Width,
+                                sourceImage.Height,
+                                Math.Max(
+                                    3,
+                                    cvRect.Height / 8));
+
+                        if (IsValidTextRegion(rect))
+                        {
+                            regions.Add(rect);
+                        }
+                    }
+
+                    return RemoveDuplicateRegions(
+                        regions);
                 }
-                else if (stdDev > 80)
-                {
-                    int blockSize = _appSettings.AdaptiveThresholdBlockSize;
-                    int C = _appSettings.AdaptiveThresholdC;
-                    if (blockSize % 2 == 0) blockSize++;
-                    Cv2.AdaptiveThreshold(grayImage, binary, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, blockSize, C);
-                }
-                else
-                {
-                    Mat globalBinary = new Mat();
-                    Mat adaptiveBinary = new Mat();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    $"OpenCV metin algılama başarısız oldu: {ex.Message}");
 
-                    Cv2.Threshold(grayImage, globalBinary, 0, 255, ThresholdTypes.Otsu | ThresholdTypes.Binary);
+                return FullImageRegion(
+                    sourceImage);
+            }
+        }
 
-                    int blockSize = _appSettings.AdaptiveThresholdBlockSize;
-                    int C = _appSettings.AdaptiveThresholdC;
-                    if (blockSize % 2 == 0) blockSize++;
+        private Mat ApplyDynamicThresholding(
+            Mat grayImage)
+        {
+            var binary =
+                new Mat();
 
-                    Cv2.AdaptiveThreshold(grayImage, adaptiveBinary, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, blockSize, C);
+            int blockSize =
+                NormalizeAdaptiveBlockSize(
+                    _appSettings.AdaptiveThresholdBlockSize);
 
-                    Cv2.BitwiseOr(globalBinary, adaptiveBinary, binary);
+            int thresholdC =
+                _appSettings.AdaptiveThresholdC;
 
-                    globalBinary.Dispose();
-                    adaptiveBinary.Dispose();
-                }
+            if (!_appSettings.EnableDynamicThresholding)
+            {
+                Cv2.AdaptiveThreshold(
+                    grayImage,
+                    binary,
+                    255,
+                    AdaptiveThresholdTypes.GaussianC,
+                    ThresholdTypes.Binary,
+                    blockSize,
+                    thresholdC);
+
+                NormalizePolarity(
+                    binary);
+
+                return binary;
+            }
+
+            double stdDev =
+                CalculateStandardDeviation(
+                    grayImage);
+
+            if (stdDev < 30)
+            {
+                Cv2.Threshold(
+                    grayImage,
+                    binary,
+                    0,
+                    255,
+                    ThresholdTypes.Binary |
+                    ThresholdTypes.Otsu);
+            }
+            else if (stdDev > 80)
+            {
+                Cv2.AdaptiveThreshold(
+                    grayImage,
+                    binary,
+                    255,
+                    AdaptiveThresholdTypes.GaussianC,
+                    ThresholdTypes.Binary,
+                    blockSize,
+                    thresholdC);
             }
             else
             {
-                int blockSize = _appSettings.AdaptiveThresholdBlockSize;
-                int C = _appSettings.AdaptiveThresholdC;
-                if (blockSize % 2 == 0) blockSize++;
+                using (Mat globalBinary =
+                       new Mat())
+                using (Mat adaptiveBinary =
+                       new Mat())
+                {
+                    Cv2.Threshold(
+                        grayImage,
+                        globalBinary,
+                        0,
+                        255,
+                        ThresholdTypes.Binary |
+                        ThresholdTypes.Otsu);
 
-                Cv2.AdaptiveThreshold(grayImage, binary, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, blockSize, C);
+                    Cv2.AdaptiveThreshold(
+                        grayImage,
+                        adaptiveBinary,
+                        255,
+                        AdaptiveThresholdTypes.GaussianC,
+                        ThresholdTypes.Binary,
+                        blockSize,
+                        thresholdC);
+
+                    Cv2.BitwiseAnd(
+                        globalBinary,
+                        adaptiveBinary,
+                        binary);
+                }
             }
+
+            NormalizePolarity(
+                binary);
 
             return binary;
         }
 
-        private double CalculateStandardDeviation(Mat grayImage)
+        private static int NormalizeAdaptiveBlockSize(
+            int blockSize)
         {
-            Mat mean = new Mat();
-            Mat stdDev = new Mat();
-            Cv2.MeanStdDev(grayImage, mean, stdDev);
+            if (blockSize < 3)
+                blockSize = 3;
 
-            double result = stdDev.Get<double>(0, 0);
+            if (blockSize % 2 == 0)
+                blockSize++;
 
-            mean.Dispose();
-            stdDev.Dispose();
+            if (blockSize > 99)
+                blockSize = 99;
 
-            return result;
+            return blockSize;
         }
 
-        private (List<RotatedRect> boxes, List<float> confidences) Decode(Mat scores, Mat geometry, float confidenceThreshold)
+        private static double CalculateStandardDeviation(
+            Mat grayImage)
         {
-            var boxes = new List<RotatedRect>();
-            var confidences = new List<float>();
-            int height = scores.Size(2);
-            int width = scores.Size(3);
-            for (int y = 0; y < height; y++)
-            {
-                for (int x = 0; x < width; x++)
-                {
-                    float score = scores.At<float>(0, 0, y, x);
-                    if (score < confidenceThreshold) continue;
-                    float offsetX = x * 4.0f;
-                    float offsetY = y * 4.0f;
-                    float angle = geometry.At<float>(0, 4, y, x);
-                    float h = geometry.At<float>(0, 0, y, x) + geometry.At<float>(0, 2, y, x);
-                    float w = geometry.At<float>(0, 1, y, x) + geometry.At<float>(0, 3, y, x);
-                    var center = new CvPoint(
-                        offsetX + (float)(Math.Cos(angle) * geometry.At<float>(0, 1, y, x)) + (float)(Math.Sin(angle) * geometry.At<float>(0, 2, y, x)),
-                        offsetY - (float)(Math.Sin(angle) * geometry.At<float>(0, 1, y, x)) + (float)(Math.Cos(angle) * geometry.At<float>(0, 2, y, x))
-                    );
-                    var size = new Size2f(w, h);
-                    boxes.Add(new RotatedRect(center, size, -angle * 180 / (float)Math.PI));
-                    confidences.Add(score);
-                }
-            }
-            return (boxes, confidences);
-        }
+            Mat mean =
+                new Mat();
 
-        public Bitmap CaptureWindow(IntPtr hWnd)
-        {
-            if (hWnd == IntPtr.Zero) return null;
-            GetWindowRect(hWnd, out RECT rect);
-            if (rect.Right - rect.Left <= 0 || rect.Bottom - rect.Top <= 0) return null;
-            var bmp = new Bitmap(rect.Right - rect.Left, rect.Bottom - rect.Top, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            using (var gfx = Graphics.FromImage(bmp))
-            {
-                IntPtr hdc = gfx.GetHdc();
-                PrintWindow(hWnd, hdc, 2);
-                gfx.ReleaseHdc(hdc);
-            }
-            return bmp;
-        }
-        //
-        public Bitmap CropImage(Bitmap image, System.Drawing.Rectangle region) => image.Clone(region, image.PixelFormat);
+            Mat stdDev =
+                new Mat();
 
-        private Bitmap PreprocessImageForOcr(Bitmap originalImage, bool invertColors = false)
-        {
-            if (originalImage == null) return null;
-            Bitmap processedImage = originalImage;
             try
             {
-                // Renk inversiyonu
-                if (invertColors)
+                Cv2.MeanStdDev(
+                    grayImage,
+                    mean,
+                    stdDev);
+
+                return stdDev.Get<double>(
+                    0,
+                    0);
+            }
+            finally
+            {
+                mean.Dispose();
+                stdDev.Dispose();
+            }
+        }
+
+        private void Decode(
+            Mat scores,
+            Mat geometry,
+            float confidenceThreshold,
+            out List<RotatedRect> boxes,
+            out List<float> confidences)
+        {
+            boxes =
+                new List<RotatedRect>();
+
+            confidences =
+                new List<float>();
+
+            if (scores == null ||
+                geometry == null ||
+                scores.Empty() ||
+                geometry.Empty())
+            {
+                return;
+            }
+
+            int height =
+                scores.Size(2);
+
+            int width =
+                scores.Size(3);
+
+            for (int y = 0;
+                 y < height;
+                 y++)
+            {
+                for (int x = 0;
+                     x < width;
+                     x++)
                 {
-                    using (Mat src = BitmapConverter.ToMat(originalImage))
+                    float score =
+                        scores.At<float>(
+                            0,
+                            0,
+                            y,
+                            x);
+
+                    if (score <
+                        confidenceThreshold)
                     {
-                        Mat inverted = new Mat();
-                        Cv2.BitwiseNot(src, inverted);
-                        processedImage = BitmapConverter.ToBitmap(inverted);
-                        inverted.Dispose();
+                        continue;
+                    }
+
+                    float offsetX =
+                        x * 4.0f;
+
+                    float offsetY =
+                        y * 4.0f;
+
+                    float angle =
+                        geometry.At<float>(
+                            0,
+                            4,
+                            y,
+                            x);
+
+                    float top =
+                        geometry.At<float>(
+                            0,
+                            0,
+                            y,
+                            x);
+
+                    float right =
+                        geometry.At<float>(
+                            0,
+                            1,
+                            y,
+                            x);
+
+                    float bottom =
+                        geometry.At<float>(
+                            0,
+                            2,
+                            y,
+                            x);
+
+                    float left =
+                        geometry.At<float>(
+                            0,
+                            3,
+                            y,
+                            x);
+
+                    float widthValue =
+                        right + left;
+
+                    float heightValue =
+                        top + bottom;
+
+                    float cos =
+                        (float)Math.Cos(
+                            angle);
+
+                    float sin =
+                        (float)Math.Sin(
+                            angle);
+
+                    float endX =
+                        offsetX +
+                        cos * right +
+                        sin * bottom;
+
+                    float endY =
+                        offsetY -
+                        sin * right +
+                        cos * bottom;
+
+                    float centerX =
+                        endX -
+                        widthValue / 2.0f;
+
+                    float centerY =
+                        endY -
+                        heightValue / 2.0f;
+
+                    var center =
+                        new Point2f(
+                            centerX,
+                            centerY);
+
+                    var size =
+                        new Size2f(
+                            widthValue,
+                            heightValue);
+
+                    boxes.Add(
+                        new RotatedRect(
+                            center,
+                            size,
+                            -angle *
+                            180.0f /
+                            (float)Math.PI));
+
+                    confidences.Add(
+                        score);
+                }
+            }
+        }
+
+        public Bitmap CaptureWindow(
+            IntPtr hWnd)
+        {
+            ThrowIfDisposed();
+
+            if (hWnd == IntPtr.Zero)
+                return null;
+
+            RECT rect;
+
+            if (!GetWindowRect(
+                    hWnd,
+                    out rect))
+            {
+                return null;
+            }
+
+            int width =
+                rect.Right -
+                rect.Left;
+
+            int height =
+                rect.Bottom -
+                rect.Top;
+
+            if (width <= 0 ||
+                height <= 0)
+            {
+                return null;
+            }
+
+            var bitmap =
+                new Bitmap(
+                    width,
+                    height,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+            try
+            {
+                using (Graphics graphics =
+                       Graphics.FromImage(bitmap))
+                {
+                    IntPtr hdc =
+                        IntPtr.Zero;
+
+                    try
+                    {
+                        hdc =
+                            graphics.GetHdc();
+
+                        bool success =
+                            PrintWindow(
+                                hWnd,
+                                hdc,
+                                2);
+
+                        if (!success)
+                        {
+                            success =
+                                PrintWindow(
+                                    hWnd,
+                                    hdc,
+                                    0);
+                        }
+
+                        if (!success)
+                        {
+                            bitmap.Dispose();
+                            return null;
+                        }
+                    }
+                    finally
+                    {
+                        if (hdc != IntPtr.Zero)
+                        {
+                            graphics.ReleaseHdc(
+                                hdc);
+                        }
                     }
                 }
 
-                if (_appSettings.EnableSuperResolution && ShouldApplySuperResolution(processedImage))
+                return bitmap;
+            }
+            catch (Exception ex)
+            {
+                bitmap.Dispose();
+
+                _logger.LogError(
+                    "Pencere görüntüsü alınamadı.",
+                    ex);
+
+                return null;
+            }
+        }
+
+        public Bitmap CropImage(
+            Bitmap image,
+            System.Drawing.Rectangle region)
+        {
+            ThrowIfDisposed();
+
+            if (image == null)
+                return null;
+
+            System.Drawing.Rectangle bounds =
+                new System.Drawing.Rectangle(
+                    0,
+                    0,
+                    image.Width,
+                    image.Height);
+
+            System.Drawing.Rectangle safeRegion =
+                System.Drawing.Rectangle.Intersect(
+                    bounds,
+                    region);
+
+            if (safeRegion.Width <= 0 ||
+                safeRegion.Height <= 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                return image.Clone(
+                    safeRegion,
+                    image.PixelFormat);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    $"Görüntü kırpılamadı: {ex.Message}");
+
+                return null;
+            }
+        }
+
+        private Bitmap PreprocessImageForOcr(
+            Bitmap originalImage,
+            bool invertColors = false)
+        {
+            if (originalImage == null)
+                return null;
+
+            Bitmap current =
+                new Bitmap(originalImage);
+
+            try
+            {
+                if (invertColors)
                 {
-                    var tempImage = ApplySuperResolution(processedImage);
-                    if (processedImage != originalImage) processedImage.Dispose();
-                    processedImage = tempImage;
+                    Bitmap inverted =
+                        InvertBitmap(
+                            current);
+
+                    current.Dispose();
+
+                    current =
+                        inverted;
                 }
+
+                if (_appSettings.EnableSuperResolution &&
+                    ShouldApplySuperResolution(current))
+                {
+                    Bitmap upscaled =
+                        ApplySuperResolution(
+                            current);
+
+                    if (upscaled != null)
+                    {
+                        current.Dispose();
+
+                        current =
+                            upscaled;
+                    }
+                }
+
                 if (_appSettings.EnableSkewCorrection)
                 {
-                    float skewAngle = DetectSkewAngle(processedImage);
-                    if (Math.Abs(skewAngle) > _appSettings.SkewCorrectionThreshold)
+                    float angle =
+                        DetectSkewAngle(
+                            current);
+
+                    if (Math.Abs(angle) >
+                        _appSettings.SkewCorrectionThreshold)
                     {
-                        var correctedImage = CorrectSkew(processedImage, skewAngle);
-                        if (processedImage != originalImage) processedImage.Dispose();
-                        processedImage = correctedImage;
+                        Bitmap corrected =
+                            CorrectSkew(
+                                current,
+                                angle);
+
+                        if (corrected != null)
+                        {
+                            current.Dispose();
+
+                            current =
+                                corrected;
+                        }
                     }
+                }
+
+                return current;
+            }
+            catch (Exception ex)
+            {
+                if (current != null)
+                {
+                    current.Dispose();
+                }
+
+                _logger.LogError(
+                    "Görüntü ön işleme sırasında hata oluştu.",
+                    ex);
+
+                return new Bitmap(
+                    originalImage);
+            }
+        }
+
+        private static Bitmap InvertBitmap(
+            Bitmap image)
+        {
+            using (Mat source =
+                   BitmapConverter.ToMat(image))
+            using (Mat inverted =
+                   new Mat())
+            {
+                Cv2.BitwiseNot(
+                    source,
+                    inverted);
+
+                return BitmapConverter.ToBitmap(
+                    inverted);
+            }
+        }
+
+        private bool ShouldApplySuperResolution(
+            Bitmap image)
+        {
+            if (image == null)
+                return false;
+
+            return
+                image.Width <
+                _appSettings.MinImageSizeForSuperResolution ||
+                image.Height <
+                _appSettings.MinImageSizeForSuperResolution;
+        }
+
+        private Bitmap ApplySuperResolution(
+            Bitmap image)
+        {
+            if (image == null)
+                return null;
+
+            double scale =
+                _appSettings.SuperResolutionScale;
+
+            if (scale <= 1.0)
+                scale = 2.0;
+
+            if (scale > 4.0)
+                scale = 4.0;
+
+            using (Mat src =
+                   BitmapConverter.ToMat(image))
+            using (Mat upscaled =
+                   new Mat())
+            using (Mat denoised =
+                   new Mat())
+            {
+                Cv2.Resize(
+                    src,
+                    upscaled,
+                    new OpenCvSharp.Size(0, 0),
+                    scale,
+                    scale,
+                    InterpolationFlags.Cubic);
+
+                Cv2.BilateralFilter(
+                    upscaled,
+                    denoised,
+                    7,
+                    50,
+                    50);
+
+                return BitmapConverter.ToBitmap(
+                    denoised);
+            }
+        }
+
+        private float DetectSkewAngle(
+            Bitmap image)
+        {
+            if (image == null)
+                return 0;
+
+            try
+            {
+                using (Mat src =
+                       BitmapConverter.ToMat(image))
+                using (Mat gray =
+                       ConvertToGray(src))
+                using (Mat binary =
+                       new Mat())
+                using (Mat kernel =
+                       Cv2.GetStructuringElement(
+                           MorphShapes.Rect,
+                           new OpenCvSharp.Size(5, 3)))
+                {
+                    Cv2.Threshold(
+                        gray,
+                        binary,
+                        0,
+                        255,
+                        ThresholdTypes.Binary |
+                        ThresholdTypes.Otsu);
+
+                    Cv2.MorphologyEx(
+                        binary,
+                        binary,
+                        MorphTypes.Close,
+                        kernel);
+
+                    OpenCvSharp.Point[][] contours;
+                    HierarchyIndex[] hierarchy;
+
+                    Cv2.FindContours(
+                        binary,
+                        out contours,
+                        out hierarchy,
+                        RetrievalModes.External,
+                        ContourApproximationModes.ApproxSimple);
+
+                    if (contours == null ||
+                        contours.Length == 0)
+                    {
+                        return 0;
+                    }
+
+                    OpenCvSharp.Point[] largest =
+                        contours
+                            .OrderByDescending(
+                                contour =>
+                                    Cv2.ContourArea(contour))
+                            .First();
+
+                    RotatedRect rect =
+                        Cv2.MinAreaRect(
+                            largest);
+
+                    float angle =
+                        rect.Angle;
+
+                    if (angle < -45)
+                        angle += 90;
+
+                    if (angle > 45)
+                        angle -= 90;
+
+                    return angle;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError("GÃ¶rÃ¼ntÃ¼ Ã¶n iÅŸleme sÄ±rasÄ±nda hata oluÅŸtu", ex);
-                if (processedImage != originalImage) processedImage.Dispose();
-                return new Bitmap(originalImage); 
+                _logger.LogWarning(
+                    $"Eğiklik açısı algılanamadı: {ex.Message}");
+
+                return 0;
             }
-            return processedImage;
         }
 
-        private bool ShouldApplySuperResolution(Bitmap image) => image.Width < _appSettings.MinImageSizeForSuperResolution || image.Height < _appSettings.MinImageSizeForSuperResolution;
-        private Bitmap ApplySuperResolution(Bitmap image)
+        private Bitmap CorrectSkew(
+            Bitmap image,
+            float angle)
         {
-            if (image == null) return null;
-            using (Mat src = BitmapConverter.ToMat(image))
+            if (image == null)
+                return null;
+
+            if (Math.Abs(angle) <
+                0.1f)
             {
-                var upscaled = new Mat();
-                Cv2.Resize(src, upscaled, new OpenCvSharp.Size(0, 0), _appSettings.SuperResolutionScale, _appSettings.SuperResolutionScale, InterpolationFlags.Cubic);
-                Mat denoised = new Mat();
-                Cv2.BilateralFilter(upscaled, denoised, 9, 75, 75);
-                upscaled.Dispose();
-                return BitmapConverter.ToBitmap(denoised);
+                return new Bitmap(
+                    image);
             }
-        }
 
-
-        private float DetectSkewAngle(Bitmap image)
-        {
-            if (image == null) return 0f;
-            using (Mat src = BitmapConverter.ToMat(image))
-            using (Mat gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
-            using (Mat binary = new Mat())
+            using (Mat src =
+                   BitmapConverter.ToMat(image))
+            using (Mat rotationMatrix =
+                   Cv2.GetRotationMatrix2D(
+                       new Point2f(
+                           src.Width / 2.0f,
+                           src.Height / 2.0f),
+                       -angle,
+                       1.0))
+            using (Mat rotated =
+                   new Mat())
             {
-                Cv2.Threshold(gray, binary, 0, 255, ThresholdTypes.Otsu | ThresholdTypes.Binary);
-                Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(3, 3));
-                Cv2.MorphologyEx(binary, binary, MorphTypes.Close, kernel);
-                kernel.Dispose();
-                Cv2.FindContours(binary, out var contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
-                if (contours.Length == 0) return 0f;
-                var largestContour = contours.OrderByDescending(c => Cv2.ContourArea(c)).First();
-                var rect = Cv2.MinAreaRect(largestContour);
-                float angle = rect.Angle;
-                if (angle < -45) angle += 90;
-                if (angle > 45) angle -= 90;
-                return angle;
+                Point2f center =
+                    new Point2f(
+                        src.Width / 2.0f,
+                        src.Height / 2.0f);
+
+                double cos =
+                    Math.Abs(
+                        rotationMatrix.At<double>(
+                            0,
+                            0));
+
+                double sin =
+                    Math.Abs(
+                        rotationMatrix.At<double>(
+                            0,
+                            1));
+
+                int newWidth =
+                    (int)(
+                        src.Height * sin +
+                        src.Width * cos);
+
+                int newHeight =
+                    (int)(
+                        src.Height * cos +
+                        src.Width * sin);
+
+                rotationMatrix.Set(
+                    0,
+                    2,
+                    rotationMatrix.At<double>(
+                        0,
+                        2) +
+                    newWidth / 2.0 -
+                    center.X);
+
+                rotationMatrix.Set(
+                    1,
+                    2,
+                    rotationMatrix.At<double>(
+                        1,
+                        2) +
+                    newHeight / 2.0 -
+                    center.Y);
+
+                Cv2.WarpAffine(
+                    src,
+                    rotated,
+                    rotationMatrix,
+                    new OpenCvSharp.Size(
+                        newWidth,
+                        newHeight),
+                    InterpolationFlags.Cubic,
+                    BorderTypes.Constant,
+                    Scalar.White);
+
+                return BitmapConverter.ToBitmap(
+                    rotated);
             }
         }
 
-        private Bitmap CorrectSkew(Bitmap image, float angle)
+        public Bitmap IsolateTextByColor(
+            Bitmap sourceImage)
         {
-            if (image == null || Math.Abs(angle) < 0.1f) return image;
+            ThrowIfDisposed();
 
-            using (Mat src = BitmapConverter.ToMat(image))
-            {
-                var center = new OpenCvSharp.Point2f(src.Width / 2.0f, src.Height / 2.0f);
-                var rotationMatrix = Cv2.GetRotationMatrix2D(center, -angle, 1.0);
-
-                var cos = Math.Abs(rotationMatrix.At<double>(0, 0));
-                var sin = Math.Abs(rotationMatrix.At<double>(0, 1));
-                var newWidth = (int)(src.Height * sin + src.Width * cos);
-                var newHeight = (int)(src.Height * cos + src.Width * sin);
-
-                rotationMatrix.Set(0, 2, rotationMatrix.At<double>(0, 2) + (newWidth / 2.0) - center.X);
-                rotationMatrix.Set(1, 2, rotationMatrix.At<double>(1, 2) + (newHeight / 2.0) - center.Y);
-
-                var rotated = new Mat();
-                Cv2.WarpAffine(src, rotated, rotationMatrix, new OpenCvSharp.Size(newWidth, newHeight));
-
-                return BitmapConverter.ToBitmap(rotated);
-            }
-        }
-
-        public Bitmap IsolateTextByColor(Bitmap sourceImage)
-        {
-            if (sourceImage == null) return null;
+            if (sourceImage == null)
+                return null;
 
             try
             {
                 if (_appSettings.EnableAutoColorDetection)
                 {
-                    return AutoDetectAndIsolateTextByColor(sourceImage);
+                    return AutoDetectAndIsolateTextByColor(
+                        sourceImage);
                 }
-                else
-                {
-                    return ManualColorIsolation(sourceImage);
-                }
+
+                return ManualColorIsolation(
+                    sourceImage);
             }
             catch (Exception ex)
             {
-                _logger.LogError("Renk filtresi uygulanÄ±rken hata oluÅŸtu, orijinal gÃ¶rÃ¼ntÃ¼ dÃ¶ndÃ¼rÃ¼lÃ¼yor", ex);
-                return sourceImage;
+                _logger.LogError(
+                    "Renk filtresi uygulanamadı.",
+                    ex);
+
+                return new Bitmap(
+                    sourceImage);
             }
         }
 
-        private Bitmap AutoDetectAndIsolateTextByColor(Bitmap sourceImage)
+        private Bitmap AutoDetectAndIsolateTextByColor(
+            Bitmap sourceImage)
         {
-            try
+            using (Mat src =
+                   BitmapConverter.ToMat(sourceImage))
+            using (Mat bgr =
+                   EnsureBgr(src))
+            using (Mat hsv =
+                   new Mat())
             {
-                using (Mat src = BitmapConverter.ToMat(sourceImage))
-                using (Mat hsv = new Mat())
+                Cv2.CvtColor(
+                    bgr,
+                    hsv,
+                    ColorConversionCodes.BGR2HSV);
+
+                Scalar[] colors =
+                    DetectTextColors(
+                        hsv);
+
+                if (colors == null ||
+                    colors.Length == 0)
                 {
-                    Cv2.CvtColor(src, hsv, ColorConversionCodes.BGR2HSV);
+                    return new Bitmap(
+                        sourceImage);
+                }
 
-                    Scalar[] textColors = DetectTextColors(hsv);
+                Mat combinedMask =
+                    new Mat();
 
-                    if (textColors == null || textColors.Length == 0)
+                try
+                {
+                    bool initialized =
+                        false;
+
+                    for (int i = 0;
+                         i < colors.Length;
+                         i++)
                     {
-                        _logger.LogWarning("Metin rengi bulunamadÄ±, orijinal gÃ¶rÃ¼ntÃ¼ dÃ¶ndÃ¼rÃ¼lÃ¼yor");
-                        return sourceImage;
-                    }
+                        Scalar color =
+                            colors[i];
 
-                    using (Mat combinedMask = new Mat())
-                    {
-                        bool firstMask = true;
-                        for (int i = 0; i < textColors.Length; i++)
+                        Scalar lower =
+                            new Scalar(
+                                Math.Max(
+                                    0,
+                                    color.Val0 - 35),
+                                Math.Max(
+                                    0,
+                                    color.Val1 - 90),
+                                Math.Max(
+                                    0,
+                                    color.Val2 - 90));
+
+                        Scalar upper =
+                            new Scalar(
+                                Math.Min(
+                                    180,
+                                    color.Val0 + 35),
+                                Math.Min(
+                                    255,
+                                    color.Val1 + 90),
+                                Math.Min(
+                                    255,
+                                    color.Val2 + 90));
+
+                        using (Mat mask =
+                               new Mat())
                         {
-                            var color = textColors[i];
-                            Scalar lower = new Scalar(
-                                Math.Max(0, color.Val0 - 45),
-                                Math.Max(0, color.Val1 - 100),
-                                Math.Max(0, color.Val2 - 100));
-                            Scalar upper = new Scalar(
-                                Math.Min(180, color.Val0 + 45),
-                                Math.Min(255, color.Val1 + 100),
-                                Math.Min(255, color.Val2 + 100));
+                            Cv2.InRange(
+                                hsv,
+                                lower,
+                                upper,
+                                mask);
 
-                            using (Mat colorMask = new Mat())
+                            if (!initialized)
                             {
-                                Cv2.InRange(hsv, lower, upper, colorMask);
+                                mask.CopyTo(
+                                    combinedMask);
 
-                                if (firstMask)
-                                {
-                                    colorMask.CopyTo(combinedMask);
-                                    firstMask = false;
-                                }
-                                else
-                                {
-                                    Cv2.BitwiseOr(combinedMask, colorMask, combinedMask);
-                                }
+                                initialized =
+                                    true;
+                            }
+                            else
+                            {
+                                Cv2.BitwiseOr(
+                                    combinedMask,
+                                    mask,
+                                    combinedMask);
                             }
                         }
+                    }
 
-                        using (Mat result = new Mat())
-                        using (Mat resultBgr = new Mat())
-                        {
-                            // OCR performansÄ± iÃ§in orijinal renkleri almak yerine, 
-                            // maskeyi tersine Ã§evirerek siyah metin / beyaz arka plan dÃ¶ndÃ¼rÃ¼yoruz.
-                            // Format uyumluluÄŸu iÃ§in GRAY2BGR dÃ¶nÃ¼ÅŸÃ¼mÃ¼ de uyguluyoruz (OCR motorlarÄ± 24bpp bekler).
-                            Cv2.BitwiseNot(combinedMask, result);
-                            Cv2.CvtColor(result, resultBgr, ColorConversionCodes.GRAY2BGR);
-                            return BitmapConverter.ToBitmap(resultBgr);
-                        }
+                    if (!initialized ||
+                        combinedMask.Empty())
+                    {
+                        return new Bitmap(
+                            sourceImage);
+                    }
+
+                    using (Mat inverted =
+                           new Mat())
+                    using (Mat result =
+                           new Mat())
+                    {
+                        Cv2.BitwiseNot(
+                            combinedMask,
+                            inverted);
+
+                        Cv2.CvtColor(
+                            inverted,
+                            result,
+                            ColorConversionCodes.GRAY2BGR);
+
+                        return BitmapConverter.ToBitmap(
+                            result);
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"AutoDetectAndIsolateTextByColor failed (OpenCV issue?): {ex.Message}");
-                return sourceImage;
+                finally
+                {
+                    combinedMask.Dispose();
+                }
             }
         }
 
-        public Scalar[] DetectTextColors(Mat hsvImage)
+        public Scalar[] DetectTextColors(
+            Mat hsvImage)
         {
+            if (hsvImage == null ||
+                hsvImage.Empty())
+            {
+                return new Scalar[0];
+            }
+
             try
             {
-                Scalar[] dominantColors = FindDominantColors(hsvImage);
+                Scalar[] dominantColors =
+                    FindDominantColors(
+                        hsvImage);
 
-                if (dominantColors == null || dominantColors.Length == 0)
+                if (dominantColors == null ||
+                    dominantColors.Length == 0)
                 {
-                    _logger.LogWarning("Dominant renk bulunamadÄ±, varsayÄ±lan metin renkleri kullanÄ±lÄ±yor");
-                    return new Scalar[]
-                    {
-                        new Scalar(0, 0, 200),
-                        new Scalar(30, 255, 255),
-                        new Scalar(0, 0, 150)
-                    };
+                    return GetDefaultTextColors();
                 }
 
-                var textColors = new List<Scalar>();
-                foreach (var color in dominantColors)
+                var result =
+                    new List<Scalar>();
+
+                for (int i = 0;
+                     i < dominantColors.Length;
+                     i++)
                 {
-                    bool isTextColor = false;
-
-                    if (color.Val2 > 120)
+                    if (IsLikelyTextColor(
+                        dominantColors[i]))
                     {
-                        isTextColor = true;
-                    }
-                    else if (color.Val2 > 80 && color.Val1 > 50)
-                    {
-                        isTextColor = true;
-                    }
-                    else if (color.Val1 < 30 && color.Val2 > 100)
-                    {
-                        isTextColor = true;
-                    }
-
-                    if (isTextColor)
-                    {
-                        textColors.Add(color);
-                        _logger.LogInformation($"Metin rengi tespit edildi: H={color.Val0:F1}, S={color.Val1:F1}, V={color.Val2:F1}");
+                        result.Add(
+                            dominantColors[i]);
                     }
                 }
 
-                if (textColors.Count == 0)
+                if (result.Count == 0)
                 {
-                    _logger.LogWarning("HiÃ§bir metin rengi tespit edilemedi, varsayÄ±lan renkler kullanÄ±lÄ±yor");
-                    return new Scalar[]
-                    {
-                        new Scalar(0, 0, 200),
-                        new Scalar(30, 255, 255)
-                    };
+                    return GetDefaultTextColors();
                 }
 
-                return textColors.ToArray();
+                return result.ToArray();
             }
             catch (Exception ex)
             {
-                _logger.LogError("Metin rengi algÄ±lama sÄ±rasÄ±nda hata oluÅŸtu", ex);
-                return new Scalar[]
-                {
-                    new Scalar(0, 0, 200),
-                    new Scalar(30, 255, 255)
-                };
+                _logger.LogWarning(
+                    $"Metin rengi algılanamadı: {ex.Message}");
+
+                return GetDefaultTextColors();
             }
         }
 
-        private Scalar[] FindDominantColors(Mat hsvImage, int k = 3)
+        private static bool IsLikelyTextColor(
+            Scalar color)
         {
-            try
+            if (color.Val2 >= 150)
+                return true;
+
+            if (color.Val2 >= 95 &&
+                color.Val1 >= 45)
             {
-              
-                Mat reshaped = hsvImage.Reshape(1, hsvImage.Rows * hsvImage.Cols);
-                Mat floatData = new Mat();
-                reshaped.ConvertTo(floatData, MatType.CV_32F);
-
-               
-                using (Mat labels = new Mat())
-                using (Mat centers = new Mat())
-                {
-                    var criteria = new TermCriteria(CriteriaTypes.Eps | CriteriaTypes.MaxIter, 100, 0.2);
-                    Cv2.Kmeans(floatData, k, labels, criteria, 3, KMeansFlags.PpCenters, centers);
-
-                    
-                    Scalar[] dominantColors = new Scalar[Math.Min(k, centers.Rows)];
-                    for (int i = 0; i < dominantColors.Length; i++)
-                    {
-                        dominantColors[i] = new Scalar(
-                            centers.At<float>(i, 0),
-                            centers.At<float>(i, 1),
-                            centers.At<float>(i, 2)
-                        );
-                    }
-
-                    floatData.Dispose();
-                    return dominantColors;
-                }
+                return true;
             }
-            catch (Exception ex)
+
+            if (color.Val1 <= 35 &&
+                color.Val2 >= 110)
             {
-                _logger.LogError("Dominant renk bulma sÄ±rasÄ±nda hata oluÅŸtu", ex);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static Scalar[] GetDefaultTextColors()
+        {
+            return new Scalar[]
+            {
+                new Scalar(
+                    0,
+                    0,
+                    220),
+
+                new Scalar(
+                    30,
+                    220,
+                    240)
+            };
+        }
+
+        private Scalar[] FindDominantColors(
+            Mat hsvImage,
+            int k = 3)
+        {
+            if (hsvImage == null ||
+                hsvImage.Empty())
+            {
                 return null;
             }
-        }
 
-        private Bitmap ManualColorIsolation(Bitmap sourceImage)
-        {
-            using (Mat src = BitmapConverter.ToMat(sourceImage))
-            using (Mat hsv = new Mat())
+            if (k < 1)
+                k = 1;
+
+            if (k > 5)
+                k = 5;
+
+            Mat reshaped =
+                null;
+
+            try
             {
-                Cv2.CvtColor(src, hsv, ColorConversionCodes.BGR2HSV);
+                reshaped =
+                    hsvImage.Reshape(
+                        1,
+                        hsvImage.Rows *
+                        hsvImage.Cols);
 
-                
-                Scalar lower = new Scalar(
-                    _appSettings.HueMin,
-                    _appSettings.SaturationMin,
-                    _appSettings.ValueMin
-                );
-                Scalar upper = new Scalar(
-                    _appSettings.HueMax,
-                    _appSettings.SaturationMax,
-                    _appSettings.ValueMax
-                );
-
-                using (Mat mask = new Mat())
+                using (Mat floatData =
+                       new Mat())
+                using (Mat labels =
+                       new Mat())
+                using (Mat centers =
+                       new Mat())
                 {
-                    Cv2.InRange(hsv, lower, upper, mask);
+                    reshaped.ConvertTo(
+                        floatData,
+                        MatType.CV_32F);
 
-                    using (Mat result = new Mat())
-                    using (Mat resultBgr = new Mat())
+                    var criteria =
+                        new TermCriteria(
+                            CriteriaTypes.Eps |
+                            CriteriaTypes.MaxIter,
+                            50,
+                            0.5);
+
+                    Cv2.Kmeans(
+                        floatData,
+                        k,
+                        labels,
+                        criteria,
+                        2,
+                        KMeansFlags.PpCenters,
+                        centers);
+
+                    int count =
+                        Math.Min(
+                            k,
+                            centers.Rows);
+
+                    var colors =
+                        new Scalar[count];
+
+                    for (int i = 0;
+                         i < count;
+                         i++)
                     {
-                        // OCR performansÄ± iÃ§in orijinal renkleri almak yerine, maskeyi tersine Ã§eviriyoruz (siyah metin, beyaz arka plan)
-                        // Format uyumluluÄŸu iÃ§in GRAY2BGR dÃ¶nÃ¼ÅŸÃ¼mÃ¼ de uyguluyoruz (OCR motorlarÄ± 24bpp bekler).
-                        Cv2.BitwiseNot(mask, result);
-                        Cv2.CvtColor(result, resultBgr, ColorConversionCodes.GRAY2BGR);
-                        return BitmapConverter.ToBitmap(resultBgr);
+                        colors[i] =
+                            new Scalar(
+                                centers.At<float>(
+                                    i,
+                                    0),
+                                centers.At<float>(
+                                    i,
+                                    1),
+                                centers.At<float>(
+                                    i,
+                                    2));
                     }
+
+                    return colors;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    $"Dominant renkler bulunamadı: {ex.Message}");
+
+                return null;
+            }
+            finally
+            {
+                if (reshaped != null)
+                {
+                    reshaped.Dispose();
                 }
             }
         }
 
-        private Mat CreateContrastMask(Mat src)
+        private Bitmap ManualColorIsolation(
+            Bitmap sourceImage)
         {
-            using (Mat gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
+            using (Mat src =
+                   BitmapConverter.ToMat(sourceImage))
+            using (Mat bgr =
+                   EnsureBgr(src))
+            using (Mat hsv =
+                   new Mat())
+            using (Mat mask =
+                   new Mat())
+            using (Mat inverted =
+                   new Mat())
+            using (Mat result =
+                   new Mat())
             {
-                Mat binary = new Mat();
-                Cv2.AdaptiveThreshold(gray, binary, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, 11, 2);
+                Cv2.CvtColor(
+                    bgr,
+                    hsv,
+                    ColorConversionCodes.BGR2HSV);
 
-                Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
-                Cv2.MorphologyEx(binary, binary, MorphTypes.Open, kernel);
-                kernel.Dispose();
+                Scalar lower =
+                    new Scalar(
+                        Clamp(
+                            _appSettings.HueMin,
+                            0,
+                            180),
+                        Clamp(
+                            _appSettings.SaturationMin,
+                            0,
+                            255),
+                        Clamp(
+                            _appSettings.ValueMin,
+                            0,
+                            255));
+
+                Scalar upper =
+                    new Scalar(
+                        Clamp(
+                            _appSettings.HueMax,
+                            0,
+                            180),
+                        Clamp(
+                            _appSettings.SaturationMax,
+                            0,
+                            255),
+                        Clamp(
+                            _appSettings.ValueMax,
+                            0,
+                            255));
+
+                Cv2.InRange(
+                    hsv,
+                    lower,
+                    upper,
+                    mask);
+
+                Cv2.BitwiseNot(
+                    mask,
+                    inverted);
+
+                Cv2.CvtColor(
+                    inverted,
+                    result,
+                    ColorConversionCodes.GRAY2BGR);
+
+                return BitmapConverter.ToBitmap(
+                    result);
+            }
+        }
+
+        private Mat CreateContrastMask(
+            Mat src)
+        {
+            if (src == null ||
+                src.Empty())
+            {
+                return new Mat();
+            }
+
+            using (Mat gray =
+                   ConvertToGray(src))
+            using (Mat kernel =
+                   Cv2.GetStructuringElement(
+                       MorphShapes.Rect,
+                       new OpenCvSharp.Size(2, 2)))
+            {
+                var binary =
+                    new Mat();
+
+                Cv2.AdaptiveThreshold(
+                    gray,
+                    binary,
+                    255,
+                    AdaptiveThresholdTypes.GaussianC,
+                    ThresholdTypes.Binary,
+                    11,
+                    2);
+
+                Cv2.MorphologyEx(
+                    binary,
+                    binary,
+                    MorphTypes.Open,
+                    kernel);
 
                 return binary;
             }
         }
 
-        private Mat CreateEdgeMask(Mat src)
+        private Mat CreateEdgeMask(
+            Mat src)
         {
-            using (Mat gray = src.CvtColor(ColorConversionCodes.BGR2GRAY))
-            using (Mat blurred = new Mat())
+            if (src == null ||
+                src.Empty())
             {
-                Cv2.GaussianBlur(gray, blurred, new OpenCvSharp.Size(3, 3), 0);
+                return new Mat();
+            }
 
-                Mat edges = new Mat();
-                Cv2.Canny(blurred, edges, 50, 150);
+            using (Mat gray =
+                   ConvertToGray(src))
+            using (Mat blurred =
+                   new Mat())
+            using (Mat kernel =
+                   Cv2.GetStructuringElement(
+                       MorphShapes.Rect,
+                       new OpenCvSharp.Size(2, 2)))
+            {
+                Cv2.GaussianBlur(
+                    gray,
+                    blurred,
+                    new OpenCvSharp.Size(3, 3),
+                    0);
 
-                Mat kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
-                Cv2.Dilate(edges, edges, kernel);
-                kernel.Dispose();
+                var edges =
+                    new Mat();
+
+                Cv2.Canny(
+                    blurred,
+                    edges,
+                    50,
+                    150);
+
+                Cv2.Dilate(
+                    edges,
+                    edges,
+                    kernel);
 
                 return edges;
             }
         }
 
-        Mat IOcrService.CreateEdgeMask(Mat imageMat)
+        Mat IOcrService.CreateEdgeMask(
+            Mat imageMat)
         {
-            return CreateEdgeMask(imageMat);
+            return CreateEdgeMask(
+                imageMat);
         }
 
-        Mat IOcrService.CreateContrastMask(Mat imageMat)
+        Mat IOcrService.CreateContrastMask(
+            Mat imageMat)
         {
-            return CreateContrastMask(imageMat);
+            return CreateContrastMask(
+                imageMat);
+        }
+
+        private static Mat ConvertToGray(
+            Mat source)
+        {
+            var gray =
+                new Mat();
+
+            if (source == null ||
+                source.Empty())
+            {
+                return gray;
+            }
+
+            int channels =
+                source.Channels();
+
+            if (channels == 1)
+            {
+                source.CopyTo(
+                    gray);
+
+                return gray;
+            }
+
+            if (channels == 4)
+            {
+                Cv2.CvtColor(
+                    source,
+                    gray,
+                    ColorConversionCodes.BGRA2GRAY);
+
+                return gray;
+            }
+
+            Cv2.CvtColor(
+                source,
+                gray,
+                ColorConversionCodes.BGR2GRAY);
+
+            return gray;
+        }
+
+        private static Mat EnsureBgr(
+            Mat source)
+        {
+            var bgr =
+                new Mat();
+
+            if (source == null ||
+                source.Empty())
+            {
+                return bgr;
+            }
+
+            int channels =
+                source.Channels();
+
+            if (channels == 3)
+            {
+                source.CopyTo(
+                    bgr);
+
+                return bgr;
+            }
+
+            if (channels == 4)
+            {
+                Cv2.CvtColor(
+                    source,
+                    bgr,
+                    ColorConversionCodes.BGRA2BGR);
+
+                return bgr;
+            }
+
+            Cv2.CvtColor(
+                source,
+                bgr,
+                ColorConversionCodes.GRAY2BGR);
+
+            return bgr;
+        }
+
+        private static void NormalizePolarity(
+            Mat image)
+        {
+            if (image == null ||
+                image.Empty())
+            {
+                return;
+            }
+
+            Scalar mean =
+                Cv2.Mean(
+                    image);
+
+            if (mean.Val0 < 127)
+            {
+                Cv2.BitwiseNot(
+                    image,
+                    image);
+            }
+        }
+
+        private static List<System.Drawing.Rectangle> FullImageRegion(
+            Bitmap image)
+        {
+            if (image == null)
+            {
+                return new List<System.Drawing.Rectangle>();
+            }
+
+            return new List<System.Drawing.Rectangle>
+            {
+                new System.Drawing.Rectangle(
+                    0,
+                    0,
+                    image.Width,
+                    image.Height)
+            };
+        }
+
+        private static bool IsValidTextRegion(
+            System.Drawing.Rectangle region)
+        {
+            return
+                region.Width >= 12 &&
+                region.Height >= 6;
+        }
+
+        private static System.Drawing.Rectangle ExpandAndClampRegion(
+            System.Drawing.Rectangle region,
+            int imageWidth,
+            int imageHeight,
+            int padding)
+        {
+            int left =
+                Math.Max(
+                    0,
+                    region.Left - padding);
+
+            int top =
+                Math.Max(
+                    0,
+                    region.Top - padding);
+
+            int right =
+                Math.Min(
+                    imageWidth,
+                    region.Right + padding);
+
+            int bottom =
+                Math.Min(
+                    imageHeight,
+                    region.Bottom + padding);
+
+            int width =
+                Math.Max(
+                    0,
+                    right - left);
+
+            int height =
+                Math.Max(
+                    0,
+                    bottom - top);
+
+            return new System.Drawing.Rectangle(
+                left,
+                top,
+                width,
+                height);
+        }
+
+        private static List<System.Drawing.Rectangle> RemoveDuplicateRegions(
+            IEnumerable<System.Drawing.Rectangle> regions)
+        {
+            var result =
+                new List<System.Drawing.Rectangle>();
+
+            if (regions == null)
+                return result;
+
+            List<System.Drawing.Rectangle> ordered =
+                regions
+                    .OrderByDescending(
+                        region =>
+                            (long)region.Width *
+                            region.Height)
+                    .ToList();
+
+            foreach (System.Drawing.Rectangle region in ordered)
+            {
+                bool duplicate =
+                    false;
+
+                for (int i = 0;
+                     i < result.Count;
+                     i++)
+                {
+                    if (IntersectionRatio(
+                            region,
+                            result[i]) >
+                        0.80)
+                    {
+                        duplicate =
+                            true;
+
+                        break;
+                    }
+                }
+
+                if (!duplicate)
+                {
+                    result.Add(
+                        region);
+                }
+            }
+
+            return result;
+        }
+
+        private static List<System.Drawing.Rectangle> OrderAndMergeRegions(
+            IEnumerable<System.Drawing.Rectangle> regions,
+            int imageWidth,
+            int imageHeight)
+        {
+            List<System.Drawing.Rectangle> cleaned =
+                RemoveDuplicateRegions(
+                    regions);
+
+            List<System.Drawing.Rectangle> ordered =
+                cleaned
+                    .Where(
+                        region =>
+                            IsValidTextRegion(region))
+                    .OrderBy(
+                        region =>
+                            region.Top)
+                    .ThenBy(
+                        region =>
+                            region.Left)
+                    .ToList();
+
+            if (ordered.Count <= 1)
+                return ordered;
+
+            var result =
+                new List<System.Drawing.Rectangle>();
+
+            foreach (System.Drawing.Rectangle current in ordered)
+            {
+                if (result.Count == 0)
+                {
+                    result.Add(
+                        current);
+
+                    continue;
+                }
+
+                int previousIndex =
+                    result.Count - 1;
+
+                System.Drawing.Rectangle previous =
+                    result[previousIndex];
+
+                int verticalDistance =
+                    Math.Abs(
+                        current.Top -
+                        previous.Top);
+
+                int allowedVerticalDistance =
+                    Math.Max(
+                        current.Height,
+                        previous.Height) /
+                    2;
+
+                int horizontalGap =
+                    current.Left -
+                    previous.Right;
+
+                if (verticalDistance <=
+                        allowedVerticalDistance &&
+                    horizontalGap >= -10 &&
+                    horizontalGap <= 40)
+                {
+                    result[previousIndex] =
+                        System.Drawing.Rectangle.Union(
+                            previous,
+                            current);
+                }
+                else
+                {
+                    result.Add(
+                        current);
+                }
+            }
+
+            for (int i = 0;
+                 i < result.Count;
+                 i++)
+            {
+                result[i] =
+                    ExpandAndClampRegion(
+                        result[i],
+                        imageWidth,
+                        imageHeight,
+                        2);
+            }
+
+            return result;
+        }
+
+        private static double IntersectionRatio(
+            System.Drawing.Rectangle a,
+            System.Drawing.Rectangle b)
+        {
+            System.Drawing.Rectangle intersection =
+                System.Drawing.Rectangle.Intersect(
+                    a,
+                    b);
+
+            if (intersection.Width <= 0 ||
+                intersection.Height <= 0)
+            {
+                return 0;
+            }
+
+            double intersectionArea =
+                (double)intersection.Width *
+                intersection.Height;
+
+            double areaA =
+                (double)a.Width *
+                a.Height;
+
+            double areaB =
+                (double)b.Width *
+                b.Height;
+
+            double smallerArea =
+                Math.Min(
+                    areaA,
+                    areaB);
+
+            if (smallerArea <= 0)
+                return 0;
+
+            return
+                intersectionArea /
+                smallerArea;
+        }
+
+        private static double Clamp(
+            double value,
+            double minimum,
+            double maximum)
+        {
+            if (value < minimum)
+                return minimum;
+
+            if (value > maximum)
+                return maximum;
+
+            return value;
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(
+                    ref _disposed) != 0)
+            {
+                throw new ObjectDisposedException(
+                    nameof(OcrService));
+            }
         }
 
         public void Dispose()
         {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if (_disposed) return;
-
-            if (disposing)
+            if (Interlocked.Exchange(
+                    ref _disposed,
+                    1) != 0)
             {
-                // Managed kaynaklarÄ± temizle
-                _eastNet?.Dispose();
-                
-                // OCR motorlarÄ±nÄ± temizle
-                foreach (var engine in _ocrEngines.Values)
-                {
-                    if (engine is IDisposable disposable)
-                    {
-                        disposable.Dispose();
-                    }
-                }
-                _ocrEngines.Clear();
+                return;
             }
 
-            _disposed = true;
+            try
+            {
+                if (_eastNet != null)
+                {
+                    _eastNet.Dispose();
+                }
+            }
+            catch
+            {
+            }
+
+            foreach (IOcrEngine engine in
+                     _ocrEngines.Values)
+            {
+                IDisposable disposable =
+                    engine as IDisposable;
+
+                if (disposable == null)
+                    continue;
+
+                try
+                {
+                    disposable.Dispose();
+                }
+                catch
+                {
+                }
+            }
+
+            _ocrEngines.Clear();
+
+            try
+            {
+                _eastLock.Dispose();
+            }
+            catch
+            {
+            }
         }
     }
 }

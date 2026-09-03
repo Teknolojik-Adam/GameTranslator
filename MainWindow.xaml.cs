@@ -71,7 +71,23 @@ namespace GameTranslatorUltimate
         private CancellationTokenSource _scanCancellationTokenSource;
         private List<PointerPath> _lastFoundPaths = new List<PointerPath>();
         private readonly LinkedList<string> _translationHistory = new LinkedList<string>();
-        private const int MaxTranslationHistory = 2; // Mevcut çeviriye ek olarak saklanacak eski çeviri sayısı
+        private const int MaxTranslationHistory = 2;
+        private const int DefaultOcrIntervalMs = 180;
+        private const double FrameChangeThreshold = 0.03;
+        private long _lastOcrTicks;
+        private string _lastRecognizedNormalized = string.Empty;
+        private OpenCvSharp.Mat _previousOcrThumb;
+        private readonly object _ocrThumbLock = new object();
+        private int _ocrTranslationGeneration;
+        private int _framesReceived;
+        private int _framesDroppedThrottle;
+        private int _ocrRuns;
+        private int _ocrSkippedNoChange;
+        private int _duplicateTextsSkipped;
+        private int _translationRequests;
+        private int _translationCacheHits;
+        private long _totalOcrTicks;
+        private long _totalTranslationTicks;
 
         private System.Collections.ObjectModel.ObservableCollection<LogEntry> _logEntries = new System.Collections.ObjectModel.ObservableCollection<LogEntry>();
         public System.Collections.ObjectModel.ObservableCollection<LogEntry> LogEntries => _logEntries;
@@ -187,7 +203,7 @@ namespace GameTranslatorUltimate
                 _ocrComparisonService = ServiceContainer.GetService<IOcrComparisonService>();
                 _ocrAccuracyService = ServiceContainer.GetService<IOcrAccuracyService>();
                 _iconManager = new IconManager(_logger);
-                _ocrRegionProcessor = new OcrRegionProcessor(_ocrService, _translationService, _appSettings.OcrLanguage, _appSettings.TargetLanguage);
+                _ocrRegionProcessor = new OcrRegionProcessor(_ocrService, _translationService, _appSettings);
                 // UI bileşenlerini başlatmak için
                 InitializeTranslationServices();
                 InitializeLanguageControls();
@@ -248,7 +264,7 @@ namespace GameTranslatorUltimate
                 cmbOcrEngine.SelectedIndex = _appSettings.OcrEngine == OcrEngineType.WindowsOcr ? 0 : 1;
                 cmbTextDetectionMethod.SelectedIndex = (int)_appSettings.TextDetectionMethod;
                 chkEnableColorFilter.IsChecked = _appSettings.EnableOcrColorFilter;
-                
+
                 txtOllamaApiUrl.Text = _appSettings.OllamaApiUrl ?? "http://localhost:11434";
                 txtOllamaModelName.Text = _appSettings.OllamaModelName ?? "llama3:8b";
 
@@ -480,6 +496,7 @@ namespace GameTranslatorUltimate
                 // EnhancedMemoryService'i dispose et (tüm event'leri ve kaynakları temizler)
                 _enhancedMemoryService?.Dispose();
                 _logger?.LogInformation("EnhancedMemoryService kaynakları serbest bırakıldı");
+                lock (_ocrThumbLock) { _previousOcrThumb?.Dispose(); _previousOcrThumb = null; }
 
                 _logger?.LogInformation("Uygulama başarıyla kapatıldı");
             }
@@ -690,12 +707,16 @@ namespace GameTranslatorUltimate
                 _enhancedMemoryService.ReportStatusWithTimestamp(GetString("Str_Log_ScanStarted"));
                 AppendToLog(GetString("Str_Log_ScanStarted"));
 
-                // Process'e bağlan (event'ler için)
-                bool attachSuccess = _enhancedMemoryService.AttachToProcess(pi.Process.Id);
-                if (attachSuccess)
+                bool enhancedAttachSuccess = _enhancedMemoryService.AttachToProcess(pi.Process.Id);
+                bool memoryAttachSuccess = _memoryService.AttachToProcess(pi.Process.Id);
+
+                if (!enhancedAttachSuccess || !memoryAttachSuccess)
                 {
-                    AppendToLog(GetString("Str_Log_ProcessAttached", pi.Process.ProcessName, pi.Process.Id));
+                    AppendToLog($"Process belleğine bağlanılamadı. Enhanced={enhancedAttachSuccess}, Memory={memoryAttachSuccess}", true);
+                    return;
                 }
+
+                AppendToLog(GetString("Str_Log_ProcessAttached", pi.Process.ProcessName, pi.Process.Id));
 
                 // Gelişmiş tarama: Chunk ve buffer boyutunu belirle
                 int chunkSize = 4 * 1024 * 1024; // 4 MB
@@ -1144,8 +1165,6 @@ namespace GameTranslatorUltimate
 
 
                 // Olay dinleyicilerini ekle
-                cmbOcrLanguage.SelectionChanged += CmbOcrLanguage_SelectionChanged;
-                cmbTargetLanguage.SelectionChanged += CmbTargetLanguage_SelectionChanged;
                 chkEnableColorFilter.Click += ChkEnableColorFilter_Click;
                 chkEnableSkewCorrection.Click += ChkEnableSkewCorrection_Click;
                 chkEnableHandwritingMode.Click += ChkEnableHandwritingMode_Click;
@@ -1243,9 +1262,9 @@ namespace GameTranslatorUltimate
 
                     if (shouldTranslate)
                     {
-                        _lastReadText = currentText; // Çevrildi 
+                        _lastReadText = currentText;
                         string translated = await _translationService.TranslateAsync(currentText, _appSettings.TargetLanguage, GetSelectedTranslationStrategy());
-                        Dispatcher.Invoke(() => { txtOriginal.Text = $"[RAM] {currentText}"; UpdateTranslatedText(translated); });
+                        Dispatcher.BeginInvoke(new Action(() => { txtOriginal.Text = $"[RAM] {currentText}"; UpdateTranslatedText(translated); }), DispatcherPriority.Background);
                     }
                 }
                 _potentiallyStableRamText = currentText;
@@ -1264,7 +1283,6 @@ namespace GameTranslatorUltimate
                 string currentText = await Task.Run(() => _memoryService.TryReadStringDeep(_manualAddress));
                 if (!string.IsNullOrWhiteSpace(currentText) && currentText != _lastManualText)
                 {
-                    // Anomali tespiti
                     bool shouldTranslate = true;
                     if (_appSettings.EnableAnomalyDetection)
                     {
@@ -1275,7 +1293,7 @@ namespace GameTranslatorUltimate
                             {
                                 AppendToLog($"Manuel Anomali tespit edildi: {anomalyResult.Reason} (Güven: %{anomalyResult.Confidence * 100:F1})", true);
                             }
-                            shouldTranslate = false; // Anormal metni çevirme
+                            shouldTranslate = false;
                         }
                     }
 
@@ -1283,7 +1301,7 @@ namespace GameTranslatorUltimate
                     {
                         _lastManualText = currentText;
                         string translated = await _translationService.TranslateAsync(currentText, _appSettings.TargetLanguage, GetSelectedTranslationStrategy());
-                        Dispatcher.Invoke(() => { txtOriginal.Text = $"[Manuel] {currentText}"; UpdateTranslatedText(translated); });
+                        Dispatcher.BeginInvoke(new Action(() => { txtOriginal.Text = $"[Manuel] {currentText}"; UpdateTranslatedText(translated); }), DispatcherPriority.Background);
                     }
                 }
             }
@@ -1293,229 +1311,309 @@ namespace GameTranslatorUltimate
             }
         }
 
-        private async void ContinuousOcrTimer_Tick(object sender, EventArgs e)
+        private static string NormalizeOcrText(string text)
         {
-            // Aynı anda birden fazla OCR tick'i çalışmasını engellemek için
-            if (_isOcrTickBusy) return;
-            _isOcrTickBusy = true;
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            string t = text.Trim();
+            t = System.Text.RegularExpressions.Regex.Replace(t, @"\r\n|\r|\n", " ");
+            t = System.Text.RegularExpressions.Regex.Replace(t, @"\s{2,}", " ");
+            return t;
+        }
 
+        private System.Drawing.Rectangle GetSubtitleRoi(int w, int h)
+        {
+            int x = (int)(w * 0.05);
+            int y = (int)(h * 0.50);
+            int width = (int)(w * 0.90);
+            int height = (int)(h * 0.45);
+            if (width <= 0) width = w;
+            if (height <= 0) height = h;
+            var r = new System.Drawing.Rectangle(x, y, width, height);
+            return System.Drawing.Rectangle.Intersect(new System.Drawing.Rectangle(0, 0, w, h), r);
+        }
+
+        private bool IsOcrFrameChanged(Bitmap currentCropped)
+        {
+            if (currentCropped == null) return true;
             try
             {
-                if (!_isContinuousOcrRunning)
-                    return;
-
-                var pi = cmbProcesses.SelectedItem as ProcessInfo;
-                if (pi == null || pi.Process.HasExited)
+                using (var curMat = OpenCvSharp.Extensions.BitmapConverter.ToMat(currentCropped))
+                using (var gray = new OpenCvSharp.Mat())
+                using (var small = new OpenCvSharp.Mat())
                 {
-                    StopContinuousOcr();
-                    return;
+                    if (curMat.Empty()) return true;
+                    if (curMat.Channels() == 4) OpenCvSharp.Cv2.CvtColor(curMat, gray, OpenCvSharp.ColorConversionCodes.BGRA2GRAY);
+                    else if (curMat.Channels() == 3) OpenCvSharp.Cv2.CvtColor(curMat, gray, OpenCvSharp.ColorConversionCodes.BGR2GRAY);
+                    else curMat.CopyTo(gray);
+                    OpenCvSharp.Cv2.Resize(gray, small, new OpenCvSharp.Size(64, 36));
+                    lock (_ocrThumbLock)
+                    {
+                        if (_previousOcrThumb == null || _previousOcrThumb.Empty() || _previousOcrThumb.Width != 64 || _previousOcrThumb.Height != 36)
+                        {
+                            _previousOcrThumb?.Dispose();
+                            _previousOcrThumb = small.Clone();
+                            return true;
+                        }
+                        using (var diff = new OpenCvSharp.Mat())
+                        {
+                            OpenCvSharp.Cv2.Absdiff(small, _previousOcrThumb, diff);
+                            OpenCvSharp.Cv2.Threshold(diff, diff, 15, 255, OpenCvSharp.ThresholdTypes.Binary);
+                            int changed = OpenCvSharp.Cv2.CountNonZero(diff);
+                            double ratio = (double)changed / (64 * 36);
+                            _previousOcrThumb.Dispose();
+                            _previousOcrThumb = small.Clone();
+                            return ratio >= FrameChangeThreshold;
+                        }
+                    }
                 }
+            }
+            catch { return true; }
+        }
 
+        private async void ContinuousOcrTimer_Tick(object sender, EventArgs e)
+        {
+            if (_isOcrTickBusy) return;
+            _isOcrTickBusy = true;
+            try
+            {
+                if (!_isContinuousOcrRunning) return;
+                long nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (_lastOcrTicks != 0)
+                {
+                    long elapsedMs = (nowTicks - _lastOcrTicks) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                    if (elapsedMs < DefaultOcrIntervalMs)
+                    {
+                        _framesDroppedThrottle++;
+                        return;
+                    }
+                }
+                _framesReceived++;
+                var pi = cmbProcesses.SelectedItem as ProcessInfo;
+                if (pi == null || pi.Process.HasExited) { StopContinuousOcr(); return; }
                 IntPtr handle = pi.Process.MainWindowHandle;
-                if (handle == IntPtr.Zero)
-                    return;
-
-                // Ekran görüntüsü alma
+                if (handle == IntPtr.Zero) return;
+                var swTotal = System.Diagnostics.Stopwatch.StartNew();
                 using (var screenshot = await Task.Run(() => _ocrService.CaptureWindow(handle)))
                 {
-                    if (screenshot == null)
-                        return;
-
-                    Bitmap imageToProcess;
-
-                    // Kırpma işlemi
-                    if (_selectedOcrRegion.HasValue)
+                    if (screenshot == null) return;
+                    System.Drawing.Rectangle roi;
+                    bool hasManual = _selectedOcrRegion.HasValue && _selectedOcrRegion.Value.Width > 0 && _selectedOcrRegion.Value.Height > 0;
+                    if (hasManual)
                     {
-                        var cropRect = _selectedOcrRegion.Value;
-                        using (var cropped = _ocrService.CropImage(screenshot, cropRect))
-                        {
-                            imageToProcess = new Bitmap(cropped);
-                        }
+                        roi = System.Drawing.Rectangle.Intersect(new System.Drawing.Rectangle(0, 0, screenshot.Width, screenshot.Height), _selectedOcrRegion.Value);
                     }
                     else
                     {
-                        imageToProcess = new Bitmap(screenshot);
+                        roi = GetSubtitleRoi(screenshot.Width, screenshot.Height);
                     }
-
-                    Bitmap imageForOcr = imageToProcess;
-
-                    // Renk filtresi uygula
-                    if (_appSettings.EnableOcrColorFilter)
+                    Bitmap croppedForChange;
+                    bool useCropped = roi.Width > 0 && roi.Height > 0 && (roi.Width < screenshot.Width || roi.Height < screenshot.Height);
+                    if (useCropped)
                     {
-                        imageForOcr = _ocrService.IsolateTextByColor(imageToProcess);
-                        imageToProcess.Dispose();
+                        try { croppedForChange = screenshot.Clone(roi, screenshot.PixelFormat); } catch { croppedForChange = null; }
                     }
-
+                    else
+                    {
+                        croppedForChange = null;
+                    }
+                    Bitmap changeCheckSource = croppedForChange ?? screenshot;
+                    bool changed = IsOcrFrameChanged(changeCheckSource);
+                    if (croppedForChange != null) croppedForChange.Dispose();
+                    if (!changed)
+                    {
+                        _ocrSkippedNoChange++;
+                        _lastOcrTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                        return;
+                    }
+                    Bitmap imageForOcr;
+                    if (useCropped)
+                    {
+                        try { imageForOcr = screenshot.Clone(roi, screenshot.PixelFormat); } catch { imageForOcr = new Bitmap(screenshot); }
+                    }
+                    else
+                    {
+                        if (_appSettings.EnableOcrColorFilter)
+                        {
+                            imageForOcr = _ocrService.IsolateTextByColor(screenshot);
+                            if (imageForOcr == null) imageForOcr = new Bitmap(screenshot);
+                        }
+                        else
+                        {
+                            imageForOcr = new Bitmap(screenshot);
+                        }
+                    }
                     using (imageForOcr)
                     {
-                        // Görüntü analizi yap
-                        try
+                        string ocrLanguage = _appSettings.OcrLanguage;
+                        var regionResults = await _ocrRegionProcessor.ProcessChangedRegionsAsync(imageForOcr, _selectedOcrRegion);
+                        string currentText;
+                        if (regionResults != null && regionResults.Count > 0)
                         {
-                            using (var imageMat = OpenCvSharp.Extensions.BitmapConverter.ToMat(imageForOcr))
+                            currentText = string.Join(" ", regionResults.Select(r => r.RecognizedText).Where(t => !string.IsNullOrWhiteSpace(t)));
+                        }
+                        else
+                        {
+                            currentText = string.Empty;
+                        }
+                        if (string.IsNullOrWhiteSpace(currentText) && !hasManual && useCropped)
+                        {
+                            try
                             {
-                                // Kenar maskesi oluştur (gerekirse)
-                                if (_appSettings.EnableOcrColorFilter)
-                                {
-                                    // Note: Edge/Contrast masks are created but not stored? Just ensuring they don't crash the app if used later or for debug.
-                                    try
-                                    {
-                                        using (var edgeMask = _ocrService.CreateEdgeMask(imageMat))
-                                        using (var contrastMask = _ocrService.CreateContrastMask(imageMat))
-                                        {
-
-                                        }
-                                    }
-                                    catch { }
-                                }
+                                var fallbackText = await _ocrService.GetTextFromImage(screenshot, ocrLanguage);
+                                if (!string.IsNullOrWhiteSpace(fallbackText)) currentText = fallbackText;
                             }
+                            catch { }
                         }
-                        catch (Exception ex)
-                        {
-                            // Log full exception to help diagnose native load issues (DllNotFound, BadImageFormat, etc.)
-                            _logger?.LogWarning($"BitmapConverter.ToMat failed in MainWindow (OpenCV issue?): {ex.Message}");
-                            _logger?.LogError("OpenCV BitmapConverter.ToMat exception", ex);
-                        }
-
-                        _logger.LogInformation($"OCR işlemi başlatılıyor. OCR Motoru: {_appSettings.OcrEngine}, Dil: {_appSettings.OcrLanguage}");
-                        var regionResults = await _ocrRegionProcessor.ProcessChangedRegionsAsync(imageForOcr);
-                        string currentText = string.Join(" ", regionResults.Select(r => r.TranslatedText).Where(t => !string.IsNullOrWhiteSpace(t)));
-
-                        _logger.LogInformation($"OcrRegionProcessor sonucu: {regionResults.Count} bölge, Metin: '{currentText}'");
-
-                        // WindowsOcrService ile alternatif OCR işlemi (ayarlara göre)
                         if (string.IsNullOrWhiteSpace(currentText) && _appSettings.OcrEngine == OcrEngineType.WindowsOcr)
                         {
                             try
                             {
-                                _logger.LogInformation("WindowsOcrService ile alternatif OCR deneniyor...");
-                                var windowsOcrText = await _windowsOcrService.GetTextFromImage(imageForOcr, _appSettings.OcrLanguage);
-                                if (!string.IsNullOrWhiteSpace(windowsOcrText))
-                                {
-                                    currentText = windowsOcrText;
-                                    _logger.LogInformation($"WindowsOcrService ile metin tanındı: {currentText.Substring(0, Math.Min(50, currentText.Length))}...");
-                                }
-                                else
-                                {
-                                    _logger.LogWarning("WindowsOcrService metin tanıyamadı.");
-                                }
+                                var windowsOcrText = await _windowsOcrService.GetTextFromImage(imageForOcr, ocrLanguage);
+                                if (!string.IsNullOrWhiteSpace(windowsOcrText)) currentText = windowsOcrText;
                             }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError($"WindowsOcrService hatası: {ex.Message}", ex);
-                            }
+                            catch (Exception ex) { _logger.LogError($"WindowsOcrService hatası: {ex.Message}", ex); }
                         }
-
-                        // Eğer hala metin yoksa, doğrudan OCR servislerini dene
                         if (string.IsNullOrWhiteSpace(currentText))
                         {
-                            _logger.LogInformation("Doğrudan OCR servisleri deneniyor...");
                             try
                             {
-                                // IOcrService ile doğrudan metin tanıma
-                                var directOcrText = await _ocrService.GetTextFromImage(imageForOcr, _appSettings.OcrLanguage);
-                                if (!string.IsNullOrWhiteSpace(directOcrText))
-                                {
-                                    currentText = directOcrText;
-                                    _logger.LogInformation($"IOcrService ile metin tanındı: {currentText.Substring(0, Math.Min(50, currentText.Length))}...");
-                                }
-                                else
-                                {
-                                    _logger.LogWarning("IOcrService metin tanıyamadı.");
-                                }
+                                var directOcrText = await _ocrService.GetTextFromImage(imageForOcr, ocrLanguage);
+                                if (!string.IsNullOrWhiteSpace(directOcrText)) currentText = directOcrText;
                             }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError($"IOcrService hatası: {ex.Message}", ex);
-                            }
+                            catch (Exception ex) { _logger.LogError($"IOcrService hatası: {ex.Message}", ex); }
                         }
-
-                        // Makine öğrenmesi ile metin iyileştirme
-                        string ocrTextForDisplay = currentText;
-                        string textForTranslation = currentText;
-
-                        if (!string.IsNullOrWhiteSpace(currentText) && _appSettings.EnableMachineLearning)
-                        {
-                            using (var imageMat = OpenCvSharp.Extensions.BitmapConverter.ToMat(imageForOcr))
-                            {
-                                var mlResult = _mlTextProcessor.ProcessTextWithML(currentText, imageMat, _lastReadText);
-                                
-                                // Görüntülenecek metin her zaman ham (orijinal) OCR metni olmalıdır.
-                                ocrTextForDisplay = mlResult.OriginalText;
-
-                                if (mlResult.Confidence >= _appSettings.MlConfidenceThreshold)
-                                {
-                                    // Sadece çeviri için işlenmiş metni kullan.
-                                    textForTranslation = mlResult.ProcessedText;
-                                    if (mlResult.Improvements.Any())
-                                    {
-                                        AppendToLog($"ML iyileştirmeleri: {string.Join(", ", mlResult.Improvements)} (Güven: %{mlResult.Confidence * 100:F1})");
-                                        _logger.LogInformation($"ML iyileştirmesi uygulandı: {string.Join(", ", mlResult.Improvements)}");
-                                    }
-                                }
-                                else
-                                {
-                                    _logger.LogInformation($"ML işleme güven eşiğinin altında: %{mlResult.Confidence * 100:F1}");
-                                }
-                            }
-                        }
-
-                        // Kararlılık kontrolü için çevrilecek metni kullan
-                        currentText = textForTranslation;
-
-                        // Çeviri kararı
-                        bool shouldTranslate;
                         if (string.IsNullOrWhiteSpace(currentText))
                         {
-                            shouldTranslate = false;
-                            _logger.LogWarning("OCR işlemi başarısız - metin tanınamadı.");
-                            AppendToLog("OCR: Metin tanınamadı", true);
+                            _lastOcrTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                            return;
                         }
+                        string normalized = NormalizeOcrText(currentText);
+                        if (string.Equals(normalized, _lastRecognizedNormalized, StringComparison.Ordinal))
+                        {
+                            _duplicateTextsSkipped++;
+                            _lastOcrTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                            _potentiallyStableOcrText = currentText;
+                            return;
+                        }
+                        string ocrTextForDisplay = currentText;
+                        string textForTranslation = currentText;
+                        bool runCorrection = !string.IsNullOrWhiteSpace(currentText);
+                        bool needMl = _appSettings.EnableMachineLearning && runCorrection;
+                        bool isHighConfidence = normalized.Length >= 8 && normalized.Length < 200;
+                        if (needMl)
+                        {
+                            bool shouldRunMl = true;
+                            if (isHighConfidence && normalized.Length > 15) shouldRunMl = false;
+                            if (shouldRunMl)
+                            {
+                                try
+                                {
+                                    using (var imageMat = OpenCvSharp.Extensions.BitmapConverter.ToMat(imageForOcr))
+                                    {
+                                        var mlResult = _mlTextProcessor.ProcessTextWithML(currentText, imageMat, _lastReadText);
+                                        ocrTextForDisplay = mlResult.OriginalText;
+                                        if (mlResult.Confidence >= _appSettings.MlConfidenceThreshold)
+                                        {
+                                            textForTranslation = mlResult.ProcessedText;
+                                        }
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                        else if (_appSettings.EnableTextCorrection)
+                        {
+                            try { textForTranslation = OcrTextCorrector.CorrectText(currentText, ocrLanguage, true, _logger); } catch { }
+                        }
+                        if (_appSettings.EnableAnomalyDetection && !string.IsNullOrWhiteSpace(textForTranslation))
+                        {
+                            try
+                            {
+                                var anomaly = _anomalyDetector.DetectAnomaly(textForTranslation, _lastReadText);
+                                if (anomaly.IsAnomalous && anomaly.Confidence >= _appSettings.AnomalyDetectionThreshold)
+                                {
+                                    if (_appSettings.LogAnomalies) _logger.LogWarning($"Anomali engellendi: {anomaly.Reason}");
+                                    _lastOcrTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                                    _potentiallyStableOcrText = currentText;
+                                    return;
+                                }
+                            }
+                            catch { }
+                        }
+                        currentText = textForTranslation;
+                        normalized = NormalizeOcrText(currentText);
+                        if (string.Equals(normalized, _lastRecognizedNormalized, StringComparison.Ordinal))
+                        {
+                            _duplicateTextsSkipped++;
+                            _lastOcrTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                            _potentiallyStableOcrText = currentText;
+                            return;
+                        }
+                        bool shouldTranslate;
+                        if (string.IsNullOrWhiteSpace(currentText)) shouldTranslate = false;
                         else if (_appSettings.RequireStableOcr)
                         {
-                            shouldTranslate = currentText == _potentiallyStableOcrText && currentText != _lastReadText;
-                            _logger.LogInformation($"Kararlılık kontrolü: Mevcut='{currentText}', Potansiyel='{_potentiallyStableOcrText}', Son='{_lastReadText}', Çevir={shouldTranslate}");
+                            if (isHighConfidence) shouldTranslate = normalized != _lastRecognizedNormalized;
+                            else shouldTranslate = currentText == _potentiallyStableOcrText && normalized != _lastRecognizedNormalized;
+                        }
+                        else shouldTranslate = normalized != _lastRecognizedNormalized;
+                        if (!shouldTranslate)
+                        {
+                            _potentiallyStableOcrText = currentText;
+                            _lastOcrTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                            return;
+                        }
+                        _lastRecognizedNormalized = normalized;
+                        _potentiallyStableOcrText = currentText;
+                        swTotal.Stop();
+                        _ocrRuns++;
+                        _totalOcrTicks += swTotal.ElapsedTicks;
+                        _lastOcrTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+                        int gen = Interlocked.Increment(ref _ocrTranslationGeneration);
+                        string targetLang = _appSettings.TargetLanguage;
+                        Type strategy = GetSelectedTranslationStrategy();
+                        _translationRequests++;
+                        var swTrans = System.Diagnostics.Stopwatch.StartNew();
+                        string translated = null;
+                        try
+                        {
+                            if (_translationService is PerformanceOptimizedTranslationService perf)
+                            {
+                                translated = await perf.TranslateRealtimeAsync(textForTranslation, targetLang, strategy).ConfigureAwait(false);
+                            }
+                            else
+                            {
+                                translated = await _translationService.TranslateAsync(textForTranslation, targetLang, strategy).ConfigureAwait(false);
+                            }
+                        }
+                        catch (Exception ex) { _logger.LogError("Çeviri hatası", ex); }
+                        swTrans.Stop();
+                        _totalTranslationTicks += swTrans.ElapsedTicks;
+                        if (gen != Volatile.Read(ref _ocrTranslationGeneration)) return;
+                        if (string.IsNullOrWhiteSpace(translated)) return;
+                        string displayOrig = ocrTextForDisplay;
+                        string displayTrans = translated;
+                        if (!Dispatcher.CheckAccess())
+                        {
+                            Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                if (gen != Volatile.Read(ref _ocrTranslationGeneration)) return;
+                                if (string.Equals(NormalizeOcrText(txtOriginal.Text.Replace("[OCR]","").Trim()), NormalizeOcrText(displayOrig), StringComparison.Ordinal) && _translationHistory.Count>0 && _translationHistory.First.Value==displayTrans) return;
+                                txtOriginal.Text = $"[OCR] {displayOrig}";
+                                UpdateTranslatedText(displayTrans);
+                            }), DispatcherPriority.Background);
                         }
                         else
                         {
-                            shouldTranslate = currentText != _lastReadText;
-                            _logger.LogInformation($"Basit kontrol: Mevcut='{currentText}', Son='{_lastReadText}', Çevir={shouldTranslate}");
+                            if (string.Equals(NormalizeOcrText(txtOriginal.Text.Replace("[OCR]","").Trim()), NormalizeOcrText(displayOrig), StringComparison.Ordinal) && _translationHistory.Count>0 && _translationHistory.First.Value==displayTrans) return;
+                            txtOriginal.Text = $"[OCR] {displayOrig}";
+                            UpdateTranslatedText(displayTrans);
                         }
-
-                        if (shouldTranslate)
-                        {
-                            _lastReadText = textForTranslation;
-                            _logger.LogInformation($"Çeviri için metin hazır: {textForTranslation.Substring(0, Math.Min(30, textForTranslation.Length))}...");
-
-                            // Çeviri işlemi
-                            string translated = await _translationService.TranslateAsync(
-                                textForTranslation,
-                                _appSettings.TargetLanguage,
-                                GetSelectedTranslationStrategy());
-
-                            Dispatcher.Invoke(() =>
-                            {
-                                txtOriginal.Text = $"[OCR] {ocrTextForDisplay}";
-                                UpdateTranslatedText(translated);
-                            });
-
-                            if (!string.IsNullOrWhiteSpace(translated))
-                            {
-                                _logger.LogInformation($"Çeviri tamamlandı: {translated.Substring(0, Math.Min(30, translated.Length))}...");
-                            }
-                        }
-
-                        _potentiallyStableOcrText = currentText;
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                _logger?.LogError("Sürekli OCR sırasında hata.", ex);
-            }
-            finally
-            {
-                _isOcrTickBusy = false;
-            }
+            catch (Exception ex) { _logger?.LogError("Sürekli OCR sırasında hata.", ex); }
+            finally { _isOcrTickBusy = false; }
         }
 
         private void UpdateTranslatedText(string newTranslatedText)
@@ -1762,7 +1860,11 @@ namespace GameTranslatorUltimate
             _continuousOcrTimer.Stop();
             _lastReadText = "";
             _potentiallyStableOcrText = "";
+            _lastRecognizedNormalized = string.Empty;
             _isOcrTickBusy = false;
+            _lastOcrTicks = 0;
+            Interlocked.Increment(ref _ocrTranslationGeneration);
+            lock (_ocrThumbLock) { _previousOcrThumb?.Dispose(); _previousOcrThumb = null; }
             AppendToLog(GetString("Str_Log_OcrStopped"));
             UpdateUIState();
         }
@@ -1776,7 +1878,7 @@ namespace GameTranslatorUltimate
             // Hata önleyici: Eğer kaynak bulunamazsa varsayılan metni kullan
             if (string.IsNullOrEmpty(question)) question = "Lütfen pointer yolunu girin:";
 
-        
+
             var prompt = new InputDialog(question, "\"gamename.exe\"+1A2B3C, 40, 1F8, 10");
 
             if (prompt.ShowDialog() == true)
@@ -2199,8 +2301,8 @@ namespace GameTranslatorUltimate
                     try
                     {
                         AppendToLog(GetString("Str_Log_TestingRegion"));
-                        var regionResults = await _ocrRegionProcessor.ProcessChangedRegionsAsync(screenshot);
-                        var regionText = string.Join(" ", regionResults.Select(r => r.TranslatedText).Where(t => !string.IsNullOrWhiteSpace(t)));
+                        var regionResults = await _ocrRegionProcessor.ProcessChangedRegionsAsync(screenshot, _selectedOcrRegion);
+                        var regionText = string.Join(" ", regionResults.Select(r => r.RecognizedText).Where(t => !string.IsNullOrWhiteSpace(t)));
                         if (!string.IsNullOrWhiteSpace(regionText))
                         {
                             AppendToLog(GetString("Str_Log_RegionSuccess", regionText));
@@ -2281,22 +2383,38 @@ namespace GameTranslatorUltimate
             }
         }
 
-        private void CmbOcrLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void cmbOcrLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (cmbOcrLanguage.SelectedItem is string selectedLang)
-            {
-                _appSettings.OcrLanguage = selectedLang;
-                _settingsManager.SaveSettings(_appSettings);
-            }
+            if (_appSettings == null || !(cmbOcrLanguage.SelectedItem is string selectedLang))
+                return;
+
+            selectedLang = selectedLang.Trim();
+            if (string.IsNullOrWhiteSpace(selectedLang))
+                return;
+
+            if (string.Equals(_appSettings.OcrLanguage, selectedLang, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _appSettings.OcrLanguage = selectedLang;
+            _settingsManager.SaveSettings(_appSettings);
+            _logger?.LogInformation($"OCR dili değiştirildi: {selectedLang}");
         }
 
-        private void CmbTargetLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void cmbTargetLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (cmbTargetLanguage.SelectedItem is string selectedLang)
-            {
-                _appSettings.TargetLanguage = selectedLang;
-                _settingsManager.SaveSettings(_appSettings);
-            }
+            if (_appSettings == null || !(cmbTargetLanguage.SelectedItem is string selectedLang))
+                return;
+
+            selectedLang = selectedLang.Trim();
+            if (string.IsNullOrWhiteSpace(selectedLang))
+                return;
+
+            if (string.Equals(_appSettings.TargetLanguage, selectedLang, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _appSettings.TargetLanguage = selectedLang;
+            _settingsManager.SaveSettings(_appSettings);
+            _logger?.LogInformation($"Hedef çeviri dili değiştirildi: {selectedLang}");
         }
 
         private void ChkEnableColorFilter_Click(object sender, RoutedEventArgs e)

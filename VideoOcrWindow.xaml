@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="{DynamicResource Str_Video_Title}" Height="1053" Width="1200"
         WindowStartupLocation="CenterScreen"
-        Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+        Background="{DynamicResource PrimaryBackgroundBrush}"
+        Style="{DynamicResource ThemedWindow}">
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
@@ -11,19 +12,15 @@
             <Setter Property="FontSize" Value="16"/>
             <Setter Property="FontWeight" Value="Bold"/>
             <Setter Property="Margin" Value="0,10,0,5"/>
-            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
         </Style>
 
         <Style x:Key="LabelStyle" TargetType="TextBlock">
             <Setter Property="Margin" Value="0,5,0,2"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}"/>
         </Style>
 
-        <Style x:Key="ButtonStyle" TargetType="Button">
-            <Setter Property="Margin" Value="5"/>
-            <Setter Property="Padding" Value="10,5"/>
-            <Setter Property="MinWidth" Value="100"/>
-        </Style>
     </Window.Resources>
 
     <Grid>
@@ -34,13 +31,13 @@
         </Grid.RowDefinitions>
 
         <!-- BaÅŸlÄ±k -->
-        <Border Grid.Row="0" Background="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" Padding="10">
-            <StackPanel Orientation="Horizontal">
+        <Border Grid.Row="0" Background="{DynamicResource AccentBrush}" Padding="18,14">
+                <StackPanel Orientation="Horizontal">
                 <TextBlock Text="{DynamicResource Str_Video_Header}"
                           FontSize="18" FontWeight="Bold"
                           Foreground="White" VerticalAlignment="Center"/>
                 <TextBlock x:Name="StatusText" Text="{DynamicResource Str_Video_StatusStopped}"
-                          FontSize="14" Foreground="LightGray"
+                          FontSize="14" Foreground="{DynamicResource SecondaryTextBrush}"
                           Margin="20,0,0,0" VerticalAlignment="Center"/>
             </StackPanel>
         </Border>
@@ -61,7 +58,7 @@
                 </Grid.RowDefinitions>
 
                 <!-- Video GÃ¶rÃ¼ntÃ¼sÃ¼ -->
-                <Border Grid.Row="0" BorderBrush="Gray" BorderThickness="2" CornerRadius="5">
+                <Border Grid.Row="0" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="2" CornerRadius="8">
                     <Grid Background="Black">
                         <Image x:Name="VideoDisplay" Stretch="Uniform"
                               Width="640" Height="480"/>
@@ -95,7 +92,7 @@
 
                         <!-- TanÄ±nan Metin -->
                         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="5">
-                            <Border BorderBrush="LightGray" BorderThickness="1" Background="White">
+                                <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Background="{DynamicResource ReadOnlyBackgroundBrush}">
                                 <TextBlock x:Name="RecognizedTextBlock"
                                           Text="{DynamicResource Str_Video_NoText}"
                                           TextWrapping="Wrap"
@@ -176,16 +173,16 @@
                         <GroupBox Header="{DynamicResource Str_Video_Controls}" Margin="0,0,0,10">
                             <StackPanel Margin="10">
                                 <Button x:Name="StartButton" Content="{DynamicResource Str_Video_Start}"
-                                       Style="{StaticResource ButtonStyle}"
-                                       Click="StartButton_Click" Background="LightGreen"/>
+                                       Style="{DynamicResource ThemedButtonPrimary}"
+                                       Click="StartButton_Click"/>
                                 <Button x:Name="StopButton" Content="{DynamicResource Str_Video_Stop}"
-                                       Style="{StaticResource ButtonStyle}"
-                                       Click="StopButton_Click" Background="LightCoral" IsEnabled="False"/>
+                                       Style="{DynamicResource ThemedButtonDanger}"
+                                       Click="StopButton_Click" IsEnabled="False"/>
                                 <Button x:Name="CaptureFrameButton" Content="{DynamicResource Str_Video_CaptureFrame}"
-                                       Style="{StaticResource ButtonStyle}"
+                                       Style="{DynamicResource ThemedButtonSecondary}"
                                        Click="CaptureFrameButton_Click"/>
                                 <Button x:Name="GenerateReportButton" Content="{DynamicResource Str_Video_GenerateReport}"
-                                       Style="{StaticResource ButtonStyle}"
+                                       Style="{DynamicResource ThemedButtonSecondary}"
                                        Click="GenerateReportButton_Click"/>
                             </StackPanel>
                         </GroupBox>
@@ -213,7 +210,7 @@
         </Grid>
 
         <!-- Durum Ã‡ubuÄŸu -->
-        <StatusBar Grid.Row="2" Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+        <StatusBar Grid.Row="2" Background="{DynamicResource SecondaryBackgroundBrush}">
             <StatusBarItem>
                 <TextBlock x:Name="StatusBarText" Text="HazÄ±r"/>
             </StatusBarItem>

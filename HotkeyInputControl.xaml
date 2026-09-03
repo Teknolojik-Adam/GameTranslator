@@ -1,18 +1,24 @@
 ﻿<UserControl x:Class="GameTranslatorUltimate.HotkeyInputControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
-             xmlns:local="clr-namespace:GameTranslatorUltimate"
-             mc:Ignorable="d" 
-             d:DesignHeight="30" d:DesignWidth="200">
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
+             d:DesignHeight="36"
+             d:DesignWidth="200">
+
     <TextBox x:Name="HotkeyTextBox"
+             Height="36"
+             MinWidth="120"
+             Padding="8,0"
              IsReadOnly="True"
-             Padding="5"
-             GotFocus="HotkeyTextBox_GotFocus"
-             LostFocus="HotkeyTextBox_LostFocus"
-             KeyDown="HotkeyTextBox_KeyDown"
              TextAlignment="Center"
              VerticalContentAlignment="Center"
-             ToolTip="{DynamicResource Str_Hotkey_Tooltip}"/>
+             Cursor="Hand"
+             Style="{DynamicResource ThemedTextBox}"
+             ToolTip="{DynamicResource Str_Hotkey_Tooltip}"
+             GotFocus="HotkeyTextBox_GotFocus"
+             LostFocus="HotkeyTextBox_LostFocus"
+             KeyDown="HotkeyTextBox_KeyDown"/>
+
 </UserControl>

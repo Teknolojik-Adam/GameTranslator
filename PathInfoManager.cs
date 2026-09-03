@@ -6,144 +6,233 @@ using System.Reflection;
 using System.Windows.Media.Imaging;
 
 namespace GameTranslatorUltimate
-{//
+{
     public class ProcessInfo : IDisposable
     {
         private readonly Process _process;
         private readonly ILogger _logger;
+        private readonly int _processId;
+        private readonly string _processName;
+
         private BitmapImage _iconImage;
-        private bool _disposed = false;
+        private string _executablePath;
+        private bool _iconLoaded;
+        private bool _disposed;
 
         public Process Process => _process;
-        public string ProcessName => _process?.ProcessName ?? "Unknown";
+
+        public int ProcessId => _processId;
+
+        public string ProcessName => _processName;
+
+        public string ExecutablePath
+        {
+            get
+            {
+                if (_executablePath != null)
+                    return _executablePath;
+
+                _executablePath = GetExecutablePath();
+                return _executablePath;
+            }
+        }
 
         public BitmapImage IconImage
         {
             get
             {
                 if (_disposed)
-                {
-                    _logger?.LogWarning("ProcessInfo dispose edilmiş durumda. IconImage döndürülemiyor.");
-                    return new BitmapImage();
-                }
+                    return GetDefaultIcon();
 
-                if (_iconImage == null)
+                if (!_iconLoaded)
                 {
                     _iconImage = CreateIconImage();
+                    _iconLoaded = true;
                 }
-                return _iconImage;
+
+                return _iconImage ?? GetDefaultIcon();
             }
         }
 
-        public ProcessInfo(Process process, ILogger logger = null)
+        public ProcessInfo(
+            Process process,
+            ILogger logger = null)
         {
-            _process = process ?? throw new ArgumentNullException(nameof(process));
+            _process =
+                process ?? throw new ArgumentNullException(nameof(process));
+
             _logger = logger;
+
+            try
+            {
+                _processId = process.Id;
+            }
+            catch
+            {
+                _processId = -1;
+            }
+
+            try
+            {
+                _processName =
+                    process.ProcessName;
+            }
+            catch
+            {
+                _processName = "Unknown";
+            }
         }
 
         private BitmapImage CreateIconImage()
         {
-            BitmapImage bitmapImage = null;
+            string executablePath =
+                ExecutablePath;
+
+            if (string.IsNullOrWhiteSpace(executablePath) ||
+                !File.Exists(executablePath))
+            {
+                return GetDefaultIcon();
+            }
+
             try
             {
-                if (_process.MainModule?.FileName != null)
+                using (Icon icon =
+                       Icon.ExtractAssociatedIcon(executablePath))
                 {
-                    using (Icon ico = Icon.ExtractAssociatedIcon(_process.MainModule.FileName))
+                    if (icon == null)
+                        return GetDefaultIcon();
+
+                    using (Bitmap bitmap =
+                           icon.ToBitmap())
+                    using (var memoryStream =
+                           new MemoryStream())
                     {
-                        if (ico != null)
-                        {
-                            using (var memoryStream = new MemoryStream())
-                            {
-                                ico.ToBitmap().Save(memoryStream, System.Drawing.Imaging.ImageFormat.Png);
-                                memoryStream.Position = 0;
+                        bitmap.Save(
+                            memoryStream,
+                            System.Drawing.Imaging.ImageFormat.Png);
 
-                                bitmapImage = new BitmapImage();
-                                bitmapImage.BeginInit();
-                                bitmapImage.StreamSource = memoryStream;
-                                bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                                bitmapImage.EndInit();
-                                bitmapImage.Freeze();
+                        memoryStream.Position = 0;
 
-                                _logger?.LogInformation($"Process ikonu oluşturuldu: {_process.MainModule.FileName}");
-                            }
-                        }
-                        else
-                        {
-                            _logger?.LogWarning($"Icon oluşturulamadı, varsayılan icon döndürüldü: {_process.MainModule.FileName}");
-                            bitmapImage = GetDefaultIcon();
-                        }
+                        var image =
+                            new BitmapImage();
+
+                        image.BeginInit();
+
+                        image.CacheOption =
+                            BitmapCacheOption.OnLoad;
+
+                        image.StreamSource =
+                            memoryStream;
+
+                        image.EndInit();
+                        image.Freeze();
+
+                        return image;
                     }
-                }
-                else
-                {
-                    _logger?.LogWarning($"MainModule bulunamadı, varsayılan icon döndürüldü: {_process.ProcessName}");
-                    bitmapImage = GetDefaultIcon();
                 }
             }
             catch (Exception ex)
             {
-                _logger?.LogError($"Icon çıkarma hatası: {_process.MainModule?.FileName}", ex);
-                bitmapImage = GetDefaultIcon();
-            }
+                _logger?.LogWarning(
+                    $"Process ikonu alınamadı: {_processName}. {ex.Message}");
 
-            return bitmapImage ?? new BitmapImage();
+                return GetDefaultIcon();
+            }
+        }
+
+        private string GetExecutablePath()
+        {
+            if (_disposed)
+                return null;
+
+            try
+            {
+                if (_process == null ||
+                    _process.HasExited)
+                {
+                    return null;
+                }
+
+                return _process.MainModule?.FileName;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private BitmapImage GetDefaultIcon()
         {
             try
             {
-                var assembly = Assembly.GetExecutingAssembly();
-                using (var stream = assembly.GetManifestResourceStream("GameTranslatorUltimate.Resources.default_icon.png"))
+                Assembly assembly =
+                    Assembly.GetExecutingAssembly();
+
+                using (Stream stream =
+                       assembly.GetManifestResourceStream(
+                           "GameTranslatorUltimate.Resources.default_icon.png"))
                 {
-                    if (stream != null)
-                    {
-                        var bitmapImage = new BitmapImage();
-                        bitmapImage.BeginInit();
-                        bitmapImage.StreamSource = stream;
-                        bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                        bitmapImage.EndInit();
-                        bitmapImage.Freeze();
-                        _logger?.LogInformation("Varsayılan icon döndürüldü.");
-                        return bitmapImage;
-                    }
+                    if (stream == null)
+                        return CreateEmptyImage();
+
+                    var image =
+                        new BitmapImage();
+
+                    image.BeginInit();
+
+                    image.CacheOption =
+                        BitmapCacheOption.OnLoad;
+
+                    image.StreamSource =
+                        stream;
+
+                    image.EndInit();
+                    image.Freeze();
+
+                    return image;
                 }
             }
             catch (Exception ex)
             {
-                _logger?.LogError("Varsayılan icon çıkarma hatası", ex);
+                _logger?.LogWarning(
+                    $"Varsayılan process ikonu yüklenemedi: {ex.Message}");
+
+                return CreateEmptyImage();
             }
-            
-            return new BitmapImage();
         }
 
-        public void Dispose()
+        private static BitmapImage CreateEmptyImage()
         {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
+            var image =
+                new BitmapImage();
 
-        protected virtual void Dispose(bool disposing)
-        {
-            if (!_disposed)
+            if (image.CanFreeze)
             {
-                if (disposing)
-                {
-                    _iconImage = null;
-                    _logger?.LogInformation($"ProcessInfo temizlendi: {_process.ProcessName}");
-                }
-                _disposed = true;
+                image.Freeze();
             }
-        }
 
-        ~ProcessInfo()
-        {
-            Dispose(false);
+            return image;
         }
 
         public override string ToString()
         {
-            return $"{ProcessName} (PID: {_process.Id})";
+            if (_processId >= 0)
+            {
+                return
+                    $"{_processName} (PID: {_processId})";
+            }
+
+            return _processName;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            _iconImage = null;
+            _executablePath = null;
         }
     }
 }

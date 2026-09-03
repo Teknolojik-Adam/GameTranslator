@@ -4,96 +4,201 @@ using System.Windows.Media.Imaging;
 
 namespace GameTranslatorUltimate
 {
-    public class IconManager
+    public sealed class IconManager : IDisposable
     {
         private readonly ILogger _logger;
+        private bool _disposed;
 
-        public IconManager(ILogger logger = null)
+        public IconManager(
+            ILogger logger = null)
         {
-            _logger = logger ?? new ConsoleLogger();
+            _logger =
+                logger ?? new ConsoleLogger();
         }
 
-        // Process iÃ§in ikon almak iÃ§in
-        public BitmapImage ProcessIconuAl(Process process)
+        public BitmapImage ProcessIconuAl(
+            Process process)
         {
+            if (_disposed)
+            {
+                _logger.LogWarning(
+                    "IconManager dispose edilmiş.");
+
+                return null;
+            }
+
             try
             {
-                if (process == null || process.HasExited)
+                if (process == null)
                 {
-                    _logger.LogWarning("Process null veya kapanmÄ±ÅŸ.");
+                    _logger.LogWarning(
+                        "Process null.");
+
                     return null;
                 }
 
-                string filePath = process.MainModule?.FileName;
-                return LogoHelper.GetProcessIcon(filePath);
+                if (process.HasExited)
+                {
+                    _logger.LogWarning(
+                        "Process kapanmış.");
+
+                    return null;
+                }
+
+                string filePath =
+                    process.MainModule != null
+                        ? process.MainModule.FileName
+                        : null;
+
+                if (string.IsNullOrWhiteSpace(filePath))
+                {
+                    _logger.LogWarning(
+                        $"Process dosya yolu alınamadı. PID: {process.Id}");
+
+                    return null;
+                }
+
+                return LogoHelper.GetProcessIcon(
+                    filePath);
             }
             catch (Exception ex)
             {
-                _logger.LogError("Process ikonu alÄ±namadÄ±.", ex);
+                _logger.LogError(
+                    "Process ikonu alınamadı.",
+                    ex);
+
                 return null;
             }
         }
 
-        // Dosya yolundan bÃ¼yÃ¼k ikon al
-        public BitmapImage BuyukIconAl(string dosyaYolu)
+        public BitmapImage BuyukIconAl(
+            string dosyaYolu)
         {
-            return LogoHelper.GetIconFromFilePath(dosyaYolu, largeIcon: true);
+            if (_disposed)
+                return null;
+
+            return LogoHelper.GetIconFromFilePath(
+                dosyaYolu,
+                true);
         }
 
-        // Dosya yolundan kÃ¼Ã§Ã¼k ikon al
-        public BitmapImage KucukIconAl(string dosyaYolu)
+        public BitmapImage KucukIconAl(
+            string dosyaYolu)
         {
-            return LogoHelper.GetIconFromFilePath(dosyaYolu, largeIcon: false);
+            if (_disposed)
+                return null;
+
+            return LogoHelper.GetIconFromFilePath(
+                dosyaYolu,
+                false);
         }
 
-        // Resource'dan ikon al
-        public BitmapImage ResourceIconAl(string resourceAdi)
+        public BitmapImage ResourceIconAl(
+            string resourceAdi)
         {
-            return LogoHelper.GetIconFromResource(resourceAdi);
+            if (_disposed)
+                return null;
+
+            return LogoHelper.GetIconFromResource(
+                resourceAdi);
         }
 
-        // Ã–nbellek durumunu kontrol et
         public void OnbellekDurumuGoster()
         {
-            int iconSayisi = LogoHelper.CachedIconCount;
-            _logger.LogInformation($"Ã–nbellekte {iconSayisi} adet ikon var.");
+            if (_disposed)
+                return;
+
+            int iconSayisi =
+                LogoHelper.CachedIconCount;
+
+            _logger.LogInformation(
+                $"Önbellekte {iconSayisi} adet ikon var.");
         }
 
-        // Ã–nbelleÄŸi temizle
         public void OnbellegiTemizle()
         {
             LogoHelper.ClearIconCache();
-            _logger.LogInformation("Ikon Ã¶nbelleÄŸi temizlendi.");
+
+            _logger.LogInformation(
+                "İkon önbelleği temizlendi.");
         }
 
-        // Belirli bir dosyanÄ±n Ã¶nbelleÄŸini sil
-        public void DosyaOnbelleginiSil(string dosyaYolu)
+        public void DosyaOnbelleginiSil(
+            string dosyaYolu)
         {
-            LogoHelper.InvalidateIconCache(dosyaYolu);
-            _logger.LogInformation($"Dosya Ã¶nbellekten silindi: {dosyaYolu}");
-        }
+            if (_disposed)
+                return;
 
-        // Process listesi iÃ§in ikonlarÄ± yÃ¼kle
-        public BitmapImage[] ProcessIconlariYukle(Process[] processler)
-        {
-            var ikonlar = new BitmapImage[processler.Length];
-            
-            for (int i = 0; i < processler.Length; i++)
+            if (string.IsNullOrWhiteSpace(
+                dosyaYolu))
             {
-                ikonlar[i] = ProcessIconuAl(processler[i]);
+                _logger.LogWarning(
+                    "Önbellekten silinecek dosya yolu boş.");
+
+                return;
+            }
+
+            LogoHelper.InvalidateIconCache(
+                dosyaYolu);
+
+            _logger.LogInformation(
+                $"Dosya önbellekten silindi: {dosyaYolu}");
+        }
+
+        public BitmapImage[] ProcessIconlariYukle(
+            Process[] processler)
+        {
+            if (_disposed)
+                return new BitmapImage[0];
+
+            if (processler == null ||
+                processler.Length == 0)
+            {
+                return new BitmapImage[0];
+            }
+
+            var ikonlar =
+                new BitmapImage[processler.Length];
+
+            for (int i = 0;
+                 i < processler.Length;
+                 i++)
+            {
+                ikonlar[i] =
+                    ProcessIconuAl(
+                        processler[i]);
             }
 
             OnbellekDurumuGoster();
+
             return ikonlar;
         }
 
-        // Uygulamadan Ã§Ä±karken Ã¶nbelleÄŸi temizle
         public void Dispose()
         {
-            OnbellekDurumuGoster();
-            OnbellegiTemizle();
+            if (_disposed)
+                return;
+
+            try
+            {
+                OnbellekDurumuGoster();
+
+                LogoHelper.ClearIconCache();
+
+                _logger.LogInformation(
+                    "IconManager kapatıldı ve ikon önbelleği temizlendi.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    "IconManager kapatılırken hata oluştu.",
+                    ex);
+            }
+            finally
+            {
+                _disposed =
+                    true;
+            }
         }
     }
 }
-
-

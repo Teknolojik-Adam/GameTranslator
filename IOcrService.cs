@@ -3,23 +3,44 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Threading.Tasks;
-using Tesseract;
 
 namespace GameTranslatorUltimate
 {
     public interface IOcrService
     {
-        Task<string> RecognizeTextInRegionsAsync(Bitmap image, string language);
+        Task<string> RecognizeTextInRegionsAsync(
+            Bitmap image,
+            string language);
 
-        Task<string> GetTextAdaptiveAsync(Bitmap image, string language);
-        Task<string> GetTextFromImage(Bitmap image, string language, bool invertColors = false);
+        Task<string> GetTextAdaptiveAsync(
+            Bitmap image,
+            string language);
 
-        Bitmap CaptureWindow(IntPtr hWnd);
-        Bitmap CropImage(Bitmap image, Rectangle region);
-        List<Rectangle> FindTextRegions(Bitmap sourceImage);
-        Bitmap IsolateTextByColor(Bitmap sourceImage);
-        Mat CreateEdgeMask(Mat imageMat);
-        Mat CreateContrastMask(Mat imageMat);
-        Scalar[] DetectTextColors(Mat hsvImage);
+        Task<string> GetTextFromImage(
+            Bitmap image,
+            string language,
+            bool invertColors = false);
+
+        Bitmap CaptureWindow(
+            IntPtr hWnd);
+
+        Bitmap CropImage(
+            Bitmap image,
+            Rectangle region);
+
+        List<Rectangle> FindTextRegions(
+            Bitmap sourceImage);
+
+        Bitmap IsolateTextByColor(
+            Bitmap sourceImage);
+
+        Mat CreateEdgeMask(
+            Mat imageMat);
+
+        Mat CreateContrastMask(
+            Mat imageMat);
+
+        Scalar[] DetectTextColors(
+            Mat hsvImage);
     }
 }

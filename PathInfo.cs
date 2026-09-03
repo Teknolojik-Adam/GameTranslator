@@ -2,7 +2,7 @@
 
 namespace GameTranslatorUltimate
 {
-    public class PathInfo
+    public sealed class PathInfo
     {
         public string BaseAddressModule { get; set; } = string.Empty;
         public long BaseAddressOffset { get; set; }

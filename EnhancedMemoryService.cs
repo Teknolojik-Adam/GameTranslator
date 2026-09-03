@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -9,235 +8,771 @@ using System.Threading.Tasks;
 
 namespace GameTranslatorUltimate
 {
-    public class EnhancedMemoryService : MemoryService
+    public sealed class EnhancedMemoryService : MemoryService
     {
         public event Action<string> StatusChanged;
         public event Action<int> ProgressChanged;
 
-        public EnhancedMemoryService(ILogger logger) : base(logger, new AppSettings(logger))
+        public EnhancedMemoryService(
+            ILogger logger)
+            : base(
+                logger ?? throw new ArgumentNullException(nameof(logger)),
+                new AppSettings(logger))
         {
-            _logger.LogInformation("EnhancedMemoryService baÅŸlatÄ±ldÄ±");
+            _logger.LogInformation(
+                "EnhancedMemoryService başlatıldı.");
         }
 
-        public EnhancedMemoryService(ILogger logger, AppSettings appSettings) : base(logger, appSettings)
+        public EnhancedMemoryService(
+            ILogger logger,
+            AppSettings appSettings)
+            : base(
+                logger ?? throw new ArgumentNullException(nameof(logger)),
+                appSettings ?? throw new ArgumentNullException(nameof(appSettings)))
         {
-            _logger.LogInformation("EnhancedMemoryService baÅŸlatÄ±ldÄ± (AppSettings ile)");
+            _logger.LogInformation(
+                "EnhancedMemoryService başlatıldı (AppSettings ile).");
         }
 
-        protected virtual void ReportStatus(string status)
+        protected void ReportStatus(
+            string status)
         {
-            StatusChanged?.Invoke(status);
-        }
+            Action<string> handler =
+                StatusChanged;
 
-        protected virtual void ReportProgress(int progress)
-        {
-            ProgressChanged?.Invoke(progress);
-        }
+            if (handler == null)
+                return;
 
-        public async Task<List<IntPtr>> FindPatternAddressesAsync(Process process, string pattern, CancellationToken ct, IProgress<int> progress = null)
-        {
-            return await FindPatternAddressesAsync(process, pattern, ct, progress, 4 * 1024 * 1024, 1024, true);
-        }
-
-        public async Task<List<IntPtr>> FindPatternAddressesAsync(Process process, string pattern, CancellationToken ct, IProgress<int> progress, int chunkSize)
-        {
-            return await FindPatternAddressesAsync(process, pattern, ct, progress, chunkSize, 1024, true);
-        }
-
-        public async Task<List<IntPtr>> FindPatternAddressesAsync(Process process, string pattern, CancellationToken ct, IProgress<int> progress, int chunkSize, int bufferSize)
-        {
-            return await FindPatternAddressesAsync(process, pattern, ct, progress, chunkSize, bufferSize, true);
-        }
-
-        public async Task<List<IntPtr>> FindPatternAddressesAsync(Process process, string pattern, CancellationToken ct, IProgress<int> progress, int chunkSize, int bufferSize, bool useOverlappingBuffers)
-        {
-            if (process == null || string.IsNullOrWhiteSpace(pattern))
+            try
             {
-                ReportStatus("GeÃ§ersiz giriÅŸ parametreleri!");
-                _logger.LogWarning("GeÃ§ersiz giriÅŸ parametreleri!");
+                handler(
+                    status ?? string.Empty);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    "StatusChanged event'i çalıştırılırken hata oluştu.",
+                    ex);
+            }
+        }
+
+        protected void ReportProgress(
+            int progress)
+        {
+            progress =
+                Math.Max(
+                    0,
+                    Math.Min(
+                        100,
+                        progress));
+
+            Action<int> handler =
+                ProgressChanged;
+
+            if (handler == null)
+                return;
+
+            try
+            {
+                handler(
+                    progress);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    "ProgressChanged event'i çalıştırılırken hata oluştu.",
+                    ex);
+            }
+        }
+
+        public Task<List<IntPtr>> FindPatternAddressesAsync(
+            Process process,
+            string pattern,
+            CancellationToken ct,
+            IProgress<int> progress = null)
+        {
+            return FindPatternAddressesAsync(
+                process,
+                pattern,
+                ct,
+                progress,
+                4 * 1024 * 1024,
+                1024 * 1024,
+                true);
+        }
+
+        public Task<List<IntPtr>> FindPatternAddressesAsync(
+            Process process,
+            string pattern,
+            CancellationToken ct,
+            IProgress<int> progress,
+            int chunkSize)
+        {
+            return FindPatternAddressesAsync(
+                process,
+                pattern,
+                ct,
+                progress,
+                chunkSize,
+                1024 * 1024,
+                true);
+        }
+
+        public Task<List<IntPtr>> FindPatternAddressesAsync(
+            Process process,
+            string pattern,
+            CancellationToken ct,
+            IProgress<int> progress,
+            int chunkSize,
+            int bufferSize)
+        {
+            return FindPatternAddressesAsync(
+                process,
+                pattern,
+                ct,
+                progress,
+                chunkSize,
+                bufferSize,
+                true);
+        }
+
+        public async Task<List<IntPtr>> FindPatternAddressesAsync(
+            Process process,
+            string pattern,
+            CancellationToken ct,
+            IProgress<int> progress,
+            int chunkSize,
+            int bufferSize,
+            bool useOverlappingBuffers)
+        {
+            if (process == null)
+            {
+                ReportStatus(
+                    "Geçersiz process.");
+
+                _logger.LogWarning(
+                    "Pattern taraması için process null.");
+
                 return new List<IntPtr>();
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                pattern))
+            {
+                ReportStatus(
+                    "Geçersiz pattern.");
+
+                _logger.LogWarning(
+                    "Pattern boş olamaz.");
+
+                return new List<IntPtr>();
+            }
+
+            if (chunkSize <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(chunkSize));
+            }
+
+            if (bufferSize <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(bufferSize));
             }
 
             try
             {
-                ReportStatus("Pattern ayrÄ±ÅŸtÄ±rÄ±lÄ±yor...");
-                var parsedPattern = ParsePattern(pattern);
-                if (parsedPattern == null)
+                ct.ThrowIfCancellationRequested();
+
+                if (process.HasExited)
                 {
-                    ReportStatus("GeÃ§ersiz pattern!");
-                    _logger.LogError($"GeÃ§ersiz pattern formatÄ±: {pattern}");
+                    ReportStatus(
+                        "Process kapanmış.");
+
                     return new List<IntPtr>();
                 }
-                var (patternBytes, patternMask) = parsedPattern.Value;
 
-                var module = process.MainModule;
+                ReportStatus(
+                    "Pattern ayrıştırılıyor...");
+
+                PatternData parsedPattern =
+                    ParsePattern(
+                        pattern);
+
+                if (parsedPattern == null ||
+                    parsedPattern.Bytes.Length == 0)
+                {
+                    ReportStatus(
+                        "Geçersiz pattern.");
+
+                    _logger.LogError(
+                        $"Geçersiz pattern formatı: {pattern}");
+
+                    return new List<IntPtr>();
+                }
+
+                int patternLength =
+                    parsedPattern.Bytes.Length;
+
+                if (bufferSize < patternLength)
+                {
+                    bufferSize =
+                        patternLength;
+                }
+
+                int overlap =
+                    useOverlappingBuffers
+                        ? Math.Max(
+                            0,
+                            patternLength - 1)
+                        : 0;
+
+                int step =
+                    bufferSize - overlap;
+
+                if (step <= 0)
+                {
+                    step =
+                        1;
+                }
+
+                ProcessModule module =
+                    process.MainModule;
+
                 if (module == null)
                 {
-                    ReportStatus("Ana modÃ¼l bulunamadÄ±!");
-                    _logger.LogError("Ana modÃ¼l bulunamadÄ±.");
+                    ReportStatus(
+                        "Ana modül bulunamadı.");
+
+                    _logger.LogError(
+                        "Ana modül bulunamadı.");
+
                     return new List<IntPtr>();
                 }
 
-                ReportStatus("Bellek bÃ¶lgeleri taranÄ±yor...");
-                var results = new ConcurrentBag<IntPtr>();
-                long moduleEnd = module.BaseAddress.ToInt64() + module.ModuleMemorySize;
-                long totalBytesToScan = module.ModuleMemorySize;
-                long totalBytesScanned = 0;
+                long moduleStart =
+                    module.BaseAddress.ToInt64();
 
-                var chunks = new List<(long address, int size)>();
-                for (long currentBase = module.BaseAddress.ToInt64(); currentBase < moduleEnd; currentBase += chunkSize)
+                long moduleSize =
+                    module.ModuleMemorySize;
+
+                if (moduleSize <= 0)
                 {
-                    int remainingBytes = (int)(moduleEnd - currentBase);
-                    chunks.Add((currentBase, Math.Min(chunkSize, remainingBytes)));
+                    ReportStatus(
+                        "Ana modül boyutu geçersiz.");
+
+                    return new List<IntPtr>();
                 }
 
-                await Task.Run(() =>
-                {
-                    Parallel.ForEach(chunks, new ParallelOptions { CancellationToken = ct }, (chunk, loopState) =>
+                long moduleEnd =
+                    checked(
+                        moduleStart +
+                        moduleSize);
+
+                ReportStatus(
+                    "Bellek bölgeleri taranıyor...");
+
+                List<MemoryChunk> chunks =
+                    BuildChunks(
+                        moduleStart,
+                        moduleEnd,
+                        chunkSize,
+                        patternLength);
+
+                var results =
+                    new HashSet<long>();
+
+                object resultsLock =
+                    new object();
+
+                long completedChunkBytes =
+                    0;
+
+                int lastProgress =
+                    -1;
+
+                await Task.Run(
+                    () =>
                     {
-                        int bufferOverlap = useOverlappingBuffers ? patternBytes.Length - 1 : 0;
-                        int bufferCapacity = bufferSize + bufferOverlap;
-                        var buffer = new byte[bufferCapacity];
-                        int bytesRead = 0;
-
-                        for (long currentAddress = chunk.address; currentAddress < chunk.address + chunk.size; currentAddress += bufferSize - bufferOverlap)
-                        {
-                            if (ct.IsCancellationRequested)
+                        Parallel.ForEach(
+                            chunks,
+                            new ParallelOptions
                             {
-                                loopState.Stop();
-                                return;
-                            }
+                                CancellationToken =
+                                    ct,
 
-                            int remainingBytes = (int)(chunk.address + chunk.size - currentAddress);
-                            int readSize = Math.Min(bufferSize, remainingBytes);
-
-                            if (!ReadProcessMemory(process.Handle, (IntPtr)currentAddress, buffer, readSize, out bytesRead) || bytesRead == 0)
+                                MaxDegreeOfParallelism =
+                                    Math.Max(
+                                        1,
+                                        Environment.ProcessorCount)
+                            },
+                            chunk =>
                             {
-                                _logger.LogWarning($"Bellek okuma baÅŸarÄ±sÄ±z: Adres 0x{currentAddress:X}, Okunan Byte {bytesRead}");
-                                continue;
-                            }
+                                ct.ThrowIfCancellationRequested();
 
-                            for (int i = 0; i < bytesRead - bufferOverlap; i++)
-                            {
-                                if (ct.IsCancellationRequested)
+                                ScanChunk(
+                                    process,
+                                    chunk,
+                                    parsedPattern,
+                                    bufferSize,
+                                    step,
+                                    results,
+                                    resultsLock,
+                                    ct);
+
+                                long completed =
+                                    Interlocked.Add(
+                                        ref completedChunkBytes,
+                                        chunk.ProgressSize);
+
+                                int currentProgress =
+                                    moduleSize > 0
+                                        ? (int)Math.Min(
+                                            100,
+                                            completed * 100L /
+                                            moduleSize)
+                                        : 100;
+
+                                int previous =
+                                    Interlocked.Exchange(
+                                        ref lastProgress,
+                                        currentProgress);
+
+                                if (previous != currentProgress)
                                 {
-                                    loopState.Stop();
-                                    return;
-                                }
+                                    ReportProgress(
+                                        currentProgress);
 
-                                if (MatchesWithMask(buffer, i, patternBytes, patternMask))
-                                {
-                                    results.Add(new IntPtr(currentAddress + i));
+                                    if (progress != null)
+                                    {
+                                        progress.Report(
+                                            currentProgress);
+                                    }
                                 }
-                            }
-
-                            long scanned = Interlocked.Add(ref totalBytesScanned, readSize);
-                            int currentProgress = (int)((double)scanned / totalBytesToScan * 100);
-                            ReportProgress(currentProgress);
-                            progress?.Report(currentProgress);
-                        }
-                    });
-                }, ct);
+                            });
+                    },
+                    ct);
 
                 ct.ThrowIfCancellationRequested();
 
-                ReportStatus($"Tarama tamamlandÄ±. {results.Count} adet sonuÃ§ bulundu.");
-                _logger.LogInformation($"Pattern taramasÄ± tamamlandÄ±. {results.Count} adet sonuÃ§ bulundu.");
-                return results.ToList();
+                List<IntPtr> finalResults;
+
+                lock (resultsLock)
+                {
+                    finalResults =
+                        results
+                            .OrderBy(
+                                address => address)
+                            .Select(
+                                address => new IntPtr(address))
+                            .ToList();
+                }
+
+                ReportProgress(
+                    100);
+
+                if (progress != null)
+                {
+                    progress.Report(
+                        100);
+                }
+
+                ReportStatus(
+                    $"Tarama tamamlandı. {finalResults.Count} adet sonuç bulundu.");
+
+                _logger.LogInformation(
+                    $"Pattern taraması tamamlandı. {finalResults.Count} adet sonuç bulundu.");
+
+                return finalResults;
             }
             catch (OperationCanceledException)
             {
-                ReportStatus("Pattern taramasÄ± kullanÄ±cÄ± tarafÄ±ndan durduruldu.");
-                _logger.LogInformation("Pattern taramasÄ± kullanÄ±cÄ± tarafÄ±ndan durduruldu.");
+                ReportStatus(
+                    "Pattern taraması kullanıcı tarafından durduruldu.");
+
+                _logger.LogInformation(
+                    "Pattern taraması kullanıcı tarafından durduruldu.");
+
                 return new List<IntPtr>();
             }
             catch (Exception ex)
             {
-                ReportStatus($"Tarama sÄ±rasÄ±nda hata: {ex.Message}");
-                _logger.LogError($"Tarama sÄ±rasÄ±nda hata: {ex.Message}", ex);
+                ReportStatus(
+                    $"Tarama sırasında hata: {ex.Message}");
+
+                _logger.LogError(
+                    "Pattern taraması sırasında hata oluştu.",
+                    ex);
+
                 return new List<IntPtr>();
             }
         }
-      
-        private (byte[] bytes, bool[] masks)? ParsePattern(string pattern)
-        {
-            var parts = pattern.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            var bytes = new List<byte>();
-            var masks = new List<bool>();
 
-            foreach (var p in parts)
+        private void ScanChunk(
+            Process process,
+            MemoryChunk chunk,
+            PatternData pattern,
+            int bufferSize,
+            int step,
+            HashSet<long> results,
+            object resultsLock,
+            CancellationToken ct)
+        {
+            long chunkEnd =
+                chunk.Start +
+                chunk.ScanSize;
+
+            byte[] buffer =
+                new byte[bufferSize];
+
+            for (long address = chunk.Start;
+                 address < chunkEnd;
+                 address += step)
             {
-                if (p == "??" || p == "?")
+                ct.ThrowIfCancellationRequested();
+
+                long remaining =
+                    chunkEnd -
+                    address;
+
+                if (remaining <= 0)
+                    break;
+
+                int readSize =
+                    (int)Math.Min(
+                        buffer.Length,
+                        remaining);
+
+                int bytesRead;
+
+                bool success =
+                    ReadProcessMemory(
+                        process.Handle,
+                        new IntPtr(address),
+                        buffer,
+                        readSize,
+                        out bytesRead);
+
+                if (!success ||
+                    bytesRead <= 0)
                 {
-                    bytes.Add(0);
-                    masks.Add(false);
+                    continue;
                 }
-                else if (byte.TryParse(p, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte b))
+
+                int maxOffset =
+                    bytesRead -
+                    pattern.Bytes.Length;
+
+                if (maxOffset < 0)
+                    continue;
+
+                for (int offset = 0;
+                     offset <= maxOffset;
+                     offset++)
                 {
-                    bytes.Add(b);
-                    masks.Add(true);
-                }
-                else
-                {
-                    _logger.LogError($"GeÃ§ersiz pattern parÃ§asÄ±: {p}");
-                    return null;
+                    ct.ThrowIfCancellationRequested();
+
+                    if (!MatchesWithMask(
+                        buffer,
+                        offset,
+                        bytesRead,
+                        pattern.Bytes,
+                        pattern.Mask))
+                    {
+                        continue;
+                    }
+
+                    long resultAddress =
+                        address +
+                        offset;
+
+                    if (resultAddress < chunk.ResultStart ||
+                        resultAddress >= chunk.ResultEnd)
+                    {
+                        continue;
+                    }
+
+                    lock (resultsLock)
+                    {
+                        results.Add(
+                            resultAddress);
+                    }
                 }
             }
-            return (bytes.ToArray(), masks.ToArray());
         }
 
-        private bool MatchesWithMask(byte[] buffer, int offset, byte[] pattern, bool[] masks)
+        private static List<MemoryChunk> BuildChunks(
+            long moduleStart,
+            long moduleEnd,
+            int chunkSize,
+            int patternLength)
         {
-            if (offset + pattern.Length > buffer.Length) return false;
+            var chunks =
+                new List<MemoryChunk>();
 
-            for (int i = 0; i < pattern.Length; i++)
+            long current =
+                moduleStart;
+
+            while (current < moduleEnd)
             {
-                if (masks[i] && buffer[offset + i] != pattern[i])
-                    return false;
+                long logicalEnd =
+                    Math.Min(
+                        moduleEnd,
+                        current +
+                        chunkSize);
+
+                long scanEnd =
+                    logicalEnd;
+
+                if (logicalEnd < moduleEnd &&
+                    patternLength > 1)
+                {
+                    scanEnd =
+                        Math.Min(
+                            moduleEnd,
+                            logicalEnd +
+                            patternLength -
+                            1);
+                }
+
+                chunks.Add(
+                    new MemoryChunk
+                    {
+                        Start =
+                            current,
+
+                        ScanSize =
+                            scanEnd -
+                            current,
+
+                        ProgressSize =
+                            logicalEnd -
+                            current,
+
+                        ResultStart =
+                            current,
+
+                        ResultEnd =
+                            logicalEnd
+                    });
+
+                current =
+                    logicalEnd;
             }
+
+            return chunks;
+        }
+
+        private PatternData ParsePattern(
+            string pattern)
+        {
+            string[] parts =
+                pattern.Split(
+                    new[]
+                    {
+                        ' ',
+                        '\t',
+                        '\r',
+                        '\n'
+                    },
+                    StringSplitOptions.RemoveEmptyEntries);
+
+            if (parts.Length == 0)
+                return null;
+
+            byte[] bytes =
+                new byte[parts.Length];
+
+            bool[] mask =
+                new bool[parts.Length];
+
+            for (int i = 0;
+                 i < parts.Length;
+                 i++)
+            {
+                string part =
+                    parts[i];
+
+                if (part == "?" ||
+                    part == "??")
+                {
+                    bytes[i] =
+                        0;
+
+                    mask[i] =
+                        false;
+
+                    continue;
+                }
+
+                byte value;
+
+                if (!byte.TryParse(
+                    part,
+                    NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture,
+                    out value))
+                {
+                    _logger.LogError(
+                        $"Geçersiz pattern parçası: {part}");
+
+                    return null;
+                }
+
+                bytes[i] =
+                    value;
+
+                mask[i] =
+                    true;
+            }
+
+            return new PatternData(
+                bytes,
+                mask);
+        }
+
+        private static bool MatchesWithMask(
+            byte[] buffer,
+            int offset,
+            int bytesRead,
+            byte[] pattern,
+            bool[] mask)
+        {
+            if (buffer == null ||
+                pattern == null ||
+                mask == null)
+            {
+                return false;
+            }
+
+            if (pattern.Length == 0 ||
+                pattern.Length != mask.Length)
+            {
+                return false;
+            }
+
+            if (offset < 0 ||
+                offset + pattern.Length >
+                bytesRead)
+            {
+                return false;
+            }
+
+            for (int i = 0;
+                 i < pattern.Length;
+                 i++)
+            {
+                if (mask[i] &&
+                    buffer[offset + i] !=
+                    pattern[i])
+                {
+                    return false;
+                }
+            }
+
             return true;
         }
 
-        public new bool AttachToProcess(int processId)
+        public new bool AttachToProcess(
+            int processId)
         {
-            var success = base.AttachToProcess(processId);
-            if (success)
+            bool success =
+                base.AttachToProcess(
+                    processId);
+
+            if (!success)
             {
-                try
+                ReportStatus(
+                    $"Process'e bağlanılamadı (ID: {processId}).");
+
+                return false;
+            }
+
+            try
+            {
+                using (Process process =
+                       Process.GetProcessById(
+                           processId))
                 {
-                    var process = Process.GetProcessById(processId);
-                    ReportStatus($"Process'e baÅŸarÄ±yla baÄŸlanÄ±ldÄ± (ID: {processId}, AdÄ±: {process?.ProcessName ?? "Bilinmiyor"}).");
-                }
-                catch
-                {
-                    ReportStatus($"Process'e baÅŸarÄ±yla baÄŸlanÄ±ldÄ± (ID: {processId}).");
+                    ReportStatus(
+                        $"Process'e başarıyla bağlanıldı (ID: {processId}, Adı: {process.ProcessName}).");
                 }
             }
-            else
+            catch
             {
-                ReportStatus($"Process'e baÄŸlanÄ±lamadÄ± (ID: {processId}).");
+                ReportStatus(
+                    $"Process'e başarıyla bağlanıldı (ID: {processId}).");
             }
-            return success;
+
+            return true;
+        }
+
+        public void ReportStatusWithTimestamp(
+            string status)
+        {
+            ReportStatus(
+                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {status}");
+        }
+
+        public void ReportProgressWithTimestamp(
+            int progress)
+        {
+            int normalizedProgress =
+                Math.Max(
+                    0,
+                    Math.Min(
+                        100,
+                        progress));
+
+            ReportProgress(
+                normalizedProgress);
+
+            ReportStatusWithTimestamp(
+                $"İlerleme: {normalizedProgress}%");
         }
 
         public new void Dispose()
         {
             base.Dispose();
-            ReportStatus("EnhancedMemoryService disposed.");
-            _logger.LogInformation("EnhancedMemoryService disposed.");
+
+            ReportStatus(
+                "EnhancedMemoryService kapatıldı.");
+
+            _logger.LogInformation(
+                "EnhancedMemoryService kapatıldı.");
         }
 
-        public void ReportStatusWithTimestamp(string status)
+        private sealed class PatternData
         {
-            ReportStatus($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {status}");
+            public byte[] Bytes { get; private set; }
+
+            public bool[] Mask { get; private set; }
+
+            public PatternData(
+                byte[] bytes,
+                bool[] mask)
+            {
+                Bytes =
+                    bytes ??
+                    new byte[0];
+
+                Mask =
+                    mask ??
+                    new bool[0];
+            }
         }
 
-        public void ReportProgressWithTimestamp(int progress)
+        private sealed class MemoryChunk
         {
-            ReportProgress(progress);
-            ReportStatusWithTimestamp($"Ä°lerleme: {progress}%");
+            public long Start { get; set; }
+
+            public long ScanSize { get; set; }
+
+            public long ProgressSize { get; set; }
+
+            public long ResultStart { get; set; }
+
+            public long ResultEnd { get; set; }
         }
     }
-
- 
 }

@@ -9,13 +9,19 @@ namespace GameTranslatorUltimate
 {
     public static class LogoHelper
     {
-        #region Fields
-        private static readonly Dictionary<string, BitmapImage> _iconCache = new Dictionary<string, BitmapImage>();
-        private static readonly object _lockObject = new object();
-        private static readonly ILogger _logger = new ConsoleLogger();
-        #endregion
+        private static readonly Dictionary<string, BitmapImage> _iconCache =
+            new Dictionary<string, BitmapImage>(
+                StringComparer.OrdinalIgnoreCase);
 
-        #region Public Properties
+        private static readonly object _lockObject =
+            new object();
+
+        private static readonly ILogger _logger =
+            new ConsoleLogger();
+
+        private const string DefaultIconResource =
+            "GameTranslatorUltimate.Resources.default_icon.png";
+
         public static int CachedIconCount
         {
             get
@@ -26,212 +32,528 @@ namespace GameTranslatorUltimate
                 }
             }
         }
-        #endregion
 
-        #region Public Methods - Icon Extraction
-        public static BitmapImage GetProcessIcon(string filePath)
+        public static BitmapImage GetProcessIcon(
+            string filePath)
         {
-            if (string.IsNullOrEmpty(filePath))
+            if (string.IsNullOrWhiteSpace(filePath))
             {
-                _logger.LogWarning("Dosya yolu boÅŸ veya geÃ§ersiz.");
+                _logger.LogWarning(
+                    "Dosya yolu boş veya geçersiz.");
+
+                return GetDefaultIcon();
+            }
+
+            string normalizedPath =
+                NormalizePath(filePath);
+
+            string cacheKey =
+                "process|" +
+                normalizedPath;
+
+            BitmapImage cachedIcon;
+
+            lock (_lockObject)
+            {
+                if (_iconCache.TryGetValue(
+                    cacheKey,
+                    out cachedIcon))
+                {
+                    return cachedIcon;
+                }
+            }
+
+            BitmapImage iconImage =
+                ExtractAssociatedIcon(
+                    normalizedPath);
+
+            if (iconImage == null)
+            {
                 return GetDefaultIcon();
             }
 
             lock (_lockObject)
             {
-                if (_iconCache.TryGetValue(filePath, out BitmapImage cachedIcon))
-                {
-                    _logger.LogInformation($"Icon Ã¶nbellekten alÄ±ndÄ±: {filePath}");
-                    return cachedIcon;
-                }
+                _iconCache[cacheKey] =
+                    iconImage;
+            }
 
-                try
-                {
-                    using (Icon ico = Icon.ExtractAssociatedIcon(filePath))
-                    {
-                        if (ico != null)
-                        {
-                            using (var memoryStream = new MemoryStream())
-                            {
-                                ico.ToBitmap().Save(memoryStream, System.Drawing.Imaging.ImageFormat.Png);
-                                memoryStream.Position = 0;
+            return iconImage;
+        }
 
-                                var bitmapImage = new BitmapImage();
-                                bitmapImage.BeginInit();
-                                bitmapImage.StreamSource = memoryStream;
-                                bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                                bitmapImage.EndInit();
-                                bitmapImage.Freeze();
-
-                                _iconCache[filePath] = bitmapImage;
-                                _logger.LogInformation($"Icon Ã¶nbelleÄŸe eklendi: {filePath}");
-                                return bitmapImage;
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"Icon Ã§Ä±karma hatasÄ±: {filePath}", ex);
-                }
+        public static BitmapImage GetIconFromFilePath(
+            string filePath,
+            bool largeIcon = true)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                _logger.LogWarning(
+                    "Dosya yolu boş veya geçersiz.");
 
                 return GetDefaultIcon();
             }
+
+            string normalizedPath =
+                NormalizePath(filePath);
+
+            if (!File.Exists(normalizedPath))
+            {
+                _logger.LogWarning(
+                    $"Dosya bulunamadı: {normalizedPath}");
+
+                return GetDefaultIcon();
+            }
+
+            string cacheKey =
+                "shell|" +
+                normalizedPath +
+                "|" +
+                (largeIcon ? "large" : "small");
+
+            BitmapImage cachedIcon;
+
+            lock (_lockObject)
+            {
+                if (_iconCache.TryGetValue(
+                    cacheKey,
+                    out cachedIcon))
+                {
+                    return cachedIcon;
+                }
+            }
+
+            BitmapImage iconImage =
+                ExtractShellIcon(
+                    normalizedPath,
+                    largeIcon);
+
+            if (iconImage == null)
+            {
+                return GetProcessIcon(
+                    normalizedPath);
+            }
+
+            lock (_lockObject)
+            {
+                _iconCache[cacheKey] =
+                    iconImage;
+            }
+
+            return iconImage;
         }
 
-        public static BitmapImage GetIconFromFilePath(string filePath, bool largeIcon = true)
+        public static BitmapImage GetIconFromResource(
+            string resourceName)
         {
-            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+            if (string.IsNullOrWhiteSpace(
+                resourceName))
             {
-                _logger.LogWarning("Dosya yolu boÅŸ, geÃ§ersiz veya dosya bulunamadÄ±.");
+                _logger.LogWarning(
+                    "Kaynak adı boş veya geçersiz.");
+
+                return GetDefaultIcon();
+            }
+
+            string cacheKey =
+                "resource|" +
+                resourceName;
+
+            BitmapImage cachedIcon;
+
+            lock (_lockObject)
+            {
+                if (_iconCache.TryGetValue(
+                    cacheKey,
+                    out cachedIcon))
+                {
+                    return cachedIcon;
+                }
+            }
+
+            BitmapImage image =
+                CreateBitmapImageFromResource(
+                    resourceName);
+
+            if (image == null)
+            {
                 return GetDefaultIcon();
             }
 
             lock (_lockObject)
             {
-                string cacheKey = $"{filePath}_{(largeIcon ? "large" : "small")}";
-                
-                if (_iconCache.TryGetValue(cacheKey, out BitmapImage cachedIcon))
-                {
-                    _logger.LogInformation($"Icon Ã¶nbellekten alÄ±ndÄ±: {cacheKey}");
-                    return cachedIcon;
-                }
-
-                try
-                {
-                    uint flags = NativeMethods.SHGFI_ICON | (largeIcon ? NativeMethods.SHGFI_LARGEICON : NativeMethods.SHGFI_SMALLICON);
-                    NativeMethods.SHFILEINFO shinfo = new NativeMethods.SHFILEINFO();
-                    IntPtr hImgSmall = NativeMethods.SHGetFileInfo(filePath, 0, out shinfo, (uint)Marshal.SizeOf(shinfo), flags);
-
-                    if (shinfo.hIcon != IntPtr.Zero)
-                    {
-                        using (Icon icon = Icon.FromHandle(shinfo.hIcon))
-                        {
-                            using (var memoryStream = new MemoryStream())
-                            {
-                                icon.ToBitmap().Save(memoryStream, System.Drawing.Imaging.ImageFormat.Png);
-                                memoryStream.Position = 0;
-
-                                var bitmapImage = new BitmapImage();
-                                bitmapImage.BeginInit();
-                                bitmapImage.StreamSource = memoryStream;
-                                bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                                bitmapImage.EndInit();
-                                bitmapImage.Freeze();
-
-                                _iconCache[cacheKey] = bitmapImage;
-                                _logger.LogInformation($"Icon Ã¶nbelleÄŸe eklendi: {cacheKey}");
-                                return bitmapImage;
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"Icon Ã§Ä±karma hatasÄ±: {filePath}", ex);
-                }
-
-                return GetDefaultIcon();
-            }
-        }
-
-        public static BitmapImage GetIconFromResource(string resourceName)
-        {
-            if (string.IsNullOrEmpty(resourceName))
-            {
-                _logger.LogWarning("Kaynak adÄ± boÅŸ veya geÃ§ersiz.");
-                return new BitmapImage();
+                _iconCache[cacheKey] =
+                    image;
             }
 
-            return CreateBitmapImageFromResource(resourceName);
+            return image;
         }
-        #endregion
 
-        #region Public Methods - Cache Management
         public static void ClearIconCache()
         {
             lock (_lockObject)
             {
-                int count = _iconCache.Count;
+                int count =
+                    _iconCache.Count;
+
                 _iconCache.Clear();
-                _logger.LogInformation($"Icon Ã¶nbelleÄŸi temizlendi ({count} adet).");
+
+                _logger.LogInformation(
+                    $"Icon önbelleği temizlendi ({count} adet).");
             }
         }
 
-        public static void InvalidateIconCache(string filePath)
+        public static void InvalidateIconCache(
+            string filePath)
         {
+            if (string.IsNullOrWhiteSpace(
+                filePath))
+            {
+                return;
+            }
+
+            string normalizedPath =
+                NormalizePath(filePath);
+
             lock (_lockObject)
             {
-                if (_iconCache.ContainsKey(filePath))
+                var keysToRemove =
+                    new List<string>();
+
+                foreach (string key in
+                         _iconCache.Keys)
                 {
-                    _iconCache.Remove(filePath);
-                    _logger.LogInformation($"Icon Ã¶nbellekten silindi: {filePath}");
+                    if (key.IndexOf(
+                            normalizedPath,
+                            StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        keysToRemove.Add(
+                            key);
+                    }
                 }
-                else
+
+                for (int i = 0;
+                     i < keysToRemove.Count;
+                     i++)
                 {
-                    _logger.LogWarning($"Ã–nbellekte bulunamadÄ±: {filePath}");
+                    _iconCache.Remove(
+                        keysToRemove[i]);
+                }
+
+                if (keysToRemove.Count > 0)
+                {
+                    _logger.LogInformation(
+                        $"Icon önbellekten silindi: {normalizedPath} ({keysToRemove.Count} kayıt)");
                 }
             }
         }
-        #endregion
 
-        #region Private Methods
-        private static BitmapImage GetDefaultIcon()
-        {
-            _logger.LogInformation("VarsayÄ±lan icon dÃ¶ndÃ¼rÃ¼ldÃ¼.");
-            return CreateBitmapImageFromResource("GameTranslatorUltimate.Resources.default_icon.png");
-        }
-        //
-        private static BitmapImage CreateBitmapImageFromResource(string resourceName)
+        private static BitmapImage ExtractAssociatedIcon(
+            string filePath)
         {
             try
             {
-                var assembly = typeof(LogoHelper).Assembly;
-                using (var stream = assembly.GetManifestResourceStream(resourceName))
+                if (!File.Exists(filePath))
                 {
-                    if (stream != null)
-                    {
-                        var bitmapImage = new BitmapImage();
-                        bitmapImage.BeginInit();
-                        bitmapImage.StreamSource = stream;
-                        bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                        bitmapImage.EndInit();
-                        bitmapImage.Freeze();
-                        return bitmapImage;
-                    }
+                    return null;
+                }
+
+                using (Icon icon =
+                       Icon.ExtractAssociatedIcon(
+                           filePath))
+                {
+                    if (icon == null)
+                        return null;
+
+                    return CreateBitmapImageFromIcon(
+                        icon);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Kaynaktan icon Ã§Ä±karma hatasÄ±: {resourceName}", ex);
-            }
-            return new BitmapImage();
-        }
-        #endregion
+                _logger.LogError(
+                    $"Icon çıkarma hatası: {filePath}",
+                    ex);
 
-        #region Win32 Interop
+                return null;
+            }
+        }
+
+        private static BitmapImage ExtractShellIcon(
+            string filePath,
+            bool largeIcon)
+        {
+            NativeMethods.SHFILEINFO shellInfo =
+                new NativeMethods.SHFILEINFO();
+
+            IntPtr result =
+                IntPtr.Zero;
+
+            try
+            {
+                uint flags =
+                    NativeMethods.SHGFI_ICON |
+                    (largeIcon
+                        ? NativeMethods.SHGFI_LARGEICON
+                        : NativeMethods.SHGFI_SMALLICON);
+
+                result =
+                    NativeMethods.SHGetFileInfo(
+                        filePath,
+                        0,
+                        out shellInfo,
+                        (uint)Marshal.SizeOf(
+                            typeof(NativeMethods.SHFILEINFO)),
+                        flags);
+
+                if (result == IntPtr.Zero ||
+                    shellInfo.hIcon == IntPtr.Zero)
+                {
+                    return null;
+                }
+
+                using (Icon icon =
+                       (Icon)Icon.FromHandle(
+                           shellInfo.hIcon)
+                           .Clone())
+                {
+                    return CreateBitmapImageFromIcon(
+                        icon);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    $"Shell icon çıkarma hatası: {filePath}",
+                    ex);
+
+                return null;
+            }
+            finally
+            {
+                if (shellInfo.hIcon != IntPtr.Zero)
+                {
+                    NativeMethods.DestroyIcon(
+                        shellInfo.hIcon);
+
+                    shellInfo.hIcon =
+                        IntPtr.Zero;
+                }
+            }
+        }
+
+        private static BitmapImage CreateBitmapImageFromIcon(
+            Icon icon)
+        {
+            if (icon == null)
+                return null;
+
+            try
+            {
+                using (Bitmap bitmap =
+                       icon.ToBitmap())
+                using (var memoryStream =
+                       new MemoryStream())
+                {
+                    bitmap.Save(
+                        memoryStream,
+                        System.Drawing.Imaging.ImageFormat.Png);
+
+                    memoryStream.Position =
+                        0;
+
+                    var bitmapImage =
+                        new BitmapImage();
+
+                    bitmapImage.BeginInit();
+
+                    bitmapImage.CacheOption =
+                        BitmapCacheOption.OnLoad;
+
+                    bitmapImage.StreamSource =
+                        memoryStream;
+
+                    bitmapImage.EndInit();
+
+                    bitmapImage.Freeze();
+
+                    return bitmapImage;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    "Icon BitmapImage formatına dönüştürülemedi.",
+                    ex);
+
+                return null;
+            }
+        }
+
+        private static BitmapImage GetDefaultIcon()
+        {
+            const string cacheKey =
+                "resource|default";
+
+            BitmapImage cached;
+
+            lock (_lockObject)
+            {
+                if (_iconCache.TryGetValue(
+                    cacheKey,
+                    out cached))
+                {
+                    return cached;
+                }
+            }
+
+            BitmapImage image =
+                CreateBitmapImageFromResource(
+                    DefaultIconResource);
+
+            if (image == null)
+            {
+                image =
+                    CreateEmptyBitmapImage();
+            }
+
+            lock (_lockObject)
+            {
+                _iconCache[cacheKey] =
+                    image;
+            }
+
+            return image;
+        }
+
+        private static BitmapImage CreateBitmapImageFromResource(
+            string resourceName)
+        {
+            try
+            {
+                var assembly =
+                    typeof(LogoHelper).Assembly;
+
+                using (Stream stream =
+                       assembly.GetManifestResourceStream(
+                           resourceName))
+                {
+                    if (stream == null)
+                    {
+                        _logger.LogWarning(
+                            $"Icon kaynağı bulunamadı: {resourceName}");
+
+                        return null;
+                    }
+
+                    var bitmapImage =
+                        new BitmapImage();
+
+                    bitmapImage.BeginInit();
+
+                    bitmapImage.CacheOption =
+                        BitmapCacheOption.OnLoad;
+
+                    bitmapImage.StreamSource =
+                        stream;
+
+                    bitmapImage.EndInit();
+
+                    bitmapImage.Freeze();
+
+                    return bitmapImage;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    $"Kaynaktan icon çıkarma hatası: {resourceName}",
+                    ex);
+
+                return null;
+            }
+        }
+
+        private static BitmapImage CreateEmptyBitmapImage()
+        {
+            var image =
+                new BitmapImage();
+
+            if (image.CanFreeze)
+            {
+                image.Freeze();
+            }
+
+            return image;
+        }
+
+        private static string NormalizePath(
+            string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(
+                filePath))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return Path.GetFullPath(
+                    filePath.Trim());
+            }
+            catch
+            {
+                return filePath.Trim();
+            }
+        }
+
         private static class NativeMethods
         {
-            [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-            public static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes, out SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
+            [DllImport(
+                "shell32.dll",
+                CharSet = CharSet.Unicode,
+                SetLastError = true)]
+            public static extern IntPtr SHGetFileInfo(
+                string pszPath,
+                uint dwFileAttributes,
+                out SHFILEINFO psfi,
+                uint cbFileInfo,
+                uint uFlags);
 
-            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+            [DllImport(
+                "user32.dll",
+                SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool DestroyIcon(
+                IntPtr hIcon);
+
+            [StructLayout(
+                LayoutKind.Sequential,
+                CharSet = CharSet.Unicode)]
             public struct SHFILEINFO
             {
                 public IntPtr hIcon;
                 public int iIcon;
                 public uint dwAttributes;
-                [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+
+                [MarshalAs(
+                    UnmanagedType.ByValTStr,
+                    SizeConst = 260)]
                 public string szDisplayName;
-                [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+
+                [MarshalAs(
+                    UnmanagedType.ByValTStr,
+                    SizeConst = 80)]
                 public string szTypeName;
             }
 
-            public const uint SHGFI_ICON = 0x000000100;
-            public const uint SHGFI_LARGEICON = 0x000000000;
-            public const uint SHGFI_SMALLICON = 0x000000001;
+            public const uint SHGFI_ICON =
+                0x00000100;
+
+            public const uint SHGFI_LARGEICON =
+                0x00000000;
+
+            public const uint SHGFI_SMALLICON =
+                0x00000001;
         }
-        #endregion
     }
 }
-

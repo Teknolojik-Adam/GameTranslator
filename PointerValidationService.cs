@@ -2,8 +2,8 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using System.Text;
 
 namespace GameTranslatorUltimate
 {
@@ -19,7 +19,6 @@ namespace GameTranslatorUltimate
         public IntPtr ResolvedAddress { get; set; }
     }
 
-    // KararlÄ±lÄ±k testi iÃ§in Ã¶rnek veri yapÄ±sÄ±
     public class StabilitySample
     {
         public DateTime Timestamp { get; set; }
@@ -31,283 +30,862 @@ namespace GameTranslatorUltimate
 
     public class PointerValidationService : IDisposable
     {
+        private sealed class ValidationCacheEntry
+        {
+            public string Key { get; set; }
+            public string PathKey { get; set; }
+            public PointerPath Path { get; set; }
+            public PointerValidationResult Result { get; set; }
+            public DateTime CreatedAtUtc { get; set; }
+        }
+
+        private static readonly TimeSpan ValidationCacheLifetime =
+            TimeSpan.FromSeconds(5);
+
         private readonly IMemoryService _memoryService;
         private readonly ILogger _logger;
         private readonly AppSettings _appSettings;
-        private readonly Dictionary<PointerPath, PointerValidationResult> _validationCache = new Dictionary<PointerPath, PointerValidationResult>();
-        private readonly object _cacheLockObject = new object();
-        private bool _disposed = false;
 
-        public PointerValidationService(IMemoryService memoryService, ILogger logger, AppSettings appSettings)
+        private readonly Dictionary<string, ValidationCacheEntry> _validationCache =
+            new Dictionary<string, ValidationCacheEntry>(
+                StringComparer.Ordinal);
+
+        private readonly object _cacheLock =
+            new object();
+
+        private readonly SemaphoreSlim _memoryGate =
+            new SemaphoreSlim(1, 1);
+
+        private int _disposed;
+
+        public PointerValidationService(
+            IMemoryService memoryService,
+            ILogger logger,
+            AppSettings appSettings)
         {
-            _memoryService = memoryService ?? throw new ArgumentNullException(nameof(memoryService));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
+            _memoryService =
+                memoryService ?? throw new ArgumentNullException(nameof(memoryService));
+
+            _logger =
+                logger ?? throw new ArgumentNullException(nameof(logger));
+
+            _appSettings =
+                appSettings ?? throw new ArgumentNullException(nameof(appSettings));
         }
 
-        public async Task<List<PointerValidationResult>> ValidatePointersAsync(Process process, List<PointerPath> paths, string expectedText = null)
+        public async Task<List<PointerValidationResult>> ValidatePointersAsync(
+            Process process,
+            List<PointerPath> paths,
+            string expectedText = null)
         {
-            var results = new List<PointerValidationResult>();
+            ThrowIfDisposed();
 
-            if (!_memoryService.AttachToProcess(process.Id))
+            var results =
+                new List<PointerValidationResult>();
+
+            if (process == null)
+                return results;
+
+            if (paths == null || paths.Count == 0)
+                return results;
+
+            int processId;
+
+            try
             {
-                _logger.LogError("Process'e baÄŸlanÄ±lamadÄ± - pointer validation baÅŸarÄ±sÄ±z");
+                if (process.HasExited)
+                    return results;
+
+                processId = process.Id;
+            }
+            catch
+            {
                 return results;
             }
 
-            // Paralel validasyon iÃ§in Task.WhenAll kullan
-            var tasks = paths.Select(path => ValidateSinglePointerAsync(process, path, expectedText));
-            results.AddRange(await Task.WhenAll(tasks));
+            bool attached =
+                await AttachToProcessAsync(processId)
+                    .ConfigureAwait(false);
 
-            return results.OrderByDescending(r => r.Score).ToList();
-        }
-
-        public async Task<PointerValidationResult> ValidateSinglePointerAsync(Process process, PointerPath path, string expectedText)
-        {
-            if (_disposed)
+            if (!attached)
             {
-                _logger.LogWarning("PointerValidationService dispose edilmiÅŸ durumda. Ä°ÅŸlem reddedildi.");
-                return new PointerValidationResult { Path = path, ErrorMessage = "Servis dispose edilmiÅŸ durumda." };
+                _logger.LogError(
+                    "Process'e bağlanılamadı. Pointer doğrulama başlatılamadı.");
+
+                return results;
             }
 
-            var result = new PointerValidationResult
+            foreach (PointerPath path in paths)
             {
-                Path = path,
-                IsValid = false,
-                Score = 0
-            };
+                if (path == null)
+                    continue;
 
-            var stopwatch = Stopwatch.StartNew();
+                PointerValidationResult result =
+                    await ValidateSinglePointerCoreAsync(
+                            process,
+                            processId,
+                            path,
+                            expectedText)
+                        .ConfigureAwait(false);
+
+                if (result != null)
+                {
+                    results.Add(result);
+                }
+            }
+
+            return results
+                .OrderByDescending(x => x.Score)
+                .ThenBy(x => x.ResponseTime)
+                .ToList();
+        }
+
+        public async Task<PointerValidationResult> ValidateSinglePointerAsync(
+            Process process,
+            PointerPath path,
+            string expectedText)
+        {
+            ThrowIfDisposed();
+
+            if (path == null)
+            {
+                return new PointerValidationResult
+                {
+                    ErrorMessage = "Pointer yolu null."
+                };
+            }
+
+            if (process == null)
+            {
+                return CreateFailure(
+                    path,
+                    "Process bulunamadı.");
+            }
+
+            int processId;
+
             try
             {
-                // Ã–nbellekten kontrol et
-                lock (_cacheLockObject)
+                if (process.HasExited)
                 {
-                    if (_validationCache.TryGetValue(path, out var cachedResult))
-                    {
-                        _logger.LogInformation($"Pointer yolu Ã¶nbellekten alÄ±ndÄ±: {path}");
-                        return cachedResult;
-                    }
+                    return CreateFailure(
+                        path,
+                        "Process çalışmıyor.");
                 }
 
-                var pathInfo = new PathInfo
+                processId = process.Id;
+            }
+            catch (Exception ex)
+            {
+                return CreateFailure(
+                    path,
+                    ex.Message);
+            }
+
+            bool attached =
+                await AttachToProcessAsync(processId)
+                    .ConfigureAwait(false);
+
+            if (!attached)
+            {
+                return CreateFailure(
+                    path,
+                    "Process'e bağlanılamadı.");
+            }
+
+            return await ValidateSinglePointerCoreAsync(
+                    process,
+                    processId,
+                    path,
+                    expectedText)
+                .ConfigureAwait(false);
+        }
+
+        private async Task<PointerValidationResult> ValidateSinglePointerCoreAsync(
+            Process process,
+            int processId,
+            PointerPath path,
+            string expectedText)
+        {
+            string cacheKey =
+                BuildCacheKey(
+                    processId,
+                    path,
+                    expectedText);
+
+            PointerValidationResult cached =
+                GetCachedResult(cacheKey);
+
+            if (cached != null)
+                return cached;
+
+            var stopwatch =
+                Stopwatch.StartNew();
+
+            var result =
+                new PointerValidationResult
                 {
-                    BaseAddressModule = path.ModuleName,
-                    BaseAddressOffset = path.BaseOffset,
-                    PointerOffsets = path.Offsets
+                    Path = path,
+                    ExpectedValue = expectedText,
+                    IsValid = false,
+                    Score = 0
                 };
 
-                var resolvedAddress = _memoryService.ResolveAddressFromPathCached(process, pathInfo);
-                if (resolvedAddress == IntPtr.Zero)
+            try
+            {
+                await _memoryGate
+                    .WaitAsync()
+                    .ConfigureAwait(false);
+
+                try
                 {
-                    result.ErrorMessage = "Adres Ã§Ã¶zÃ¼mlenemedi";
+                    var pathInfo =
+                        new PathInfo
+                        {
+                            BaseAddressModule =
+                                path.ModuleName,
+
+                            BaseAddressOffset =
+                                path.BaseOffset,
+
+                            PointerOffsets =
+                                path.Offsets
+                        };
+
+                    IntPtr address =
+                        _memoryService.ResolveAddressFromPathCached(
+                            process,
+                            pathInfo);
+
+                    if (address == IntPtr.Zero)
+                    {
+                        result.ErrorMessage =
+                            "Adres çözümlenemedi.";
+
+                        return result;
+                    }
+
+                    result.ResolvedAddress =
+                        address;
+
+                    result.CurrentValue =
+                        _memoryService.TryReadStringDeep(
+                            address);
+                }
+                finally
+                {
+                    _memoryGate.Release();
+                }
+
+                if (string.IsNullOrWhiteSpace(
+                    result.CurrentValue))
+                {
+                    result.ErrorMessage =
+                        "Boş veya geçersiz veri okundu.";
+
+                    result.Score = 0;
+
                     return result;
                 }
 
-                result.ResolvedAddress = resolvedAddress;
-                result.CurrentValue = _memoryService.TryReadStringDeep(resolvedAddress);
-
-                stopwatch.Stop();
-                result.ResponseTime = stopwatch.Elapsed;
-
-                if (string.IsNullOrWhiteSpace(result.CurrentValue))
+                if (string.IsNullOrWhiteSpace(expectedText))
                 {
-                    result.ErrorMessage = "BoÅŸ veya geÃ§ersiz veri okundu";
-                    result.Score = 0;
+                    result.IsValid = true;
+                    result.Score = 60;
                 }
-                else if (!string.IsNullOrEmpty(expectedText))
+                else if (result.CurrentValue.IndexOf(
+                             expectedText,
+                             StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    result.ExpectedValue = expectedText;
-                    if (result.CurrentValue.Contains(expectedText))
-                    {
-                        result.IsValid = true;
-                        result.Score = 100;
-                    }
-                    else
-                    {
-                        result.ErrorMessage = "Beklenen metin bulunamadÄ±";
-                        result.Score = 10;
-                    }
+                    result.IsValid = true;
+                    result.Score = 100;
                 }
                 else
                 {
-                    result.IsValid = true;
-                    result.Score = 50;
+                    result.IsValid = false;
+                    result.Score = 10;
+                    result.ErrorMessage =
+                        "Beklenen metin bulunamadı.";
                 }
 
-                // Ã–nbelleÄŸe kaydet
-                lock (_cacheLockObject)
-                {
-                    _validationCache[path] = result;
-                }
+                SetCachedResult(
+                    cacheKey,
+                    path,
+                    result);
 
-                _logger.LogInformation($"Pointer doÄŸrulama tamamlandÄ±: {path}. SonuÃ§: {result.IsValid}, Puan: {result.Score}");
                 return result;
             }
             catch (Exception ex)
             {
-                stopwatch.Stop();
-                result.ResponseTime = stopwatch.Elapsed;
-                result.ErrorMessage = $"DoÄŸrulama hatasÄ±: {ex.Message}";
-                _logger.LogError($"Pointer doÄŸrulama hatasÄ±: {ex.Message}", ex);
+                result.ErrorMessage =
+                    $"Doğrulama hatası: {ex.Message}";
+
+                _logger.LogError(
+                    $"Pointer doğrulama hatası: {ex.Message}",
+                    ex);
+
                 return result;
+            }
+            finally
+            {
+                stopwatch.Stop();
+
+                result.ResponseTime =
+                    stopwatch.Elapsed;
             }
         }
 
-        public async Task<PointerStabilityResult> TestPointerStabilityAsync(Process process, PointerPath path, int testDurationSeconds = 15, int sampleIntervalMs = 500)
+        public async Task<PointerStabilityResult> TestPointerStabilityAsync(
+            Process process,
+            PointerPath path,
+            int testDurationSeconds = 15,
+            int sampleIntervalMs = 500)
         {
-            if (_disposed)
+            ThrowIfDisposed();
+
+            if (process == null)
             {
-                _logger.LogWarning("PointerValidationService dispose edilmiÅŸ durumda. Ä°ÅŸlem reddedildi.");
-                return new PointerStabilityResult { Path = path, Message = "Servis dispose edilmiÅŸ durumda." };
+                return new PointerStabilityResult
+                {
+                    Path = path,
+                    Message = "Process bulunamadı."
+                };
             }
 
-            _logger.LogInformation($"Pointer kararlÄ±lÄ±k testi baÅŸlatÄ±ldÄ±. SÃ¼re: {testDurationSeconds}s, AralÄ±k: {sampleIntervalMs}ms");
-
-            var samples = new List<StabilitySample>();
-            var endTime = DateTime.Now.AddSeconds(testDurationSeconds);
-
-            while (DateTime.Now < endTime)
+            if (path == null)
             {
-                var sample = new StabilitySample { Timestamp = DateTime.Now };
-                try
+                return new PointerStabilityResult
                 {
-                    var pathInfo = new PathInfo
+                    Message = "Pointer yolu bulunamadı."
+                };
+            }
+
+            int processId;
+
+            try
+            {
+                if (process.HasExited)
+                {
+                    return new PointerStabilityResult
                     {
-                        BaseAddressModule = path.ModuleName,
-                        BaseAddressOffset = path.BaseOffset,
-                        PointerOffsets = path.Offsets
+                        Path = path,
+                        Message = "Process çalışmıyor."
+                    };
+                }
+
+                processId = process.Id;
+            }
+            catch (Exception ex)
+            {
+                return new PointerStabilityResult
+                {
+                    Path = path,
+                    Message = ex.Message
+                };
+            }
+
+            bool attached =
+                await AttachToProcessAsync(processId)
+                    .ConfigureAwait(false);
+
+            if (!attached)
+            {
+                return new PointerStabilityResult
+                {
+                    Path = path,
+                    Message = "Process'e bağlanılamadı."
+                };
+            }
+
+            if (testDurationSeconds < 1)
+                testDurationSeconds = 1;
+
+            if (testDurationSeconds > 300)
+                testDurationSeconds = 300;
+
+            if (sampleIntervalMs < 50)
+                sampleIntervalMs = 50;
+
+            if (sampleIntervalMs > 10000)
+                sampleIntervalMs = 10000;
+
+            var samples =
+                new List<StabilitySample>();
+
+            var stopwatch =
+                Stopwatch.StartNew();
+
+            TimeSpan testDuration =
+                TimeSpan.FromSeconds(
+                    testDurationSeconds);
+
+            while (stopwatch.Elapsed < testDuration)
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                    break;
+
+                var sample =
+                    new StabilitySample
+                    {
+                        Timestamp = DateTime.UtcNow
                     };
 
-                    var address = _memoryService.ResolveAddressFromPathCached(process, pathInfo);
-                    sample.Address = address;
+                try
+                {
+                    await _memoryGate
+                        .WaitAsync()
+                        .ConfigureAwait(false);
 
-                    if (address != IntPtr.Zero)
+                    try
                     {
-                        sample.Value = _memoryService.TryReadStringDeep(address);
-                        sample.IsSuccessful = !string.IsNullOrEmpty(sample.Value);
-                        if (!sample.IsSuccessful) sample.ErrorMessage = "BoÅŸ veri okundu";
+                        var pathInfo =
+                            new PathInfo
+                            {
+                                BaseAddressModule =
+                                    path.ModuleName,
+
+                                BaseAddressOffset =
+                                    path.BaseOffset,
+
+                                PointerOffsets =
+                                    path.Offsets
+                            };
+
+                        IntPtr address =
+                            _memoryService.ResolveAddressFromPathCached(
+                                process,
+                                pathInfo);
+
+                        sample.Address =
+                            address;
+
+                        if (address != IntPtr.Zero)
+                        {
+                            sample.Value =
+                                _memoryService.TryReadStringDeep(
+                                    address);
+
+                            sample.IsSuccessful =
+                                !string.IsNullOrWhiteSpace(
+                                    sample.Value);
+
+                            if (!sample.IsSuccessful)
+                            {
+                                sample.ErrorMessage =
+                                    "Boş veri okundu.";
+                            }
+                        }
+                        else
+                        {
+                            sample.IsSuccessful = false;
+                            sample.ErrorMessage =
+                                "Adres çözümlenemedi.";
+                        }
                     }
-                    else
+                    finally
                     {
-                        sample.ErrorMessage = "Adres Ã§Ã¶zÃ¼mlenemedi";
-                        sample.IsSuccessful = false;
+                        _memoryGate.Release();
                     }
                 }
                 catch (Exception ex)
                 {
-                    sample.ErrorMessage = ex.Message;
                     sample.IsSuccessful = false;
+                    sample.ErrorMessage = ex.Message;
                 }
 
                 samples.Add(sample);
-                await Task.Delay(sampleIntervalMs);
+
+                TimeSpan remaining =
+                    testDuration - stopwatch.Elapsed;
+
+                if (remaining <= TimeSpan.Zero)
+                    break;
+
+                int delay =
+                    (int)Math.Min(
+                        sampleIntervalMs,
+                        remaining.TotalMilliseconds);
+
+                if (delay > 0)
+                {
+                    await Task.Delay(delay)
+                        .ConfigureAwait(false);
+                }
             }
 
-            // SonuÃ§larÄ± analiz et
-            int successfulSamples = samples.Count(s => s.IsSuccessful);
-            double successRate = samples.Count > 0 ? (double)successfulSamples / samples.Count * 100 : 0;
+            stopwatch.Stop();
 
-            var validSamples = samples.Where(s => s.IsSuccessful).ToList();
-            int uniqueAddresses = validSamples.Select(s => s.Address).Distinct().Count();
-            double addressConsistency = validSamples.Any() ? (double)uniqueAddresses / validSamples.Count * 100 : 0.0;
+            int successfulSamples =
+                samples.Count(x => x.IsSuccessful);
 
-            int uniqueValues = validSamples.Select(s => s.Value).Distinct().Count();
-            double valueConsistency = validSamples.Any() ? (double)uniqueValues / validSamples.Count * 100 : 0.0;
+            double successRate =
+                samples.Count == 0
+                    ? 0
+                    : (double)successfulSamples /
+                      samples.Count *
+                      100.0;
 
-            double stabilityScore = (successRate * 0.5) + (addressConsistency * 0.3) + (valueConsistency * 0.2);
-            bool isStable = stabilityScore >= 80;
+            List<StabilitySample> validSamples =
+                samples
+                    .Where(x => x.IsSuccessful)
+                    .ToList();
 
-            var result = new PointerStabilityResult
-            {
-                Path = path,
-                IsStable = isStable,
-                Message = $"KararlÄ±lÄ±k: {successRate:F1}% ({successfulSamples}/{samples.Count} baÅŸarÄ±lÄ±)",
-                LastKnownAddress = samples.LastOrDefault()?.Address ?? IntPtr.Zero,
-                SuccessRate = successRate,
-                AddressConsistency = addressConsistency,
-                ValueConsistency = valueConsistency,
-                StabilityScore = stabilityScore
-            };
+            int uniqueAddresses =
+                validSamples
+                    .Select(x => x.Address)
+                    .Distinct()
+                    .Count();
 
-            _logger.LogInformation($"Pointer kararlÄ±lÄ±k testi tamamlandÄ±. {path}: {result.Message}");
+            int uniqueValues =
+                validSamples
+                    .Select(x => x.Value ?? string.Empty)
+                    .Distinct(StringComparer.Ordinal)
+                    .Count();
+
+            double addressConsistency =
+                CalculateConsistency(
+                    validSamples.Count,
+                    uniqueAddresses);
+
+            double valueConsistency =
+                CalculateConsistency(
+                    validSamples.Count,
+                    uniqueValues);
+
+            double stabilityScore =
+                successRate * 0.50 +
+                addressConsistency * 0.35 +
+                valueConsistency * 0.15;
+
+            stabilityScore =
+                Math.Max(
+                    0,
+                    Math.Min(
+                        100,
+                        stabilityScore));
+
+            bool isStable =
+                successRate >= 80 &&
+                stabilityScore >= 80;
+
+            StabilitySample lastSuccessful =
+                validSamples.LastOrDefault();
+
+            var result =
+                new PointerStabilityResult
+                {
+                    Path = path,
+                    IsStable = isStable,
+                    Message =
+                        $"Kararlılık: {stabilityScore:F1}% | Başarı: {successRate:F1}% ({successfulSamples}/{samples.Count})",
+                    LastKnownAddress =
+                        lastSuccessful != null
+                            ? lastSuccessful.Address
+                            : IntPtr.Zero,
+                    SuccessRate = successRate,
+                    AddressConsistency = addressConsistency,
+                    ValueConsistency = valueConsistency,
+                    StabilityScore = stabilityScore
+                };
+
+            _logger.LogInformation(
+                $"Pointer kararlılık testi tamamlandı. {path}: {result.Message}");
+
             return result;
         }
 
         public List<PointerPath> GetRegisteredPointerPaths()
         {
-            if (_disposed)
-            {
-                _logger.LogWarning("PointerValidationService dispose edilmiÅŸ durumda. Ä°ÅŸlem reddedildi.");
-                return new List<PointerPath>();
-            }
+            ThrowIfDisposed();
 
-            lock (_cacheLockObject)
+            lock (_cacheLock)
             {
-                return _validationCache.Keys.ToList();
+                RemoveExpiredCacheEntries();
+
+                return _validationCache
+                    .Values
+                    .GroupBy(
+                        x => x.PathKey,
+                        StringComparer.Ordinal)
+                    .Select(x => x.First().Path)
+                    .Where(x => x != null)
+                    .ToList();
             }
         }
 
-        public void InvalidatePointerCache(PointerPath path)
+        public void InvalidatePointerCache(
+            PointerPath path)
         {
-            if (_disposed)
-            {
-                _logger.LogWarning("PointerValidationService dispose edilmiÅŸ durumda. Ä°ÅŸlem reddedildi.");
+            ThrowIfDisposed();
+
+            if (path == null)
                 return;
+
+            string pathKey =
+                BuildPathKey(path);
+
+            int removed = 0;
+
+            lock (_cacheLock)
+            {
+                string[] keys =
+                    _validationCache
+                        .Where(x =>
+                            string.Equals(
+                                x.Value.PathKey,
+                                pathKey,
+                                StringComparison.Ordinal))
+                        .Select(x => x.Key)
+                        .ToArray();
+
+                foreach (string key in keys)
+                {
+                    if (_validationCache.Remove(key))
+                        removed++;
+                }
             }
 
-            lock (_cacheLockObject)
+            if (removed > 0)
             {
-                if (_validationCache.ContainsKey(path))
-                {
-                    _validationCache.Remove(path);
-                    _logger.LogInformation($"Pointer yolunun Ã¶nbelleÄŸi silindi: {path}");
-                }
+                _logger.LogInformation(
+                    $"Pointer cache temizlendi: {removed} kayıt.");
             }
         }
 
         public void ClearPointerCache()
         {
-            if (_disposed)
+            ThrowIfDisposed();
+
+            int count;
+
+            lock (_cacheLock)
             {
-                _logger.LogWarning("PointerValidationService dispose edilmiÅŸ durumda. Ä°ÅŸlem reddedildi.");
-                return;
+                count =
+                    _validationCache.Count;
+
+                _validationCache.Clear();
             }
 
-            lock (_cacheLockObject)
+            if (count > 0)
             {
-                int count = _validationCache.Count;
-                _validationCache.Clear();
-                _logger.LogInformation($"TÃ¼m pointer yolunun Ã¶nbelleÄŸi temizlendi ({count} adet).");
+                _logger.LogInformation(
+                    $"Pointer cache temizlendi: {count} kayıt.");
+            }
+        }
+
+        private async Task<bool> AttachToProcessAsync(
+            int processId)
+        {
+            await _memoryGate
+                .WaitAsync()
+                .ConfigureAwait(false);
+
+            try
+            {
+                return _memoryService.AttachToProcess(
+                    processId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    $"Process'e bağlanılırken hata oluştu. PID: {processId}",
+                    ex);
+
+                return false;
+            }
+            finally
+            {
+                _memoryGate.Release();
+            }
+        }
+
+        private PointerValidationResult GetCachedResult(
+            string key)
+        {
+            lock (_cacheLock)
+            {
+                ValidationCacheEntry entry;
+
+                if (!_validationCache.TryGetValue(
+                    key,
+                    out entry))
+                {
+                    return null;
+                }
+
+                if (DateTime.UtcNow -
+                    entry.CreatedAtUtc >
+                    ValidationCacheLifetime)
+                {
+                    _validationCache.Remove(key);
+                    return null;
+                }
+
+                return CloneResult(
+                    entry.Result);
+            }
+        }
+
+        private void SetCachedResult(
+            string key,
+            PointerPath path,
+            PointerValidationResult result)
+        {
+            if (result == null)
+                return;
+
+            lock (_cacheLock)
+            {
+                RemoveExpiredCacheEntries();
+
+                _validationCache[key] =
+                    new ValidationCacheEntry
+                    {
+                        Key = key,
+                        PathKey = BuildPathKey(path),
+                        Path = path,
+                        Result = CloneResult(result),
+                        CreatedAtUtc = DateTime.UtcNow
+                    };
+            }
+        }
+
+        private void RemoveExpiredCacheEntries()
+        {
+            DateTime now =
+                DateTime.UtcNow;
+
+            string[] expiredKeys =
+                _validationCache
+                    .Where(x =>
+                        now -
+                        x.Value.CreatedAtUtc >
+                        ValidationCacheLifetime)
+                    .Select(x => x.Key)
+                    .ToArray();
+
+            foreach (string key in expiredKeys)
+            {
+                _validationCache.Remove(key);
+            }
+        }
+
+        private static double CalculateConsistency(
+            int sampleCount,
+            int uniqueCount)
+        {
+            if (sampleCount <= 0)
+                return 0;
+
+            if (sampleCount == 1)
+                return 100;
+
+            if (uniqueCount <= 1)
+                return 100;
+
+            double changeRatio =
+                (double)(uniqueCount - 1) /
+                (sampleCount - 1);
+
+            double consistency =
+                (1.0 - changeRatio) *
+                100.0;
+
+            return Math.Max(
+                0,
+                Math.Min(
+                    100,
+                    consistency));
+        }
+
+        private static string BuildCacheKey(
+            int processId,
+            PointerPath path,
+            string expectedText)
+        {
+            return processId +
+                   "|" +
+                   BuildPathKey(path) +
+                   "|" +
+                   (expectedText ?? string.Empty);
+        }
+
+        private static string BuildPathKey(
+            PointerPath path)
+        {
+            if (path == null)
+                return string.Empty;
+
+            string offsets =
+                path.Offsets == null
+                    ? string.Empty
+                    : string.Join(
+                        ",",
+                        path.Offsets.Select(
+                            x => x.ToString()));
+
+            return
+                (path.ModuleName ?? string.Empty) +
+                "|" +
+                path.BaseOffset +
+                "|" +
+                offsets;
+        }
+
+        private static PointerValidationResult CloneResult(
+            PointerValidationResult source)
+        {
+            if (source == null)
+                return null;
+
+            return new PointerValidationResult
+            {
+                Path = source.Path,
+                IsValid = source.IsValid,
+                CurrentValue = source.CurrentValue,
+                ExpectedValue = source.ExpectedValue,
+                ErrorMessage = source.ErrorMessage,
+                Score = source.Score,
+                ResponseTime = source.ResponseTime,
+                ResolvedAddress = source.ResolvedAddress
+            };
+        }
+
+        private static PointerValidationResult CreateFailure(
+            PointerPath path,
+            string message)
+        {
+            return new PointerValidationResult
+            {
+                Path = path,
+                IsValid = false,
+                Score = 0,
+                ErrorMessage = message
+            };
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                throw new ObjectDisposedException(
+                    nameof(PointerValidationService));
             }
         }
 
         public void Dispose()
         {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if (!_disposed)
+            if (Interlocked.Exchange(
+                    ref _disposed,
+                    1) != 0)
             {
-                if (disposing)
-                {
-                    lock (_cacheLockObject)
-                    {
-                        _validationCache.Clear();
-                    }
-                    _logger.LogInformation("PointerValidationService kapatÄ±ldÄ±");
-                }
-                _disposed = true;
+                return;
             }
-        }
 
-        ~PointerValidationService()
-        {
-            Dispose(false);
+            lock (_cacheLock)
+            {
+                _validationCache.Clear();
+            }
         }
     }
 }
-
