@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "packId": "latin-v6-hybrid",
+  "displayName": "Local PP-OCRv5 detector + existing PP-OCRv6 recognizer",
+  "modelFamily": "PP-OCRv5/v6 hybrid",
+  "decoder": "CTC",
+  "detectorFile": "detector.onnx",
+  "recognizerFile": "recognizer.onnx",
+  "dictionaryFile": "charset.txt",
+  "languages": [
+    "latin",
+    "en",
+    "tr"
+  ],
+  "sha256": {
+    "detector": "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae",
+    "recognizer": "6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884",
+    "dictionary": "f7aa897ca828a4c7c9e2739c30f9161a33306d532f020bcdb91dcfb664a5507e"
+  }
+}

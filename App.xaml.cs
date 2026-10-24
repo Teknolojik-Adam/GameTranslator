@@ -1,253 +1,668 @@
 ﻿using System;
-using System.Windows;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text;
-using System.Diagnostics;
-using System.Security.Principal;
 using System.Runtime.InteropServices;
-using System.Collections.Generic;
+using System.Security.Principal;
+using System.Text;
+using System.Windows;
 
 namespace GameTranslatorUltimate
 {
     public partial class App : Application
     {
-        protected override void OnStartup(StartupEventArgs e)
+        protected override void OnStartup(
+            StartupEventArgs e)
         {
             base.OnStartup(e);
 
+            RegisterUnhandledExceptionHandlers();
+
             try
             {
-                // Servisleri başlat
                 ServiceContainer.Initialize();
 
-                // Diagnostic bilgisi logla (logger varsa)
-                // Başlangıçtaki tanılama popup'ını devre dışı bırakmak için diagnostik çağrısı kaldırıldı.
-                try
-                {
-                    // var logger = ServiceContainer.GetService<ILogger>();
-                    // LogStartupDiagnostics(logger);
-                }
-                catch { }
-
-                // Ayarları yükle ve temayı uygulamak için
                 InitializeTheme();
                 InitializeLanguage();
             }
-            
             catch (Exception ex)
             {
-                MessageBox.Show(string.Format(GetLocalizedString("Str_AppStartError"), ex.Message), GetLocalizedString("Str_StartErrorTitle"),
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                TryLogError(
+                    "Uygulama başlatılırken hata oluştu.",
+                    ex);
+
+                MessageBox.Show(
+                    string.Format(
+                        GetLocalizedString("Str_AppStartError"),
+                        ex.Message),
+                    GetLocalizedString("Str_StartErrorTitle"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
-
-            AppDomain.CurrentDomain.UnhandledException += (s, args) =>
-            {
-                Exception ex = (Exception)args.ExceptionObject;
-                MessageBox.Show($"Kritik hata: {ex.Message}", "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
-            };
-
-            Current.DispatcherUnhandledException += (s, args) =>
-            {
-                MessageBox.Show($"Hata: {args.Exception.Message}", "Hata", MessageBoxButton.OK, MessageBoxImage.Error);
-                args.Handled = true;
-            };
         }
 
-        protected override void OnExit(ExitEventArgs e)
+        protected override void OnExit(
+            ExitEventArgs e)
         {
-            // Servisleri temizle
-            ServiceContainer.Cleanup();
-            base.OnExit(e);
+            try
+            {
+                ServiceContainer.Cleanup();
+            }
+            catch (Exception ex)
+            {
+                TryLogError(
+                    "Servisler kapatılırken hata oluştu.",
+                    ex);
+            }
+            finally
+            {
+                base.OnExit(e);
+            }
+        }
+
+        private void RegisterUnhandledExceptionHandlers()
+        {
+            AppDomain.CurrentDomain.UnhandledException +=
+                CurrentDomain_UnhandledException;
+
+            DispatcherUnhandledException +=
+                App_DispatcherUnhandledException;
+        }
+
+        private void CurrentDomain_UnhandledException(
+            object sender,
+            UnhandledExceptionEventArgs e)
+        {
+            Exception ex =
+                e.ExceptionObject as Exception;
+
+            if (ex != null)
+            {
+                TryLogError(
+                    "Yakalanmamış kritik uygulama hatası.",
+                    ex);
+
+                try
+                {
+                    MessageBox.Show(
+                        $"Kritik hata: {ex.Message}",
+                        "Hata",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+                catch
+                {
+                }
+            }
+            else
+            {
+                TryLogError(
+                    "Yakalanmamış bilinmeyen uygulama hatası.",
+                    null);
+            }
+        }
+
+        private void App_DispatcherUnhandledException(
+            object sender,
+            System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+        {
+            TryLogError(
+                "UI thread üzerinde yakalanmamış hata oluştu.",
+                e.Exception);
+
+            try
+            {
+                MessageBox.Show(
+                    $"Hata: {e.Exception.Message}",
+                    "Hata",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch
+            {
+            }
+
+            e.Handled =
+                true;
         }
 
         private void InitializeTheme()
         {
             try
             {
-                // ThemeManager'ı kullanarak tema ayarlarını yükle
                 ThemeManager.LoadThemeSettings();
 
-                //AppSettings'den tema bilgisini al
-                try
+                AppSettings appSettings =
+                    ServiceContainer.GetService<AppSettings>();
+
+                if (appSettings == null ||
+                    string.IsNullOrWhiteSpace(
+                        appSettings.Theme))
                 {
-                    var appSettings = ServiceContainer.GetService<AppSettings>();
-                    if (appSettings != null && !string.IsNullOrEmpty(appSettings.Theme))
-                    {
-                        var theme = ThemeManager.GetThemeFromString(appSettings.Theme);
-                        ThemeManager.ChangeTheme(theme);
-                    }
+                    return;
                 }
-                catch
-                {
-                    // Eğer AppSettings yüklenemezse, varsayılan tema yüklenir
-                    ThemeManager.LoadThemeSettings();
-                }
+
+                var theme =
+                    ThemeManager.GetThemeFromString(
+                        appSettings.Theme);
+
+                ThemeManager.ChangeTheme(
+                    theme);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(string.Format(GetLocalizedString("Str_ThemeInitError"), ex.Message),
-                    GetLocalizedString("Str_ThemeErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
-        }
+                TryLogError(
+                    "Tema başlatılırken hata oluştu.",
+                    ex);
 
-        public static string GetLocalizedString(string key)
-        {
-            return Application.Current.TryFindResource(key) as string ?? key;
-        }
-
-        public static void ChangeLanguage(string cultureCode)
-        {
-            var dict = new ResourceDictionary();
-            switch (cultureCode)
-            {
-                case "en":
-                    dict.Source = new Uri("Resources/StringResources.en.xaml", UriKind.Relative);
-                    break;
-                case "tr":
-                default:
-                    dict.Source = new Uri("Resources/StringResources.tr.xaml", UriKind.Relative);
-                    break;
-            }
-
-            // Remove the old resource dictionary
-            ResourceDictionary oldDict = null;
-            foreach (ResourceDictionary d in Application.Current.Resources.MergedDictionaries)
-            {
-                if (d.Source != null && d.Source.OriginalString.StartsWith("Resources/StringResources"))
+                try
                 {
-                    oldDict = d;
-                    break;
+                    MessageBox.Show(
+                        string.Format(
+                            GetLocalizedString("Str_ThemeInitError"),
+                            ex.Message),
+                        GetLocalizedString("Str_ThemeErrorTitle"),
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+                catch
+                {
                 }
             }
-
-            if (oldDict != null)
-            {
-                Application.Current.Resources.MergedDictionaries.Remove(oldDict);
-            }
-
-            Application.Current.Resources.MergedDictionaries.Add(dict);
         }
 
         private void InitializeLanguage()
         {
             try
             {
-                var appSettings = ServiceContainer.GetService<AppSettings>();
-                if (appSettings != null && !string.IsNullOrEmpty(appSettings.Language))
+                AppSettings appSettings =
+                    ServiceContainer.GetService<AppSettings>();
+
+                string language =
+                    appSettings != null
+                        ? appSettings.Language
+                        : null;
+
+                ChangeLanguage(
+                    string.IsNullOrWhiteSpace(language)
+                        ? "tr"
+                        : language);
+            }
+            catch (Exception ex)
+            {
+                TryLogError(
+                    "Uygulama dili başlatılırken hata oluştu.",
+                    ex);
+
+                ChangeLanguage(
+                    "tr");
+            }
+        }
+
+        public static string GetLocalizedString(
+            string key)
+        {
+            if (string.IsNullOrWhiteSpace(
+                key))
+            {
+                return string.Empty;
+            }
+
+            Application app =
+                Current;
+
+            if (app == null)
+            {
+                return key;
+            }
+
+            object value =
+                app.TryFindResource(
+                    key);
+
+            return value as string ??
+                   key;
+        }
+
+        public static void ChangeLanguage(
+            string cultureCode)
+        {
+            Application app =
+                Current;
+
+            if (app == null)
+                return;
+
+            string normalized =
+                NormalizeUiLanguage(
+                    cultureCode);
+
+            string resourcePath;
+
+            switch (normalized)
+            {
+                case "en":
+                    resourcePath =
+                        "Resources/StringResources.en.xaml";
+                    break;
+
+                case "tr":
+                default:
+                    resourcePath =
+                        "Resources/StringResources.tr.xaml";
+                    break;
+            }
+
+            var newDictionary =
+                new ResourceDictionary
                 {
-                    ChangeLanguage(appSettings.Language);
-                }
-                else
+                    Source =
+                        new Uri(
+                            resourcePath,
+                            UriKind.Relative)
+                };
+
+            List<ResourceDictionary> oldDictionaries =
+                app.Resources
+                    .MergedDictionaries
+                    .Where(
+                        IsLanguageResourceDictionary)
+                    .ToList();
+
+            for (int i = 0;
+                 i < oldDictionaries.Count;
+                 i++)
+            {
+                app.Resources
+                    .MergedDictionaries
+                    .Remove(
+                        oldDictionaries[i]);
+            }
+
+            app.Resources
+                .MergedDictionaries
+                .Add(
+                    newDictionary);
+        }
+
+        private static bool IsLanguageResourceDictionary(
+            ResourceDictionary dictionary)
+        {
+            if (dictionary == null ||
+                dictionary.Source == null)
+            {
+                return false;
+            }
+
+            string source =
+                dictionary.Source
+                    .OriginalString;
+
+            if (string.IsNullOrWhiteSpace(
+                source))
+            {
+                return false;
+            }
+
+            return source.StartsWith(
+                "Resources/StringResources.",
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeUiLanguage(
+            string cultureCode)
+        {
+            if (string.IsNullOrWhiteSpace(
+                cultureCode))
+            {
+                return "tr";
+            }
+
+            string normalized =
+                cultureCode
+                    .Trim()
+                    .Replace(
+                        '_',
+                        '-')
+                    .ToLowerInvariant();
+
+            if (normalized.StartsWith(
+                "en",
+                StringComparison.Ordinal))
+            {
+                return "en";
+            }
+
+            if (normalized.StartsWith(
+                "tr",
+                StringComparison.Ordinal))
+            {
+                return "tr";
+            }
+
+            return "tr";
+        }
+
+        private static void TryLogError(
+            string message,
+            Exception ex)
+        {
+            try
+            {
+                ILogger logger =
+                    ServiceContainer.GetService<ILogger>();
+
+                if (logger != null)
                 {
-                    ChangeLanguage("tr");
+                    logger.LogError(
+                        message,
+                        ex);
                 }
             }
             catch
             {
-                ChangeLanguage("tr");
             }
         }
 
-        // Startup diagnostic method - logs environment, tessdata checks etc.
-        private void LogStartupDiagnostics(ILogger logger)
+        private void LogStartupDiagnostics(
+            ILogger logger)
         {
             try
             {
-                if (logger == null) return;
+                if (logger == null)
+                    return;
 
-                var sb = new StringBuilder();
-                void Log(string line)
-                {
-                    try { logger.LogInformation(line); } catch { }
-                    try { sb.AppendLine(line); } catch { }
-                }
+                var sb =
+                    new StringBuilder();
 
-                Log("== Startup diagnostic report ==");
-                try { Log($"OS: {Environment.OSVersion}"); } catch { }
-                try { Log($"OS Description: {RuntimeInformation.OSDescription}"); } catch { }
-                Log($"Process bitness: {(Environment.Is64BitProcess ? "64-bit" : "32-bit")}");
+                Action<string> log =
+                    line =>
+                    {
+                        try
+                        {
+                            logger.LogInformation(
+                                line);
+                        }
+                        catch
+                        {
+                        }
 
-                bool isElevated = false;
+                        try
+                        {
+                            sb.AppendLine(
+                                line);
+                        }
+                        catch
+                        {
+                        }
+                    };
+
+                log(
+                    "== Startup diagnostic report ==");
+
                 try
                 {
-                    isElevated = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+                    log(
+                        $"OS: {Environment.OSVersion}");
                 }
-                catch { }
-                Log($"Is elevated (admin): {isElevated}");
-
-                string entryPath = Assembly.GetEntryAssembly()?.Location ?? Process.GetCurrentProcess().MainModule?.FileName ?? "(unknown)";
-                Log($"Entry assembly path: {entryPath}");
-                Log($"AppDomain.BaseDirectory: {AppDomain.CurrentDomain.BaseDirectory}");
-                Log($"Environment.CurrentDirectory: {Environment.CurrentDirectory}");
-
-                // Tessdata checks
-                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                var candidates = new List<string>
+                catch
                 {
-                    Path.Combine(baseDir, "tessdata"),
-                    Path.Combine(Environment.CurrentDirectory, "tessdata"),
-                    Path.Combine(Path.GetDirectoryName(entryPath) ?? baseDir, "tessdata")
-                }.Distinct();
+                }
 
-                foreach (var p in candidates)
+                try
                 {
-                    if (Directory.Exists(p))
+                    log(
+                        $"OS Description: {RuntimeInformation.OSDescription}");
+                }
+                catch
+                {
+                }
+
+                log(
+                    $"Process bitness: {(Environment.Is64BitProcess ? "64-bit" : "32-bit")}");
+
+                bool isElevated =
+                    false;
+
+                try
+                {
+                    using (WindowsIdentity identity =
+                           WindowsIdentity.GetCurrent())
                     {
-                        var files = Directory.GetFiles(p);
-                        Log($"tessdata found at: {p} (files: {files.Length})");
-                        foreach (var f in files.Take(10)) Log($"  - {Path.GetFileName(f)}");
+                        var principal =
+                            new WindowsPrincipal(
+                                identity);
 
-                        var eng = files.FirstOrDefault(x => Path.GetFileName(x).Equals("eng.traineddata", StringComparison.OrdinalIgnoreCase));
-                        if (eng != null)
+                        isElevated =
+                            principal.IsInRole(
+                                WindowsBuiltInRole.Administrator);
+                    }
+                }
+                catch
+                {
+                }
+
+                log(
+                    $"Is elevated (admin): {isElevated}");
+
+                string entryPath =
+                    null;
+
+                try
+                {
+                    Assembly entryAssembly =
+                        Assembly.GetEntryAssembly();
+
+                    if (entryAssembly != null)
+                    {
+                        entryPath =
+                            entryAssembly.Location;
+                    }
+                }
+                catch
+                {
+                }
+
+                if (string.IsNullOrWhiteSpace(
+                    entryPath))
+                {
+                    try
+                    {
+                        using (Process process =
+                               Process.GetCurrentProcess())
                         {
-                            try
+                            if (process.MainModule != null)
                             {
-                                using (var fs = File.Open(eng, FileMode.Open, FileAccess.Read))
-                                {
-                                    Log($"eng.traineddata is readable, length={fs.Length}");
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                try { logger.LogError($"eng.traineddata exists but cannot be opened: {ex.Message}", ex); } catch { }
-                                sb.AppendLine($"eng.traineddata exists but cannot be opened: {ex.Message}");
+                                entryPath =
+                                    process.MainModule.FileName;
                             }
                         }
                     }
-                    else
+                    catch
                     {
-                        Log($"tessdata not found at: {p}");
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(
+                    entryPath))
+                {
+                    entryPath =
+                        "(unknown)";
+                }
+
+                log(
+                    $"Entry assembly path: {entryPath}");
+
+                log(
+                    $"AppDomain.BaseDirectory: {AppDomain.CurrentDomain.BaseDirectory}");
+
+                log(
+                    $"Environment.CurrentDirectory: {Environment.CurrentDirectory}");
+
+                string baseDir =
+                    AppDomain.CurrentDomain.BaseDirectory;
+
+                if (string.IsNullOrWhiteSpace(
+                    baseDir))
+                {
+                    baseDir =
+                        Environment.CurrentDirectory;
+                }
+
+                string entryDirectory =
+                    Path.GetDirectoryName(
+                        entryPath);
+
+                if (string.IsNullOrWhiteSpace(
+                    entryDirectory))
+                {
+                    entryDirectory =
+                        baseDir;
+                }
+
+                IEnumerable<string> candidates =
+                    new List<string>
+                    {
+                        Path.Combine(
+                            baseDir,
+                            "tessdata"),
+
+                        Path.Combine(
+                            Environment.CurrentDirectory,
+                            "tessdata"),
+
+                        Path.Combine(
+                            entryDirectory,
+                            "tessdata")
+                    }
+                    .Distinct(
+                        StringComparer.OrdinalIgnoreCase);
+
+                foreach (string path
+                         in candidates)
+                {
+                    if (!Directory.Exists(
+                        path))
+                    {
+                        log(
+                            $"tessdata not found at: {path}");
+
+                        continue;
+                    }
+
+                    string[] files =
+                        Directory.GetFiles(
+                            path);
+
+                    log(
+                        $"tessdata found at: {path} (files: {files.Length})");
+
+                    foreach (string file
+                             in files.Take(10))
+                    {
+                        log(
+                            $"  - {Path.GetFileName(file)}");
+                    }
+
+                    string eng =
+                        files.FirstOrDefault(
+                            file =>
+                                string.Equals(
+                                    Path.GetFileName(file),
+                                    "eng.traineddata",
+                                    StringComparison.OrdinalIgnoreCase));
+
+                    if (eng == null)
+                        continue;
+
+                    try
+                    {
+                        using (FileStream stream =
+                               File.Open(
+                                   eng,
+                                   FileMode.Open,
+                                   FileAccess.Read,
+                                   FileShare.Read))
+                        {
+                            log(
+                                $"eng.traineddata is readable, length={stream.Length}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(
+                            $"eng.traineddata exists but cannot be opened: {ex.Message}",
+                            ex);
+
+                        sb.AppendLine(
+                            $"eng.traineddata exists but cannot be opened: {ex.Message}");
                     }
                 }
 
                 try
                 {
-                    var testPath = Path.Combine(baseDir, "gt_diag_write_test.tmp");
-                    File.WriteAllText(testPath, "ok");
-                    File.Delete(testPath);
-                    Log("BaseDirectory write test: OK");
+                    string testPath =
+                        Path.Combine(
+                            baseDir,
+                            "gt_diag_write_test.tmp");
+
+                    File.WriteAllText(
+                        testPath,
+                        "ok");
+
+                    File.Delete(
+                        testPath);
+
+                    log(
+                        "BaseDirectory write test: OK");
                 }
                 catch (Exception ex)
                 {
-                    Log($"BaseDirectory yazma izni yok veya hata: {ex.Message}");
+                    log(
+                        $"BaseDirectory yazma izni yok veya hata: {ex.Message}");
                 }
 
-                Log("== End of diagnostic report ==");
+                log(
+                    "== End of diagnostic report ==");
 
-                // Show summary to user as MessageBox
                 try
                 {
-                    var summary = sb.ToString();
-                    if (string.IsNullOrWhiteSpace(summary)) summary = "No diagnostic information available.";
-                    MessageBox.Show(summary, "Startup diagnostic", MessageBoxButton.OK, MessageBoxImage.Information);
+                    string summary =
+                        sb.ToString();
+
+                    if (string.IsNullOrWhiteSpace(
+                        summary))
+                    {
+                        summary =
+                            "No diagnostic information available.";
+                    }
+
+                    MessageBox.Show(
+                        summary,
+                        "Startup diagnostic",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
                 }
-                catch { }
+                catch
+                {
+                }
             }
             catch (Exception ex)
             {
-                try { logger?.LogError("Startup diagnostic failed", ex); } catch { }
+                try
+                {
+                    if (logger != null)
+                    {
+                        logger.LogError(
+                            "Startup diagnostic failed.",
+                            ex);
+                    }
+                }
+                catch
+                {
+                }
             }
         }
     }

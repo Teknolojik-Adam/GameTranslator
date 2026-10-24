@@ -1,11 +1,10 @@
 ﻿using System;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Threading;
 
 namespace GameTranslatorUltimate
 {
@@ -17,47 +16,34 @@ namespace GameTranslatorUltimate
             Dark
         }
 
-        private const string LIGHT_THEME_URI = "Themes/LightTheme.xaml";
-        private const string DARK_THEME_URI = "Themes/DarkTheme.xaml";
-        private const string THEME_SETTINGS_PATH = "theme_settings.json";
+        private const string LightThemeUri = "Themes/LightTheme.xaml";
+        private const string DarkThemeUri = "Themes/DarkTheme.xaml";
+        private const string ThemeSettingsFileName = "theme_settings.json";
+
+        private static readonly object SyncRoot = new object();
+
+        private static Theme _currentTheme = Theme.Dark;
+
+        public static Theme CurrentTheme => _currentTheme;
+
+        private static string ThemeSettingsPath =>
+            Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                ThemeSettingsFileName);
+
+        public static event EventHandler ThemeChanged;
 
         public static void ChangeTheme(Theme theme)
         {
-            try
-            {
-                // Mevcut tema kaynaklarÄ±nÄ± temizle
-                ClearThemeResources();
-
-                // Yeni tema kaynaklarÄ±nÄ± yÃ¼kle
-                string themeUri = theme == Theme.Dark ? DARK_THEME_URI : LIGHT_THEME_URI;
-                var themeResource = new ResourceDictionary()
-                {
-                    Source = new Uri(themeUri, UriKind.Relative)
-                };
-
-                Application.Current.Resources.MergedDictionaries.Add(themeResource);
-
-                // TÃ¼m pencerelere yeni temayÄ± uygula
-                ApplyThemeToWindows();
-
-                // TemayÄ± kaydet
-                SaveThemeSettings(theme);
-            }
-            catch (Exception ex)
-            {
-                // Hata durumunda varsayÄ±lan temaya geri dÃ¶nmek iÃ§in
-                MessageBox.Show($"Tema deÄŸiÅŸtirme sÄ±rasÄ±nda hata oluÅŸtu: {ex.Message}", "Tema HatasÄ±",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
+            ApplyTheme(theme, true);
         }
 
         public static Theme GetThemeFromString(string themeString)
         {
-            if (Enum.TryParse<Theme>(themeString, true, out Theme result))
-            {
+            if (Enum.TryParse(themeString, true, out Theme result))
                 return result;
-            }
-            return Theme.Light;
+
+            return Theme.Dark;
         }
 
         public static string GetStringFromTheme(Theme theme)
@@ -65,188 +51,384 @@ namespace GameTranslatorUltimate
             return theme.ToString();
         }
 
-        private static void ClearThemeResources()
-        {
-            for (int i = Application.Current.Resources.MergedDictionaries.Count - 1; i >= 0; i--)
-            {
-                var dictionary = Application.Current.Resources.MergedDictionaries[i];
-                if (dictionary.Source != null &&
-                    (dictionary.Source.ToString().Contains("LightTheme.xaml") ||
-                     dictionary.Source.ToString().Contains("DarkTheme.xaml")))
-                {
-                    Application.Current.Resources.MergedDictionaries.RemoveAt(i);
-                }
-            }
-        }
-
-        private static void ApplyThemeToWindows()
-        {
-            foreach (Window window in Application.Current.Windows)
-            {
-                ApplyThemeToWindow(window);
-            }
-        }
-
-        public static void ApplyThemeToWindow(Window window)
-        {
-            if (window == null) return;
-
-            try
-            {
-                // Window stilini uygula
-                if (Application.Current.Resources["ThemedWindow"] is Style windowStyle)
-                {
-                    window.Style = windowStyle;
-                }
-
-                // Window'un arka plan rengini doÄŸrudan ayarla
-                if (Application.Current.Resources["PrimaryBackgroundBrush"] is SolidColorBrush windowBackground)
-                {
-                    window.Background = windowBackground;
-                }
-
-                // Alt kontrollerin temalarÄ±nÄ± gÃ¼ncelle
-                RefreshControlThemes(window);
-            }
-            catch (Exception ex)
-            {
-                // Hata durumu
-                System.Diagnostics.Debug.WriteLine($"Pencereye tema uygulama hatasÄ±: {ex.Message}");
-            }
-        }
-
-        private static void RefreshControlThemes(DependencyObject parent)
-        {
-            if (parent == null) return;
-
-            int childCount = System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent);
-            for (int i = 0; i < childCount; i++)
-            {
-                var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
-
-                // Kontrol tipine gÃ¶re ilgili stili uygula
-                ApplyControlTheme(child);
-
-                // Alt kontrolleri iÅŸle
-                RefreshControlThemes(child);
-            }
-        }
-
-        private static void ApplyControlTheme(DependencyObject control)
-        {
-            string styleKey = null;
-            string typeName = control.GetType().Name;
-
-            switch (typeName)
-            {
-                case "Button":
-                    styleKey = "ThemedButton";
-                    break;
-                case "TextBox":
-                    styleKey = "ThemedTextBox";
-                    break;
-                case "ComboBox":
-                    styleKey = "ThemedComboBox";
-                    break;
-                case "GroupBox":
-                    styleKey = "ThemedGroupBox";
-                    break;
-                case "Label":
-                    styleKey = "ThemedLabel";
-                    break;
-                case "ListBox":
-                    styleKey = "ThemedListBox";
-                    break;
-                case "CheckBox":
-                    styleKey = "ThemedCheckBox";
-                    break;
-                case "RadioButton":
-                    styleKey = "ThemedRadioButton";
-                    break;
-                case "TextBlock":
-                    styleKey = "ThemedTextBlock";
-                    break;
-            }
-
-            if (!string.IsNullOrEmpty(styleKey) &&
-                Application.Current.Resources[styleKey] is Style style &&
-                control is FrameworkElement element)
-            {
-                // Stili uygula
-                element.Style = style;
-            }
-        }
-
         public static void LoadThemeSettings()
         {
+            Theme theme = Theme.Dark;
+
             try
             {
-                // Ã–nce dosyadan tema ayarlarÄ±nÄ± yÃ¼klemeyi dene
-                if (File.Exists(THEME_SETTINGS_PATH))
+                if (TryLoadThemeFile(out Theme fileTheme))
                 {
-                    string json = File.ReadAllText(THEME_SETTINGS_PATH);
-                    var theme = JsonSerializer.Deserialize<Theme>(json);
-                    ChangeTheme(theme);
-                    return;
+                    theme = fileTheme;
                 }
-
-                // Dosya yoksa AppSettings'ten tema bilgisini al
-                try
+                else if (TryLoadThemeFromAppSettings(out Theme settingsTheme))
                 {
-                    var appSettings = ServiceContainer.GetService<AppSettings>();
-                    if (appSettings != null)
-                    {
-                        var selectedTheme = GetThemeFromString(appSettings.Theme);
-                        ChangeTheme(selectedTheme);
-                        return;
-                    }
+                    theme = settingsTheme;
                 }
-                catch
-                {
-                  
-                }
-
-              
-                ChangeTheme(Theme.Light);
             }
             catch (Exception ex)
             {
-                // Hata durumunda varsayÄ±lan temaya geri dÃ¶n
-                ChangeTheme(Theme.Light);
-                MessageBox.Show($"Tema ayarlarÄ± yÃ¼klenirken hata oluÅŸtu: {ex.Message}", "Tema HatasÄ±",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                Debug.WriteLine(
+                    $"Tema ayarları yüklenirken hata oluştu: {ex.Message}");
+
+                theme = Theme.Dark;
             }
+
+            ApplyTheme(theme, false);
         }
 
         public static void SaveThemeSettings(Theme theme)
         {
             try
             {
-                // Dosyaya kaydet
-                string json = JsonSerializer.Serialize(theme);
-                File.WriteAllText(THEME_SETTINGS_PATH, json);
+                string json =
+                    JsonSerializer.Serialize(theme);
 
-                // AppSettings'e de kaydet (eÄŸer mevcut ise)
-                try
-                {
-                    var appSettings = ServiceContainer.GetService<AppSettings>();
-                    var settingsManager = ServiceContainer.GetService<SettingsManager>();
-                    if (appSettings != null && settingsManager != null)
-                    {
-                        appSettings.Theme = GetStringFromTheme(theme);
-                        settingsManager.SaveSettings(appSettings);
-                    }
-                }
-                catch
-                {
-                   
-                }
+                File.WriteAllText(
+                    ThemeSettingsPath,
+                    json);
             }
             catch (Exception ex)
             {
-                // Hata durumunda uyarÄ±
-                MessageBox.Show($"Tema ayarlarÄ± kaydedilirken hata oluÅŸtu: {ex.Message}", "Tema HatasÄ±",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                Debug.WriteLine(
+                    $"Tema dosyası kaydedilemedi: {ex.Message}");
+            }
+
+            try
+            {
+                var appSettings =
+                    ServiceContainer.GetService<AppSettings>();
+
+                var settingsManager =
+                    ServiceContainer.GetService<SettingsManager>();
+
+                if (appSettings == null ||
+                    settingsManager == null)
+                {
+                    return;
+                }
+
+                appSettings.Theme =
+                    GetStringFromTheme(theme);
+
+                settingsManager.SaveSettings(appSettings);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(
+                    $"Tema AppSettings'e kaydedilemedi: {ex.Message}");
+            }
+        }
+
+        public static void ApplyThemeToWindow(Window window)
+        {
+            if (window == null)
+                return;
+
+            if (!window.Dispatcher.CheckAccess())
+            {
+                window.Dispatcher.Invoke(
+                    () => ApplyThemeToWindow(window));
+
+                return;
+            }
+
+            try
+            {
+                if (Application.Current?.TryFindResource("ThemedWindow")
+                    is Style windowStyle)
+                {
+                    window.Style = windowStyle;
+                }
+
+                if (Application.Current?.TryFindResource("PrimaryBackgroundBrush")
+                    is Brush backgroundBrush)
+                {
+                    window.Background = backgroundBrush;
+                }
+
+                RefreshControlThemes(window);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(
+                    $"Pencereye tema uygulanamadı: {ex.Message}");
+            }
+        }
+
+        private static void ApplyTheme(
+            Theme theme,
+            bool save)
+        {
+            Application app =
+                Application.Current;
+
+            if (app == null)
+                return;
+
+            if (!app.Dispatcher.CheckAccess())
+            {
+                app.Dispatcher.Invoke(
+                    () => ApplyTheme(theme, save));
+
+                return;
+            }
+
+            lock (SyncRoot)
+            {
+                try
+                {
+                    ReplaceThemeDictionary(theme);
+
+                    _currentTheme = theme;
+
+                    ApplyThemeToWindows();
+
+                    if (save)
+                    {
+                        SaveThemeSettings(theme);
+                    }
+
+                    ThemeChanged?.Invoke(
+                        null,
+                        EventArgs.Empty);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(
+                        $"Tema değiştirilemedi: {ex.Message}");
+
+                    if (theme != Theme.Dark)
+                    {
+                        TryApplyDarkFallback();
+                    }
+                }
+            }
+        }
+
+        private static void ReplaceThemeDictionary(
+            Theme theme)
+        {
+            var dictionaries =
+                Application.Current.Resources.MergedDictionaries;
+
+            for (int i = dictionaries.Count - 1;
+                 i >= 0;
+                 i--)
+            {
+                ResourceDictionary dictionary =
+                    dictionaries[i];
+
+                if (IsThemeDictionary(dictionary))
+                {
+                    dictionaries.RemoveAt(i);
+                }
+            }
+
+            string source =
+                theme == Theme.Dark
+                    ? DarkThemeUri
+                    : LightThemeUri;
+
+            dictionaries.Add(
+                new ResourceDictionary
+                {
+                    Source =
+                        new Uri(
+                            source,
+                            UriKind.Relative)
+                });
+        }
+
+        private static bool IsThemeDictionary(
+            ResourceDictionary dictionary)
+        {
+            string source =
+                dictionary?.Source?.OriginalString;
+
+            if (string.IsNullOrWhiteSpace(source))
+                return false;
+
+            return source.EndsWith(
+                       "LightTheme.xaml",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   source.EndsWith(
+                       "DarkTheme.xaml",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void ApplyThemeToWindows()
+        {
+            if (Application.Current == null)
+                return;
+
+            foreach (Window window in
+                     Application.Current.Windows)
+            {
+                ApplyThemeToWindow(window);
+            }
+        }
+
+        private static void RefreshControlThemes(
+            DependencyObject parent)
+        {
+            if (parent == null)
+                return;
+
+            int childCount =
+                VisualTreeHelper.GetChildrenCount(parent);
+
+            for (int i = 0;
+                 i < childCount;
+                 i++)
+            {
+                DependencyObject child =
+                    VisualTreeHelper.GetChild(parent, i);
+
+                ApplyControlTheme(child);
+                RefreshControlThemes(child);
+            }
+        }
+
+        private static void ApplyControlTheme(
+            DependencyObject control)
+        {
+            if (!(control is FrameworkElement element))
+                return;
+
+            if (element.ReadLocalValue(
+                    FrameworkElement.StyleProperty) !=
+                DependencyProperty.UnsetValue)
+            {
+                return;
+            }
+
+            string styleKey =
+                GetStyleKey(control);
+
+            if (styleKey == null)
+                return;
+
+            if (Application.Current?.TryFindResource(styleKey)
+                is Style style)
+            {
+                element.Style = style;
+            }
+        }
+
+        private static string GetStyleKey(
+            DependencyObject control)
+        {
+            if (control is Button)
+                return "ThemedButton";
+
+            if (control is TextBox)
+                return "ThemedTextBox";
+
+            if (control is ComboBox)
+                return "ThemedComboBox";
+
+            if (control is GroupBox)
+                return "ThemedGroupBox";
+
+            if (control is Label)
+                return "ThemedLabel";
+
+            if (control is ListBox)
+                return "ThemedListBox";
+
+            if (control is ListView)
+                return "ThemedListView";
+
+            if (control is CheckBox)
+                return "ThemedCheckBox";
+
+            if (control is RadioButton)
+                return "ThemedRadioButton";
+
+            if (control is Expander)
+                return "ThemedExpander";
+
+            if (control is TextBlock)
+                return "ThemedTextBlock";
+
+            return null;
+        }
+
+        private static bool TryLoadThemeFile(
+            out Theme theme)
+        {
+            theme = Theme.Dark;
+
+            if (!File.Exists(ThemeSettingsPath))
+                return false;
+
+            try
+            {
+                string json =
+                    File.ReadAllText(
+                        ThemeSettingsPath);
+
+                if (string.IsNullOrWhiteSpace(json))
+                    return false;
+
+                theme =
+                    JsonSerializer.Deserialize<Theme>(json);
+
+                return Enum.IsDefined(
+                    typeof(Theme),
+                    theme);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryLoadThemeFromAppSettings(
+            out Theme theme)
+        {
+            theme = Theme.Dark;
+
+            try
+            {
+                var appSettings =
+                    ServiceContainer.GetService<AppSettings>();
+
+                if (appSettings == null ||
+                    string.IsNullOrWhiteSpace(appSettings.Theme))
+                {
+                    return false;
+                }
+
+                theme =
+                    GetThemeFromString(
+                        appSettings.Theme);
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void TryApplyDarkFallback()
+        {
+            try
+            {
+                ReplaceThemeDictionary(
+                    Theme.Dark);
+
+                _currentTheme =
+                    Theme.Dark;
+
+                ApplyThemeToWindows();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(
+                    $"Dark tema fallback uygulanamadı: {ex.Message}");
             }
         }
     }

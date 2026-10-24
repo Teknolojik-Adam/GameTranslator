@@ -3,205 +3,707 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace GameTranslatorUltimate
 {
     public interface IGameRecipeService
     {
-        Task<PathInfo> GetRecipeForProcessAsync(Process process);
-        void SaveOrUpdateRecipe(GameRecipe newRecipe);
+        Task<PathInfo> GetRecipeForProcessAsync(
+            Process process);
+
+        void SaveOrUpdateRecipe(
+            GameRecipe newRecipe);
+
         void ReloadRecipes();
+
         void ClearCache();
     }
 
-    public class GameRecipeService : IGameRecipeService, IDisposable
+    public sealed class GameRecipeService :
+        IGameRecipeService,
+        IDisposable
     {
-        private readonly ILogger _logger;
-        private const string RecipesFileName = "game_recipes.json";
-        private readonly Dictionary<string, PathInfo> _recipeCache;
-        private FileSystemWatcher _fileWatcher;
+        private const string RecipesFileName =
+            "game_recipes.json";
 
-        public GameRecipeService(ILogger logger)
+        private readonly ILogger _logger;
+        private readonly Dictionary<string, PathInfo> _recipeCache;
+        private readonly object _cacheLock;
+        private readonly object _fileLock;
+
+        private FileSystemWatcher _fileWatcher;
+        private Timer _reloadTimer;
+        private bool _disposed;
+
+        public GameRecipeService(
+            ILogger logger)
         {
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _recipeCache = new Dictionary<string, PathInfo>(StringComparer.OrdinalIgnoreCase);
+            if (logger == null)
+            {
+                throw new ArgumentNullException(
+                    nameof(logger));
+            }
+
+            _logger =
+                logger;
+
+            _recipeCache =
+                new Dictionary<string, PathInfo>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            _cacheLock =
+                new object();
+
+            _fileLock =
+                new object();
+
             LoadRecipesToCache();
+
             SetupFileWatcher();
         }
 
-        private void LoadRecipesToCache()
+        public Task<PathInfo> GetRecipeForProcessAsync(
+            Process process)
         {
+            if (_disposed)
+            {
+                return Task.FromResult<PathInfo>(
+                    null);
+            }
+
+            if (process == null)
+            {
+                return Task.FromResult<PathInfo>(
+                    null);
+            }
+
+            string processName;
+
             try
             {
-                if (!File.Exists(RecipesFileName))
-                {
-                    _logger.LogInformation($"'{RecipesFileName}' dosyası bulunamadı. Önbellek boş olacak.");
-                    return;
-                }
-
-                string jsonString = File.ReadAllText(RecipesFileName);
-                var recipes = JsonSerializer.Deserialize<List<GameRecipe>>(jsonString);
-
-                if (recipes == null) return;
-
-                _recipeCache.Clear();
-                foreach (var recipe in recipes)
-                {
-                    if (string.IsNullOrWhiteSpace(recipe.ProcessName) || recipe.PathInfo == null) continue;
-
-                    var processKey = NormalizeProcessName(recipe.ProcessName);
-                    if (!_recipeCache.ContainsKey(processKey))
-                    {
-                        _recipeCache.Add(processKey, recipe.PathInfo);
-                    }
-                }
-                _logger.LogInformation($"{_recipeCache.Count} oyun önbelleğe yüklendi.");
+                processName =
+                    process.ProcessName;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"'{RecipesFileName}' dosyası yüklenirken hata oluştu", ex);
+                _logger.LogError(
+                    "Process adı alınamadı.",
+                    ex);
+
+                return Task.FromResult<PathInfo>(
+                    null);
             }
-        }
-        //
-        private string NormalizeProcessName(string processName)
-        {
-            if (string.IsNullOrWhiteSpace(processName))
-                return processName;
 
-            return processName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-                ? processName.Substring(0, processName.Length - 4)
-                : processName;
-        }
+            string processKey =
+                NormalizeProcessName(
+                    processName);
 
-        public void SaveOrUpdateRecipe(GameRecipe newRecipe)
-        {
-            if (newRecipe == null || string.IsNullOrWhiteSpace(newRecipe.ProcessName) || newRecipe.PathInfo == null)
+            if (string.IsNullOrWhiteSpace(
+                processKey))
             {
-                _logger.LogWarning("Geçersiz bir öneri kaydetmeye çalışıldı.");
+                return Task.FromResult<PathInfo>(
+                    null);
+            }
+
+            lock (_cacheLock)
+            {
+                PathInfo pathInfo;
+
+                if (_recipeCache.TryGetValue(
+                    processKey,
+                    out pathInfo))
+                {
+                    _logger.LogInformation(
+                        $"'{processName}' önerisi önbellekte bulundu.");
+
+                    return Task.FromResult(
+                        pathInfo);
+                }
+            }
+
+            _logger.LogWarning(
+                $"'{processName}' için öneri bulunamadı. '{RecipesFileName}' dosyasını kontrol edin.");
+
+            return Task.FromResult<PathInfo>(
+                null);
+        }
+
+        public void SaveOrUpdateRecipe(
+            GameRecipe newRecipe)
+        {
+            if (_disposed)
+            {
+                _logger.LogWarning(
+                    "GameRecipeService dispose edilmiş durumda.");
+
+                return;
+            }
+
+            if (newRecipe == null ||
+                string.IsNullOrWhiteSpace(
+                    newRecipe.ProcessName) ||
+                newRecipe.PathInfo == null)
+            {
+                _logger.LogWarning(
+                    "Geçersiz bir oyun önerisi kaydedilmeye çalışıldı.");
+
+                return;
+            }
+
+            string normalizedName =
+                NormalizeProcessName(
+                    newRecipe.ProcessName);
+
+            if (string.IsNullOrWhiteSpace(
+                normalizedName))
+            {
+                _logger.LogWarning(
+                    "Geçersiz process adı.");
+
                 return;
             }
 
             try
             {
-                string jsonString = File.Exists(RecipesFileName) ? File.ReadAllText(RecipesFileName) : "[]";
-                var recipes = JsonSerializer.Deserialize<List<GameRecipe>>(jsonString) ?? new List<GameRecipe>();
-
-                var existingRecipe = recipes.FirstOrDefault(r => r.ProcessName.Equals(newRecipe.ProcessName, StringComparison.OrdinalIgnoreCase));
-                if (existingRecipe != null)
+                lock (_fileLock)
                 {
-                    existingRecipe.PathInfo = newRecipe.PathInfo;
-                    _logger.LogInformation($"'{newRecipe.ProcessName}' öneri güncellendi.");
+                    List<GameRecipe> recipes =
+                        ReadRecipesFromFile();
+
+                    GameRecipe existingRecipe =
+                        recipes.FirstOrDefault(
+                            r =>
+                                r != null &&
+                                string.Equals(
+                                    NormalizeProcessName(
+                                        r.ProcessName),
+                                    normalizedName,
+                                    StringComparison.OrdinalIgnoreCase));
+
+                    if (existingRecipe != null)
+                    {
+                        existingRecipe.ProcessName =
+                            newRecipe.ProcessName.Trim();
+
+                        existingRecipe.PathInfo =
+                            newRecipe.PathInfo;
+
+                        _logger.LogInformation(
+                            $"'{newRecipe.ProcessName}' önerisi güncellendi.");
+                    }
+                    else
+                    {
+                        recipes.Add(
+                            new GameRecipe
+                            {
+                                ProcessName =
+                                    newRecipe.ProcessName.Trim(),
+
+                                PathInfo =
+                                    newRecipe.PathInfo
+                            });
+
+                        _logger.LogInformation(
+                            $"'{newRecipe.ProcessName}' önerisi eklendi.");
+                    }
+
+                    SaveRecipesToFile(
+                        recipes);
                 }
-                else
+
+                lock (_cacheLock)
                 {
-                    recipes.Add(newRecipe);
-                    _logger.LogInformation($"'{newRecipe.ProcessName}' öneri eklendi.");
+                    _recipeCache[normalizedName] =
+                        newRecipe.PathInfo;
                 }
-
-                var processKey = NormalizeProcessName(newRecipe.ProcessName);
-                _recipeCache[processKey] = newRecipe.PathInfo;
-
-                SaveRecipesToFile(recipes);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"öneri kaydedilirken hata oluştu", ex);
+                _logger.LogError(
+                    "Oyun önerisi kaydedilirken hata oluştu.",
+                    ex);
             }
         }
 
-        private void SaveRecipesToFile(List<GameRecipe> recipes)
+        public void ReloadRecipes()
         {
+            if (_disposed)
+                return;
+
+            _logger.LogInformation(
+                $"'{RecipesFileName}' dosyası elle yenileniyor...");
+
+            LoadRecipesToCache();
+        }
+
+        public void ClearCache()
+        {
+            if (_disposed)
+                return;
+
+            lock (_cacheLock)
+            {
+                _recipeCache.Clear();
+            }
+
+            _logger.LogInformation(
+                "Öneri önbelleği temizlendi.");
+        }
+
+        private void LoadRecipesToCache()
+        {
+            if (_disposed)
+                return;
+
             try
             {
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                string jsonString = JsonSerializer.Serialize(recipes, options);
-                File.WriteAllText(RecipesFileName, jsonString);
-                _logger.LogInformation($"öneri '{RecipesFileName}' dosyasına başarıyla kaydedildi.");
+                List<GameRecipe> recipes;
+
+                lock (_fileLock)
+                {
+                    if (!File.Exists(
+                        GetRecipesFullPath()))
+                    {
+                        lock (_cacheLock)
+                        {
+                            _recipeCache.Clear();
+                        }
+
+                        _logger.LogInformation(
+                            $"'{RecipesFileName}' dosyası bulunamadı. Önbellek boş.");
+
+                        return;
+                    }
+
+                    recipes =
+                        ReadRecipesFromFile();
+                }
+
+                var newCache =
+                    new Dictionary<string, PathInfo>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                for (int i = 0;
+                     i < recipes.Count;
+                     i++)
+                {
+                    GameRecipe recipe =
+                        recipes[i];
+
+                    if (recipe == null ||
+                        string.IsNullOrWhiteSpace(
+                            recipe.ProcessName) ||
+                        recipe.PathInfo == null)
+                    {
+                        continue;
+                    }
+
+                    string processKey =
+                        NormalizeProcessName(
+                            recipe.ProcessName);
+
+                    if (string.IsNullOrWhiteSpace(
+                        processKey))
+                    {
+                        continue;
+                    }
+
+                    newCache[processKey] =
+                        recipe.PathInfo;
+                }
+
+                lock (_cacheLock)
+                {
+                    _recipeCache.Clear();
+
+                    foreach (KeyValuePair<string, PathInfo> pair
+                             in newCache)
+                    {
+                        _recipeCache[pair.Key] =
+                            pair.Value;
+                    }
+                }
+
+                _logger.LogInformation(
+                    $"{newCache.Count} oyun önerisi önbelleğe yüklendi.");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"öneri '{RecipesFileName}' dosyasına kaydedilirken hata oluştu", ex);
+                _logger.LogError(
+                    $"'{RecipesFileName}' dosyası yüklenirken hata oluştu.",
+                    ex);
             }
         }
 
-        public Task<PathInfo> GetRecipeForProcessAsync(Process process)
+        private List<GameRecipe> ReadRecipesFromFile()
         {
-            if (process == null) return Task.FromResult<PathInfo>(null);
+            string fullPath =
+                GetRecipesFullPath();
 
-            if (_recipeCache.TryGetValue(NormalizeProcessName(process.ProcessName), out var pathInfo))
+            if (!File.Exists(
+                fullPath))
             {
-                _logger.LogInformation($"'{process.ProcessName}' öneri önbellekte bulundu.");
-                return Task.FromResult(pathInfo);
+                return new List<GameRecipe>();
             }
 
-            _logger.LogWarning($"'{process.ProcessName}' öneri bulunamadı. Lütfen kontrol edin '{RecipesFileName}'.");
-            return Task.FromResult<PathInfo>(null);
+            string jsonString =
+                ReadFileWithRetry(
+                    fullPath);
+
+            if (string.IsNullOrWhiteSpace(
+                jsonString))
+            {
+                return new List<GameRecipe>();
+            }
+
+            var options =
+                new JsonSerializerOptions
+                {
+                    AllowTrailingCommas =
+                        true,
+
+                    ReadCommentHandling =
+                        JsonCommentHandling.Skip,
+
+                    PropertyNameCaseInsensitive =
+                        true
+                };
+
+            List<GameRecipe> recipes =
+                JsonSerializer.Deserialize<List<GameRecipe>>(
+                    jsonString,
+                    options);
+
+            return recipes ??
+                   new List<GameRecipe>();
+        }
+
+        private void SaveRecipesToFile(
+            List<GameRecipe> recipes)
+        {
+            if (recipes == null)
+            {
+                recipes =
+                    new List<GameRecipe>();
+            }
+
+            string fullPath =
+                GetRecipesFullPath();
+
+            string directory =
+                Path.GetDirectoryName(
+                    fullPath);
+
+            if (!string.IsNullOrWhiteSpace(
+                    directory) &&
+                !Directory.Exists(
+                    directory))
+            {
+                Directory.CreateDirectory(
+                    directory);
+            }
+
+            var options =
+                new JsonSerializerOptions
+                {
+                    WriteIndented =
+                        true
+                };
+
+            string jsonString =
+                JsonSerializer.Serialize(
+                    recipes,
+                    options);
+
+            string tempPath =
+                fullPath + ".tmp";
+
+            string backupPath =
+                fullPath + ".bak";
+
+            File.WriteAllText(
+                tempPath,
+                jsonString,
+                new UTF8Encoding(false));
+
+            if (File.Exists(
+                fullPath))
+            {
+                try
+                {
+                    File.Replace(
+                        tempPath,
+                        fullPath,
+                        backupPath,
+                        true);
+                }
+                catch
+                {
+                    File.Copy(
+                        tempPath,
+                        fullPath,
+                        true);
+
+                    File.Delete(
+                        tempPath);
+                }
+            }
+            else
+            {
+                File.Move(
+                    tempPath,
+                    fullPath);
+            }
+
+            _logger.LogInformation(
+                $"Öneriler '{RecipesFileName}' dosyasına kaydedildi.");
         }
 
         private void SetupFileWatcher()
         {
             try
             {
-                if (!File.Exists(RecipesFileName))
+                string fullPath =
+                    GetRecipesFullPath();
+
+                string directory =
+                    Path.GetDirectoryName(
+                        fullPath);
+
+                string fileName =
+                    Path.GetFileName(
+                        fullPath);
+
+                if (string.IsNullOrWhiteSpace(
+                    directory))
                 {
-                    _logger.LogWarning($"'{RecipesFileName}' dosyası bulunamadı, dosya izleyici ayarlanamadı.");
-                    return;
+                    directory =
+                        AppDomain.CurrentDomain.BaseDirectory;
                 }
 
-                string fullPath = Path.GetFullPath(RecipesFileName);
-                string directory = Path.GetDirectoryName(fullPath);
-                string fileName = Path.GetFileName(fullPath);
-
-                _fileWatcher = new FileSystemWatcher(directory, fileName)
+                if (!Directory.Exists(
+                    directory))
                 {
-                    NotifyFilter = NotifyFilters.LastWrite
-                };
-                _fileWatcher.Changed += OnRecipesFileChanged;
-                _fileWatcher.EnableRaisingEvents = true;
-                _logger.LogInformation($"'{RecipesFileName}' dosyası izleniyor.");
+                    Directory.CreateDirectory(
+                        directory);
+                }
+
+                _fileWatcher =
+                    new FileSystemWatcher(
+                        directory,
+                        fileName);
+
+                _fileWatcher.NotifyFilter =
+                    NotifyFilters.LastWrite |
+                    NotifyFilters.FileName |
+                    NotifyFilters.Size |
+                    NotifyFilters.CreationTime;
+
+                _fileWatcher.Changed +=
+                    OnRecipesFileChanged;
+
+                _fileWatcher.Created +=
+                    OnRecipesFileChanged;
+
+                _fileWatcher.Deleted +=
+                    OnRecipesFileChanged;
+
+                _fileWatcher.Renamed +=
+                    OnRecipesFileRenamed;
+
+                _fileWatcher.EnableRaisingEvents =
+                    true;
+
+                _logger.LogInformation(
+                    $"'{RecipesFileName}' dosyası izleniyor.");
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Dosya izleyici ayarlanırken hata oluştu", ex);
+                _logger.LogError(
+                    "Dosya izleyici ayarlanırken hata oluştu.",
+                    ex);
             }
         }
 
-        private void OnRecipesFileChanged(object sender, FileSystemEventArgs e)
+        private void OnRecipesFileChanged(
+            object sender,
+            FileSystemEventArgs e)
         {
-            if (e.ChangeType == WatcherChangeTypes.Changed)
+            ScheduleReload();
+        }
+
+        private void OnRecipesFileRenamed(
+            object sender,
+            RenamedEventArgs e)
+        {
+            ScheduleReload();
+        }
+
+        private void ScheduleReload()
+        {
+            if (_disposed)
+                return;
+
+            lock (_fileLock)
             {
-                _logger.LogInformation($"'{RecipesFileName}' dosyası değişti, önbellek yenileniyor...");
-                System.Threading.Thread.Sleep(100); // Dosya yazımının tamamlanmasını bekle
+                if (_reloadTimer == null)
+                {
+                    _reloadTimer =
+                        new Timer(
+                            ReloadTimerCallback,
+                            null,
+                            250,
+                            Timeout.Infinite);
+                }
+                else
+                {
+                    _reloadTimer.Change(
+                        250,
+                        Timeout.Infinite);
+                }
+            }
+        }
+
+        private void ReloadTimerCallback(
+            object state)
+        {
+            if (_disposed)
+                return;
+
+            try
+            {
                 LoadRecipesToCache();
             }
-        }
-
-        public void ReloadRecipes()
-        {
-            _logger.LogInformation($"'{RecipesFileName}' dosyası elle yenileniyor...");
-            LoadRecipesToCache();
-        }
-
-        public void ClearCache()
-        {
-            lock (_recipeCache)
+            catch (Exception ex)
             {
-                _recipeCache.Clear();
-                _logger.LogInformation("Öneri önbelleği temizlendi.");
+                _logger.LogError(
+                    "Öneri dosyası otomatik yenilenirken hata oluştu.",
+                    ex);
             }
+        }
+
+        private static string ReadFileWithRetry(
+            string path)
+        {
+            const int attempts =
+                5;
+
+            for (int i = 0;
+                 i < attempts;
+                 i++)
+            {
+                try
+                {
+                    using (var stream =
+                           new FileStream(
+                               path,
+                               FileMode.Open,
+                               FileAccess.Read,
+                               FileShare.ReadWrite |
+                               FileShare.Delete))
+                    using (var reader =
+                           new StreamReader(
+                               stream,
+                               Encoding.UTF8,
+                               true))
+                    {
+                        return reader.ReadToEnd();
+                    }
+                }
+                catch (IOException)
+                {
+                    if (i == attempts - 1)
+                    {
+                        throw;
+                    }
+
+                    Thread.Sleep(
+                        50);
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static string NormalizeProcessName(
+            string processName)
+        {
+            if (string.IsNullOrWhiteSpace(
+                processName))
+            {
+                return string.Empty;
+            }
+
+            string normalized =
+                processName.Trim();
+
+            if (normalized.EndsWith(
+                ".exe",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                normalized =
+                    normalized.Substring(
+                        0,
+                        normalized.Length - 4);
+            }
+
+            return normalized.Trim();
+        }
+
+        private static string GetRecipesFullPath()
+        {
+            return Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                RecipesFileName);
         }
 
         public void Dispose()
         {
+            if (_disposed)
+                return;
+
+            _disposed =
+                true;
+
             if (_fileWatcher != null)
             {
-                _fileWatcher.Changed -= OnRecipesFileChanged;
+                _fileWatcher.EnableRaisingEvents =
+                    false;
+
+                _fileWatcher.Changed -=
+                    OnRecipesFileChanged;
+
+                _fileWatcher.Created -=
+                    OnRecipesFileChanged;
+
+                _fileWatcher.Deleted -=
+                    OnRecipesFileChanged;
+
+                _fileWatcher.Renamed -=
+                    OnRecipesFileRenamed;
+
                 _fileWatcher.Dispose();
-                _fileWatcher = null;
+
+                _fileWatcher =
+                    null;
             }
-            _logger.LogInformation("Dosya izleyici durduruldu ve kaynaklar serbest bırakıldı.");
+
+            lock (_fileLock)
+            {
+                if (_reloadTimer != null)
+                {
+                    _reloadTimer.Dispose();
+                    _reloadTimer =
+                        null;
+                }
+            }
+
+            _logger.LogInformation(
+                "GameRecipeService kapatıldı.");
         }
     }
 }

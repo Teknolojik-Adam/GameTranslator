@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "packId": "latin",
+  "displayName": "PP-OCRv5 Mobile Latin (Turkish/English)",
+  "modelFamily": "PP-OCRv5",
+  "decoder": "CTC",
+  "detectorFile": "detector.onnx",
+  "recognizerFile": "recognizer.onnx",
+  "dictionaryFile": "charset.txt",
+  "languages": ["latin", "en", "tr"],
+  "sha256": {
+    "detector": "4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae",
+    "recognizer": "b20bd37c168a570f583afbc8cd7925603890efbcdc000a59e22c269d160b5f5a",
+    "dictionary": "3c0a8a79b612653c25f765271714f71281e4e955962c153e272b7b8c1d2b13ff"
+  }
+}

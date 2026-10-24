@@ -1,0 +1,66 @@
+name: Build and publish GameTranslator V3.1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Set up NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Compile OCR bridge for Windows
+        shell: pwsh
+        run: dotnet publish OwnOCR/src/GameTranslatorOCR.Bridge/GameTranslatorOCR.Bridge.csproj -c Release -r win-x64 --self-contained false -o OwnOCR/win-x64 --nologo
+
+      - name: Restore WPF dependencies
+        shell: pwsh
+        run: nuget restore GameTranslatorUltimate.sln -NonInteractive
+
+      - name: Build Windows application (Release)
+        shell: pwsh
+        run: msbuild GameTranslatorUltimate.sln /restore /m /p:Configuration=Release '/p:Platform=Any CPU' /v:minimal
+
+      - name: Package Windows build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $env:RUNNER_TEMP 'GameTranslator-V3.1-Windows'
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          Copy-Item 'bin/Release/*' $output -Recurse -Force
+          if (!(Test-Path (Join-Path $output 'GameTranslatorUltimate.exe'))) {
+            throw 'GameTranslatorUltimate.exe was not produced.'
+          }
+          New-Item -ItemType Directory -Path (Join-Path $output 'OwnOCR') -Force | Out-Null
+          Copy-Item 'OwnOCR/win-x64' (Join-Path $output 'OwnOCR/win-x64') -Recurse -Force
+          Copy-Item 'OwnOCR/models' (Join-Path $output 'OwnOCR/models') -Recurse -Force
+          if (!(Test-Path (Join-Path $output 'tessdata'))) {
+            Copy-Item 'tessdata' (Join-Path $output 'tessdata') -Recurse -Force
+          }
+          Copy-Item 'frozen_east_text_detection.pb' (Join-Path $output 'frozen_east_text_detection.pb') -Force
+          Compress-Archive -Path "$output/*" -DestinationPath 'GameTranslator-V3.1-Windows.zip' -CompressionLevel Optimal -Force
+          Get-FileHash 'GameTranslator-V3.1-Windows.zip' -Algorithm SHA256 | Format-List
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release create V3.1 'GameTranslator-V3.1-Windows.zip' --repo "${{ github.repository }}" --target "${{ github.sha }}" --title 'V3.1' --notes-file 'RELEASE_NOTES_V3.1.md' --latest

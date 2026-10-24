@@ -1,548 +1,1236 @@
-﻿using System;
+﻿using OpenCvSharp;
+using OpenCvSharp.Dnn;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
-using OpenCvSharp;
-using OpenCvSharp.Dnn;
+using System.Threading;
 
 namespace GameTranslatorUltimate
 {
-    public class MLTextProcessor
+    public sealed class MLTextProcessor : IDisposable
     {
         private readonly ILogger _logger;
         private readonly AppSettings _appSettings;
-        private readonly Dictionary<DnnModelType, Net> _dnnModels;
-        private readonly Dictionary<string, int> _wordFrequency;
-        private readonly Dictionary<string, List<string>> _contextPatterns;
-        private readonly List<string> _recentTexts;
 
-        public MLTextProcessor(ILogger logger, AppSettings appSettings)
+        private readonly Dictionary<DnnModelType, Net> _dnnModels =
+            new Dictionary<DnnModelType, Net>();
+
+        private readonly Dictionary<string, int> _wordFrequency =
+            new Dictionary<string, int>(
+                StringComparer.OrdinalIgnoreCase);
+
+        private readonly Dictionary<string, List<string>> _contextPatterns =
+            new Dictionary<string, List<string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+        private readonly List<string> _recentTexts =
+            new List<string>();
+
+        private readonly object _historyLock =
+            new object();
+
+        private readonly object _modelLock =
+            new object();
+
+        private int _disposed;
+
+        public MLTextProcessor(
+            ILogger logger,
+            AppSettings appSettings)
         {
-            _logger = logger;
-            _appSettings = appSettings;
-            _dnnModels = new Dictionary<DnnModelType, Net>();
-            _wordFrequency = new Dictionary<string, int>();
-            _contextPatterns = new Dictionary<string, List<string>>();
-            _recentTexts = new List<string>();
+            _logger =
+                logger ?? throw new ArgumentNullException(nameof(logger));
+
+            _appSettings =
+                appSettings ?? throw new ArgumentNullException(nameof(appSettings));
 
             InitializeDnnModels();
             LoadGameTerminology();
         }
+
         private void InitializeDnnModels()
         {
+            string baseDirectory =
+                AppDomain.CurrentDomain.BaseDirectory;
+
+            TryLoadModel(
+                DnnModelType.EAST,
+                Path.Combine(
+                    baseDirectory,
+                    "frozen_east_text_detection.pb"));
+
+            string customPath =
+                _appSettings.CustomDnnModelPath;
+
+            if (!string.IsNullOrWhiteSpace(customPath))
+            {
+                if (!Path.IsPathRooted(customPath))
+                {
+                    customPath =
+                        Path.Combine(
+                            baseDirectory,
+                            customPath);
+                }
+
+                TryLoadModel(
+                    DnnModelType.Custom,
+                    customPath);
+            }
+        }
+
+        private void TryLoadModel(
+            DnnModelType modelType,
+            string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) ||
+                !File.Exists(path))
+            {
+                return;
+            }
+
             try
             {
-                // EAST modeli (Frozen model - tek dosya)
-                if (File.Exists("frozen_east_text_detection.pb"))
+                Net model =
+                    CvDnn.ReadNet(path);
+
+                if (model == null ||
+                    model.Empty())
                 {
-                    _dnnModels[DnnModelType.EAST] = CvDnn.ReadNet("frozen_east_text_detection.pb");
-                    _logger?.LogInformation("EAST DNN modeli başarıyla yüklendi");
+                    model?.Dispose();
+                    return;
                 }
 
-                // CRNN modeli (SavedModel formatı - klasör)
-                string crnnModelPath = "crnn";
-                if (Directory.Exists(crnnModelPath))
-                {
-                    // CvDnn.ReadNet, bir klasör verildiğinde TensorFlow SavedModel formatını (saved_model.pb ve variables/ klasörü) anlar.
-                    _dnnModels[DnnModelType.CRNN] = CvDnn.ReadNet(crnnModelPath);
-                    _logger?.LogInformation($"CRNN DNN modeli '{crnnModelPath}' klasöründen başarıyla yüklendi");
-                }
+                _dnnModels[modelType] =
+                    model;
 
-                // PaddleOCR modeli (SavedModel formatı - klasör)
-                string paddleModelPath = "paddle";
-                if (Directory.Exists(paddleModelPath))
-                {
-                    _dnnModels[DnnModelType.PaddleOCR] = CvDnn.ReadNet(paddleModelPath);
-                    _logger?.LogInformation($"PaddleOCR DNN modeli '{paddleModelPath}' klasöründen başarıyla yüklendi");
-                }
-
-                // Custom model
-                if (!string.IsNullOrEmpty(_appSettings.CustomDnnModelPath) && File.Exists(_appSettings.CustomDnnModelPath))
-                {
-                    _dnnModels[DnnModelType.Custom] = CvDnn.ReadNet(_appSettings.CustomDnnModelPath);
-                    _logger?.LogInformation($"Özel DNN modeli başarıyla yüklendi: {_appSettings.CustomDnnModelPath}");
-                }
+                _logger.LogInformation(
+                    $"{modelType} DNN modeli yüklendi: {path}");
             }
             catch (Exception ex)
             {
-                _logger?.LogError("DNN modelleri yüklenirken hata oluştu", ex);
+                _logger.LogWarning(
+                    $"{modelType} DNN modeli yüklenemedi: {ex.Message}");
             }
         }
-        public MLTextResult ProcessTextWithML(string rawText, Mat image = null, string context = "")
+
+        public MLTextResult ProcessTextWithML(
+            string rawText,
+            Mat image = null,
+            string context = "")
         {
-            if (!_appSettings.EnableMachineLearning || string.IsNullOrWhiteSpace(rawText))
+            ThrowIfDisposed();
+
+            if (string.IsNullOrWhiteSpace(rawText))
             {
-                return new MLTextResult
-                {
-                    OriginalText = rawText,
-                    ProcessedText = rawText,
-                    Confidence = 1.0,
-                    Improvements = new List<string>()
-                };
+                return CreateResult(
+                    rawText,
+                    rawText,
+                    0);
             }
 
-            var result = new MLTextResult
+            if (!_appSettings.EnableMachineLearning)
             {
-                OriginalText = rawText,
-                ProcessedText = rawText,
-                Confidence = 0.85, // Ham metin için başlangıç güveni (varsayılan eşik olan 0.8'in üzerinde olmalı ki boş geçmesin)
-                Improvements = new List<string>()
-            };
+                return CreateResult(
+                    rawText,
+                    rawText,
+                    1.0);
+            }
+
+            var result =
+                CreateResult(
+                    rawText,
+                    rawText,
+                    0.80);
 
             try
             {
-                // Bağlam analizi
-                if (_appSettings.EnableContextAnalysis && !string.IsNullOrEmpty(context))
+                string processed =
+                    rawText;
+
+                if (_appSettings.EnableTextCorrection)
                 {
-                    var contextImproved = AnalyzeContext(result.ProcessedText, context);
-                    if (contextImproved != result.ProcessedText)
+                    string corrected =
+                        OcrTextCorrector.CorrectText(
+                            processed,
+                            GetCurrentOcrLanguage(),
+                            true,
+                            _logger);
+
+                    if (!string.Equals(
+                            corrected,
+                            processed,
+                            StringComparison.Ordinal))
                     {
-                        result.ProcessedText = contextImproved;
-                        result.Improvements.Add("Bağlam analizi başarıyla uygulandı");
-                        result.Confidence += 0.15;
+                        processed =
+                            corrected;
+
+                        result.Improvements.Add(
+                            "OCR metin düzeltmesi uygulandı.");
+
+                        result.Confidence +=
+                            0.05;
                     }
                 }
 
-                //  Oyun terminolojisi düzeltmesi
-                var terminologyImproved = CorrectGameTerminology(result.ProcessedText);
-                if (terminologyImproved != result.ProcessedText)
+                if (_appSettings.EnableContextAnalysis &&
+                    !string.IsNullOrWhiteSpace(context))
                 {
-                    result.ProcessedText = terminologyImproved;
-                    result.Improvements.Add("Oyun terminolojisi başarıyla düzeltildi");
-                    result.Confidence += 0.1;
-                }
+                    string contextImproved =
+                        AnalyzeContext(
+                            processed,
+                            context);
 
-                //  DNN tabanlı metin iyileştirmesi
-                if (image != null && _dnnModels.ContainsKey(_appSettings.SelectedDnnModel))
-                {
-                    var dnnImproved = ProcessWithDnn(result.ProcessedText, image);
-                    // EAST modeli metni değiştirmese de doğruluğu teyit eder, diğerleri metni değiştirirse sayarız
-                    if (dnnImproved != result.ProcessedText || (_appSettings.SelectedDnnModel == DnnModelType.EAST && !string.IsNullOrEmpty(result.ProcessedText)))
+                    if (!string.Equals(
+                            contextImproved,
+                            processed,
+                            StringComparison.Ordinal))
                     {
-                        result.ProcessedText = dnnImproved;
-                        result.Improvements.Add($"DNN ({_appSettings.SelectedDnnModel}) doğrulaması başarılı");
-                        result.Confidence += 0.2;
+                        processed =
+                            contextImproved;
+
+                        result.Improvements.Add(
+                            "Bağlam tabanlı düzeltme uygulandı.");
+
+                        result.Confidence +=
+                            0.05;
                     }
                 }
-                else if (image != null && !_dnnModels.ContainsKey(_appSettings.SelectedDnnModel))
+
+                if (image != null &&
+                    _dnnModels.ContainsKey(
+                        _appSettings.SelectedDnnModel))
                 {
-                    _logger?.LogWarning($"Seçili DNN modeli ({_appSettings.SelectedDnnModel}) yüklü değil, atlanıyor.");
+                    bool validated =
+                        ValidateWithDnn(
+                            image,
+                            _appSettings.SelectedDnnModel);
+
+                    if (validated)
+                    {
+                        result.Improvements.Add(
+                            $"{_appSettings.SelectedDnnModel} doğrulaması başarılı.");
+
+                        result.Confidence +=
+                            0.05;
+                    }
                 }
 
-                //  Geçmiş öğrenme
-                LearnFromHistory(result.ProcessedText);
+                processed =
+                    NormalizeWhitespace(
+                        processed);
 
-                // Güven skorunu sınırla
-                result.Confidence = Math.Min(1.0, result.Confidence);
+                result.ProcessedText =
+                    processed;
+
+                result.Confidence =
+                    Clamp01(
+                        result.Confidence);
+
+                LearnFromHistory(
+                    processed);
 
                 return result;
             }
             catch (Exception ex)
             {
-                _logger?.LogError("ML metin işleme sırasında hata oluştu", ex);
+                _logger.LogError(
+                    "ML metin işleme sırasında hata oluştu.",
+                    ex);
+
                 return new MLTextResult
                 {
-                    OriginalText = rawText,
-                    ProcessedText = rawText,
-                    Confidence = 0.5,
-                    Improvements = new List<string> { "ML işleme sırasında hata oluştu" }
+                    OriginalText =
+                        rawText,
+
+                    ProcessedText =
+                        rawText,
+
+                    Confidence =
+                        0.50,
+
+                    Improvements =
+                        new List<string>
+                        {
+                            "ML işleme sırasında hata oluştu."
+                        }
                 };
             }
         }
-        /// Büyük/küçük harf kullanımını düzeltir
-        private string FixCapitalization(string text)
+
+        private string AnalyzeContext(
+            string text,
+            string context)
         {
-            if (string.IsNullOrEmpty(text)) return text;
-
-            var words = text.Split(' ');
-            var corrected = new StringBuilder();
-
-            for (int i = 0; i < words.Length; i++)
+            if (string.IsNullOrWhiteSpace(text) ||
+                string.IsNullOrWhiteSpace(context))
             {
-                var word = words[i];
-                if (string.IsNullOrWhiteSpace(word))
+                return text;
+            }
+
+            string[] contextWords =
+                SplitWords(context);
+
+            if (contextWords.Length == 0)
+                return text;
+
+            string[] words =
+                text.Split(
+                    new[] { ' ' },
+                    StringSplitOptions.None);
+
+            for (int i = 0;
+                 i < words.Length;
+                 i++)
+            {
+                string original =
+                    words[i];
+
+                string clean =
+                    CleanWord(original);
+
+                if (clean.Length < 4)
+                    continue;
+
+                string bestMatch =
+                    FindBestContextMatch(
+                        clean,
+                        contextWords);
+
+                if (string.IsNullOrWhiteSpace(bestMatch))
+                    continue;
+
+                double similarity =
+                    CalculateSimilarity(
+                        clean,
+                        CleanWord(bestMatch));
+
+                if (similarity < 0.88)
+                    continue;
+
+                words[i] =
+                    ReplaceWordPreservingPunctuation(
+                        original,
+                        bestMatch);
+            }
+
+            return string.Join(
+                " ",
+                words);
+        }
+
+        private string FindBestContextMatch(
+            string word,
+            string[] contextWords)
+        {
+            if (string.IsNullOrWhiteSpace(word) ||
+                contextWords == null ||
+                contextWords.Length == 0)
+            {
+                return null;
+            }
+
+            string exact =
+                contextWords.FirstOrDefault(
+                    contextWord =>
+                        string.Equals(
+                            CleanWord(contextWord),
+                            word,
+                            StringComparison.OrdinalIgnoreCase));
+
+            if (exact != null)
+                return null;
+
+            string bestMatch =
+                null;
+
+            double bestScore =
+                0;
+
+            foreach (string contextWord in contextWords)
+            {
+                string cleanContext =
+                    CleanWord(contextWord);
+
+                if (cleanContext.Length < 4)
+                    continue;
+
+                if (Math.Abs(
+                        cleanContext.Length -
+                        word.Length) > 2)
                 {
-                    corrected.Append(word);
                     continue;
                 }
 
-                // Cümle başları büyük harfle başlamalı
-                if (i == 0 || words[i - 1].EndsWith(".") || words[i - 1].EndsWith("!") || words[i - 1].EndsWith("?"))
+                double score =
+                    CalculateSimilarity(
+                        word,
+                        cleanContext);
+
+                if (score >
+                    bestScore)
                 {
-                    word = char.ToUpper(word[0]) + word.Substring(1).ToLower();
+                    bestScore =
+                        score;
+
+                    bestMatch =
+                        contextWord;
                 }
-                // Özel isimler (büyük harfle başlayan yaygın kelimeler)
-                else if (IsProperNoun(word))
-                {
-                    word = char.ToUpper(word[0]) + word.Substring(1).ToLower();
-                }
-                // Diğer kelimeler küçük harfle
-                else
-                {
-                    word = word.ToLower();
-                }
-
-                corrected.Append(word);
-                if (i < words.Length - 1) corrected.Append(" ");
             }
 
-            return corrected.ToString();
+            return bestScore >= 0.88
+                ? bestMatch
+                : null;
         }
-        /// Özel isim olup olmadığını kontrol eder
-        private bool IsProperNoun(string word)
+
+        private bool ValidateWithDnn(
+            Mat image,
+            DnnModelType modelType)
         {
-            var properNouns = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            if (image == null ||
+                image.Empty())
             {
-                "player", "character", "hero", "warrior", "mage", "archer", "thief", "priest",
-                "guild", "party", "team", "alliance", "clan", "raid", "dungeon", "quest",
-                "mission", "objective", "goal", "target", "enemy", "boss", "monster", "npc"
-            };
-
-            return properNouns.Contains(word);
-        }
-        /// Bağlam analizi yapar
-        private string AnalyzeContext(string text, string context)
-        {
-            if (string.IsNullOrEmpty(context)) return text;
-
-            var contextWords = context.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            var textWords = text.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-
-            // Bağlamdaki kelimelerle metindeki kelimeleri karşılaştır
-            var improvedWords = new List<string>();
-            foreach (var word in textWords)
-            {
-                var bestMatch = FindBestContextMatch(word, contextWords);
-                improvedWords.Add(bestMatch);
+                return false;
             }
 
-            return string.Join(" ", improvedWords);
-        }
-        /// En iyi bağlam eşleşmesini bulur
-        private string FindBestContextMatch(string word, string[] contextWords)
-        {
-            if (contextWords == null || contextWords.Length == 0)
-                return word;
+            Net model;
 
-            var cleanWord = Regex.Replace(word, @"[^\w]", "").ToLower();
-            
-            // Tam 
-            if (contextWords.Any(cw => cw.Equals(cleanWord, StringComparison.OrdinalIgnoreCase)))
-                return word;
-
-            // Benzerlik skoru ile 
-            var bestMatch = contextWords
-                .OrderByDescending(cw => CalculateSimilarity(cleanWord, cw.ToLower()))
-                .FirstOrDefault();
-
-            if (bestMatch != null && CalculateSimilarity(cleanWord, bestMatch.ToLower()) > 0.8)
+            if (!_dnnModels.TryGetValue(
+                    modelType,
+                    out model))
             {
-                return bestMatch;
+                return false;
             }
 
-            return word;
-        }
-        /// Oyun terminolojisini düzeltir
-        private string CorrectGameTerminology(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return text;
-            var corrected = text;
-
-            // Oyun terimleri sözlüğü - daha akılcı ve kelime sınırı kontrolü ile
-            var gameTerms = new Dictionary<string, string>
+            if (modelType !=
+                DnnModelType.EAST)
             {
-                { "hp", "HP" }, { "mp", "MP" }, { "exp", "EXP" },
-                { "lvl", "Level" }, { "str", "Strength" }, { "dex", "Dexterity" },
-                { "int", "Intelligence" }, { "vit", "Vitality" }, { "agi", "Agility" },
-                { "atk", "Attack" }, { "def", "Defense" }, { "dmg", "Damage" }
-            };
-
-            foreach (var term in gameTerms)
-            {
-                // Sadece tam kelime ise (büyük/küçük harf duyarsız)
-                var pattern = $@"\b{Regex.Escape(term.Key)}\b";
-                corrected = Regex.Replace(corrected, pattern, term.Value, RegexOptions.IgnoreCase);
+                return false;
             }
-
-            return corrected;
-        }
-        /// DNN modeli ile metin işleme
-        private string ProcessWithDnn(string text, Mat image)
-        {
-            if (!_dnnModels.ContainsKey(_appSettings.SelectedDnnModel))
-                return text;
 
             try
             {
-                var model = _dnnModels[_appSettings.SelectedDnnModel];
-
-                switch (_appSettings.SelectedDnnModel)
+                lock (_modelLock)
                 {
-                    case DnnModelType.EAST:
-                        return ProcessWithEastModel(text, image, model);
-                    case DnnModelType.CRNN:
-                        return ProcessWithCrnnModel(text, image, model);
-                    case DnnModelType.PaddleOCR:
-                        return ProcessWithPaddleOcrModel(text, image, model);
-                    case DnnModelType.Custom:
-                        return ProcessWithCustomModel(text, image, model);
-                    default:
-                        return text;
+                    List<Rectangle> regions =
+                        DetectTextRegionsWithEast(
+                            image,
+                            model);
+
+                    return regions.Count > 0;
                 }
             }
             catch (Exception ex)
             {
-                _logger?.LogError($"DNN modeli ({_appSettings.SelectedDnnModel}) işleme sırasında hata oluştu", ex);
-                return text;
+                _logger.LogWarning(
+                    $"DNN doğrulaması başarısız: {ex.Message}");
+
+                return false;
             }
         }
-        /// EAST modeli ile işleme
-        private string ProcessWithEastModel(string text, Mat image, Net model)
+
+        private List<Rectangle> DetectTextRegionsWithEast(
+            Mat source,
+            Net model)
         {
+            var regions =
+                new List<Rectangle>();
 
-            if (image != null)
+            if (source == null ||
+                source.Empty() ||
+                model == null)
             {
-                // Metin bölgelerini tespit et ve doğrulamak için
-                var textRegions = DetectTextRegionsWithEast(image, model);
+                return regions;
+            }
 
-                // Tespit edilen bölgelerle metni karşılaştır
-                if (textRegions.Count > 0)
+            int newWidth =
+                (source.Width / 32) * 32;
+
+            int newHeight =
+                (source.Height / 32) * 32;
+
+            if (newWidth < 32 ||
+                newHeight < 32)
+            {
+                return regions;
+            }
+
+            double ratioWidth =
+                (double)source.Width /
+                newWidth;
+
+            double ratioHeight =
+                (double)source.Height /
+                newHeight;
+
+            using (Mat blob =
+                   CvDnn.BlobFromImage(
+                       source,
+                       1.0,
+                       new OpenCvSharp.Size(
+                           newWidth,
+                           newHeight),
+                       new Scalar(
+                           123.68,
+                           116.78,
+                           103.94),
+                       true,
+                       false))
+            {
+                Mat[] output =
                 {
-                    // Metin güvenilirliğini artırmak için
-                    return text;
-                }
-            }
+                    new Mat(),
+                    new Mat()
+                };
 
-            return text;
-        }
-
-        
-        private string ProcessWithCrnnModel(string text, Mat image, Net model)
-        {
-            // CRNN modeli metin tanıma için kullanılırsa burada gerçekleştirilmeli
-            if (image != null)
-            {
-                using (var blob = CvDnn.BlobFromImage(image, 1.0/255.0, new OpenCvSharp.Size(100, 32), new Scalar(0, 0, 0), true, false))
-                {
-                    model.SetInput(blob);
-                    using (var output = model.Forward())
-                    {
-                        // Model başarılı çalıştı ancak henüz metin ayrıştırma katmanı yok
-                        // Simüle edilmiş bir başarı döndürüyoruz
-                        return text + " "; // Küçük bir değişiklik ekleyerek tetiklenmesini sağlıyoruz (veya mantığı değiştireceğiz)
-                    }
-                }
-            }
-
-            return text;
-        }
-        /// PaddleOCR modeli ile işleme
-        private string ProcessWithPaddleOcrModel(string text, Mat image, Net model)
-        {
-            if (image != null)
-            {
-                _logger?.LogInformation("PaddleOCR modeli ile metin işleme uygulandı.");
-                return text;
-            }
-
-            return text;
-        }
-        /// Custom model ile işleme
-        private string ProcessWithCustomModel(string text, Mat image, Net model)
-        {
-            // Custom model işleme (etiket eklemeden döndür)
-            return text;
-        }
-        /// EAST modeli ile metin bölge tespit eder
-        private List<System.Drawing.Rectangle> DetectTextRegionsWithEast(Mat src, Net model)
-        {
-            var regions = new List<System.Drawing.Rectangle>();
-            
-            try
-            {
-                int newW = (int)(src.Width / 32.0) * 32;
-                int newH = (int)(src.Height / 32.0) * 32;
-                
-                if (newW <= 0 || newH <= 0) return regions;
-                
-                double rW = (double)src.Width / newW;
-                double rH = (double)src.Height / newH;
-                
-                using (Mat blob = CvDnn.BlobFromImage(src, 1.0, new OpenCvSharp.Size(newW, newH), new Scalar(123.68, 116.78, 103.94), true, false))
+                try
                 {
                     model.SetInput(blob);
-                    string[] outNames = { "feature_fusion/Conv_7/Sigmoid", "feature_fusion/GELU_2/Sigmoid" };
-                    var output = new Mat[outNames.Length];
-                    model.Forward(output, outNames);
-                    
-                    using (Mat scores = output[0])
-                    using (Mat geometry = output[1])
+
+                    string[] outputNames =
                     {
-                        var (boxes, confidences) = DecodeEastOutput(scores, geometry, 0.5f);
-                        CvDnn.NMSBoxes(boxes, confidences, 0.5f, 0.4f, out int[] indices);
-                        
-                        foreach (int i in indices)
+                        "feature_fusion/Conv_7/Sigmoid",
+                        "feature_fusion/concat_3"
+                    };
+
+                    model.Forward(
+                        output,
+                        outputNames);
+
+                    List<RotatedRect> boxes;
+                    List<float> confidences;
+
+                    DecodeEastOutput(
+                        output[0],
+                        output[1],
+                        0.5f,
+                        out boxes,
+                        out confidences);
+
+                    if (boxes.Count == 0)
+                        return regions;
+
+                    int[] indices;
+
+                    CvDnn.NMSBoxes(
+                        boxes,
+                        confidences,
+                        0.5f,
+                        0.4f,
+                        out indices);
+
+                    foreach (int index in indices)
+                    {
+                        if (index < 0 ||
+                            index >= boxes.Count)
                         {
-                            RotatedRect box = boxes[i];
-                            OpenCvSharp.Point2f[] vertices = box.Points();
-                            for (int j = 0; j < 4; j++)
-                            {
-                                vertices[j].X = vertices[j].X * (float)rW;
-                                vertices[j].Y = vertices[j].Y * (float)rH;
-                            }
-                            var boundingBox = Cv2.BoundingRect(vertices);
-                            regions.Add(new System.Drawing.Rectangle(boundingBox.X, boundingBox.Y, boundingBox.Width, boundingBox.Height));
+                            continue;
+                        }
+
+                        Point2f[] points =
+                            boxes[index].Points();
+
+                        for (int i = 0;
+                             i < points.Length;
+                             i++)
+                        {
+                            points[i].X *=
+                                (float)ratioWidth;
+
+                            points[i].Y *=
+                                (float)ratioHeight;
+                        }
+
+                        OpenCvSharp.Rect cvRect =
+                            Cv2.BoundingRect(
+                                points);
+
+                        Rectangle rect =
+                            ClampRectangle(
+                                new Rectangle(
+                                    cvRect.X,
+                                    cvRect.Y,
+                                    cvRect.Width,
+                                    cvRect.Height),
+                                source.Width,
+                                source.Height);
+
+                        if (rect.Width >= 8 &&
+                            rect.Height >= 5)
+                        {
+                            regions.Add(
+                                rect);
                         }
                     }
                 }
+                finally
+                {
+                    for (int i = 0;
+                         i < output.Length;
+                         i++)
+                    {
+                        output[i]?.Dispose();
+                    }
+                }
             }
-            catch (Exception ex)
-            {
-                _logger?.LogError("EAST metin bÃ¶lgesi tespiti sÄ±rasÄ±nda hata oluÅŸtu", ex);
-            }
-            
+
             return regions;
         }
-        /// EAST model çıktısını decode eder
-        private (List<RotatedRect> boxes, List<float> confidences) DecodeEastOutput(Mat scores, Mat geometry, float confidenceThreshold)
+
+        private static void DecodeEastOutput(
+            Mat scores,
+            Mat geometry,
+            float confidenceThreshold,
+            out List<RotatedRect> boxes,
+            out List<float> confidences)
         {
-            var boxes = new List<RotatedRect>();
-            var confidences = new List<float>();
-            
-            int height = scores.Size(2);
-            int width = scores.Size(3);
-            
-            for (int y = 0; y < height; y++)
+            boxes =
+                new List<RotatedRect>();
+
+            confidences =
+                new List<float>();
+
+            if (scores == null ||
+                geometry == null ||
+                scores.Empty() ||
+                geometry.Empty())
             {
-                for (int x = 0; x < width; x++)
-                {
-                    float score = scores.At<float>(0, 0, y, x);
-                    if (score < confidenceThreshold) continue;
-                    
-                    float offsetX = x * 4.0f;
-                    float offsetY = y * 4.0f;
-                    float angle = geometry.At<float>(0, 4, y, x);
-                    float h = geometry.At<float>(0, 0, y, x) + geometry.At<float>(0, 2, y, x);
-                    float w = geometry.At<float>(0, 1, y, x) + geometry.At<float>(0, 3, y, x);
-                    
-                    var center = new OpenCvSharp.Point(
-                        offsetX + (float)(Math.Cos(angle) * geometry.At<float>(0, 1, y, x)) + (float)(Math.Sin(angle) * geometry.At<float>(0, 2, y, x)),
-                        offsetY - (float)(Math.Sin(angle) * geometry.At<float>(0, 1, y, x)) + (float)(Math.Cos(angle) * geometry.At<float>(0, 2, y, x))
-                    );
-                    
-                    var size = new Size2f(w, h);
-                    boxes.Add(new RotatedRect(center, size, -angle * 180 / (float)Math.PI));
-                    confidences.Add(score);
-                }
-            }
-            
-            return (boxes, confidences);
-        }
-        /// Geçmişten öğrenir
-        private void LearnFromHistory(string text)
-        {
-            _recentTexts.Add(text);
-            if (_recentTexts.Count > 100)
-            {
-                _recentTexts.RemoveAt(0);
+                return;
             }
 
-            // Kelime frekansını güncelle
-            var words = text.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var word in words)
+            int height =
+                scores.Size(2);
+
+            int width =
+                scores.Size(3);
+
+            for (int y = 0;
+                 y < height;
+                 y++)
             {
-                var cleanWord = word.ToLower();
-                if (_wordFrequency.ContainsKey(cleanWord))
-                    _wordFrequency[cleanWord]++;
-                else
-                    _wordFrequency[cleanWord] = 1;
+                for (int x = 0;
+                     x < width;
+                     x++)
+                {
+                    float score =
+                        scores.At<float>(
+                            0,
+                            0,
+                            y,
+                            x);
+
+                    if (score <
+                        confidenceThreshold)
+                    {
+                        continue;
+                    }
+
+                    float offsetX =
+                        x * 4.0f;
+
+                    float offsetY =
+                        y * 4.0f;
+
+                    float angle =
+                        geometry.At<float>(
+                            0,
+                            4,
+                            y,
+                            x);
+
+                    float top =
+                        geometry.At<float>(
+                            0,
+                            0,
+                            y,
+                            x);
+
+                    float right =
+                        geometry.At<float>(
+                            0,
+                            1,
+                            y,
+                            x);
+
+                    float bottom =
+                        geometry.At<float>(
+                            0,
+                            2,
+                            y,
+                            x);
+
+                    float left =
+                        geometry.At<float>(
+                            0,
+                            3,
+                            y,
+                            x);
+
+                    float boxWidth =
+                        right +
+                        left;
+
+                    float boxHeight =
+                        top +
+                        bottom;
+
+                    float cos =
+                        (float)Math.Cos(
+                            angle);
+
+                    float sin =
+                        (float)Math.Sin(
+                            angle);
+
+                    float endX =
+                        offsetX +
+                        cos * right +
+                        sin * bottom;
+
+                    float endY =
+                        offsetY -
+                        sin * right +
+                        cos * bottom;
+
+                    float centerX =
+                        endX -
+                        boxWidth / 2.0f;
+
+                    float centerY =
+                        endY -
+                        boxHeight / 2.0f;
+
+                    boxes.Add(
+                        new RotatedRect(
+                            new Point2f(
+                                centerX,
+                                centerY),
+                            new Size2f(
+                                boxWidth,
+                                boxHeight),
+                            -angle *
+                            180.0f /
+                            (float)Math.PI));
+
+                    confidences.Add(
+                        score);
+                }
             }
         }
-        /// Oyun terminolojisini yükler
+
+        private void LearnFromHistory(
+            string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            lock (_historyLock)
+            {
+                _recentTexts.Add(
+                    text);
+
+                while (_recentTexts.Count >
+                       100)
+                {
+                    _recentTexts.RemoveAt(
+                        0);
+                }
+
+                string[] words =
+                    SplitWords(
+                        text);
+
+                foreach (string word in words)
+                {
+                    string clean =
+                        CleanWord(word);
+
+                    if (clean.Length < 2)
+                        continue;
+
+                    int current;
+
+                    if (_wordFrequency.TryGetValue(
+                            clean,
+                            out current))
+                    {
+                        if (current <
+                            int.MaxValue)
+                        {
+                            _wordFrequency[clean] =
+                                current + 1;
+                        }
+                    }
+                    else
+                    {
+                        _wordFrequency[clean] =
+                            1;
+                    }
+                }
+            }
+        }
+
         private void LoadGameTerminology()
         {
-            // Oyun terimleri ve bağlam kalıpları
-            _contextPatterns["combat"] = new List<string> { "attack", "defend", "damage", "health", "mana", "spell", "skill" };
-            _contextPatterns["inventory"] = new List<string> { "item", "weapon", "armor", "potion", "equipment", "bag", "inventory" };
-            _contextPatterns["quest"] = new List<string> { "quest", "mission", "objective", "goal", "reward", "complete", "finish" };
-            _contextPatterns["character"] = new List<string> { "level", "experience", "stats", "attributes", "class", "race", "character" };
-        }
-
-        /// İki string arasındaki benzerliği hesaplar
-        private double CalculateSimilarity(string s1, string s2)
-        {
-            if (string.IsNullOrEmpty(s1) || string.IsNullOrEmpty(s2))
-                return 0.0;
-
-            var longer = s1.Length > s2.Length ? s1 : s2;
-            var shorter = s1.Length > s2.Length ? s2 : s1;
-
-            if (longer.Length == 0) return 1.0;
-
-            var distance = LevenshteinDistance(longer, shorter);
-            return (longer.Length - distance) / (double)longer.Length;
-        }
-        /// Levenshtein mesafesini hesaplar
-        private int LevenshteinDistance(string source, string target)
-        {
-            if (source.Length == 0) return target.Length;
-            if (target.Length == 0) return source.Length;
-
-            var distance = new int[source.Length + 1, target.Length + 1];
-
-            for (int i = 0; i <= source.Length; distance[i, 0] = i++) { }
-            for (int j = 0; j <= target.Length; distance[0, j] = j++) { }
-
-            for (int i = 1; i <= source.Length; i++)
-            {
-                for (int j = 1; j <= target.Length; j++)
+            _contextPatterns["combat"] =
+                new List<string>
                 {
-                    var cost = target[j - 1] == source[i - 1] ? 0 : 1;
-                    distance[i, j] = Math.Min(
-                        Math.Min(distance[i - 1, j] + 1, distance[i, j - 1] + 1),
-                        distance[i - 1, j - 1] + cost);
-                }
+                    "attack",
+                    "defend",
+                    "damage",
+                    "health",
+                    "mana",
+                    "spell",
+                    "skill"
+                };
+
+            _contextPatterns["inventory"] =
+                new List<string>
+                {
+                    "item",
+                    "weapon",
+                    "armor",
+                    "potion",
+                    "equipment",
+                    "bag",
+                    "inventory"
+                };
+
+            _contextPatterns["quest"] =
+                new List<string>
+                {
+                    "quest",
+                    "mission",
+                    "objective",
+                    "goal",
+                    "reward",
+                    "complete",
+                    "finish"
+                };
+
+            _contextPatterns["character"] =
+                new List<string>
+                {
+                    "level",
+                    "experience",
+                    "stats",
+                    "attributes",
+                    "class",
+                    "race",
+                    "character"
+                };
+        }
+
+        private double CalculateSimilarity(
+            string first,
+            string second)
+        {
+            if (string.IsNullOrWhiteSpace(first) ||
+                string.IsNullOrWhiteSpace(second))
+            {
+                return 0;
             }
 
-            return distance[source.Length, target.Length];
+            first =
+                first.ToLowerInvariant();
+
+            second =
+                second.ToLowerInvariant();
+
+            int maxLength =
+                Math.Max(
+                    first.Length,
+                    second.Length);
+
+            if (maxLength == 0)
+                return 1;
+
+            int distance =
+                LevenshteinDistance(
+                    first,
+                    second);
+
+            return Clamp01(
+                1.0 -
+                (double)distance /
+                maxLength);
         }
 
-        /// ML istatistiklerini döndürür
+        private static int LevenshteinDistance(
+            string source,
+            string target)
+        {
+            source =
+                source ?? string.Empty;
+
+            target =
+                target ?? string.Empty;
+
+            if (source.Length == 0)
+                return target.Length;
+
+            if (target.Length == 0)
+                return source.Length;
+
+            if (source.Length >
+                target.Length)
+            {
+                string temp =
+                    source;
+
+                source =
+                    target;
+
+                target =
+                    temp;
+            }
+
+            int[] previous =
+                new int[source.Length + 1];
+
+            int[] current =
+                new int[source.Length + 1];
+
+            for (int i = 0;
+                 i <= source.Length;
+                 i++)
+            {
+                previous[i] =
+                    i;
+            }
+
+            for (int j = 1;
+                 j <= target.Length;
+                 j++)
+            {
+                current[0] =
+                    j;
+
+                for (int i = 1;
+                     i <= source.Length;
+                     i++)
+                {
+                    int cost =
+                        source[i - 1] ==
+                        target[j - 1]
+                            ? 0
+                            : 1;
+
+                    current[i] =
+                        Math.Min(
+                            Math.Min(
+                                current[i - 1] + 1,
+                                previous[i] + 1),
+                            previous[i - 1] +
+                            cost);
+                }
+
+                int[] temp =
+                    previous;
+
+                previous =
+                    current;
+
+                current =
+                    temp;
+            }
+
+            return previous[
+                source.Length];
+        }
+
         public MLStatistics GetStatistics()
         {
-            return new MLStatistics
+            ThrowIfDisposed();
+
+            lock (_historyLock)
             {
-                TotalTextsProcessed = _recentTexts.Count,
-                UniqueWordsLearned = _wordFrequency.Count,
-                DnnModelsLoaded = _dnnModels.Count,
-                AverageConfidence = _recentTexts.Count > 0 ? 0.85 : 0.0 
-            };
+                return new MLStatistics
+                {
+                    TotalTextsProcessed =
+                        _recentTexts.Count,
+
+                    UniqueWordsLearned =
+                        _wordFrequency.Count,
+
+                    DnnModelsLoaded =
+                        _dnnModels.Count,
+
+                    AverageConfidence =
+                        _recentTexts.Count > 0
+                            ? 0.85
+                            : 0
+                };
+            }
         }
-        /// ML geçmişini temizler
+
         public void ClearHistory()
         {
-            _recentTexts.Clear();
-            _wordFrequency.Clear();
-            _logger?.LogInformation("ML geçmişi başarıyla temizlendi");
+            ThrowIfDisposed();
+
+            lock (_historyLock)
+            {
+                _recentTexts.Clear();
+                _wordFrequency.Clear();
+            }
+
+            _logger.LogInformation(
+                "ML geçmişi temizlendi.");
+        }
+
+        private string GetCurrentOcrLanguage()
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(
+                    _appSettings.OcrLanguage))
+                {
+                    return _appSettings.OcrLanguage;
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        private static string[] SplitWords(
+            string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return new string[0];
+
+            return text.Split(
+                new[]
+                {
+                    ' ',
+                    '\t',
+                    '\r',
+                    '\n'
+                },
+                StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        private static string CleanWord(
+            string word)
+        {
+            if (string.IsNullOrWhiteSpace(word))
+                return string.Empty;
+
+            return Regex.Replace(
+                    word,
+                    @"[^\p{L}\p{N}'’-]",
+                    string.Empty)
+                .ToLowerInvariant();
+        }
+
+        private static string ReplaceWordPreservingPunctuation(
+            string original,
+            string replacement)
+        {
+            if (string.IsNullOrWhiteSpace(original) ||
+                string.IsNullOrWhiteSpace(replacement))
+            {
+                return original;
+            }
+
+            Match match =
+                Regex.Match(
+                    original,
+                    @"[\p{L}\p{N}'’-]+");
+
+            if (!match.Success)
+                return original;
+
+            string value =
+                PreserveCase(
+                    match.Value,
+                    replacement);
+
+            return original.Substring(
+                       0,
+                       match.Index) +
+                   value +
+                   original.Substring(
+                       match.Index +
+                       match.Length);
+        }
+
+        private static string PreserveCase(
+            string original,
+            string replacement)
+        {
+            if (string.IsNullOrEmpty(original) ||
+                string.IsNullOrEmpty(replacement))
+            {
+                return replacement;
+            }
+
+            if (original.All(
+                char.IsUpper))
+            {
+                return replacement
+                    .ToUpperInvariant();
+            }
+
+            if (char.IsUpper(
+                original[0]))
+            {
+                if (replacement.Length == 1)
+                {
+                    return replacement
+                        .ToUpperInvariant();
+                }
+
+                return
+                    char.ToUpperInvariant(
+                        replacement[0]) +
+                    replacement.Substring(
+                        1);
+            }
+
+            return replacement;
+        }
+
+        private static string NormalizeWhitespace(
+            string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            string result =
+                text.Replace("\r\n", "\n")
+                    .Replace('\r', '\n');
+
+            result =
+                Regex.Replace(
+                    result,
+                    @"[ \t]{2,}",
+                    " ");
+
+            result =
+                Regex.Replace(
+                    result,
+                    @" *\n *",
+                    "\n");
+
+            return result.Trim();
+        }
+
+        private static Rectangle ClampRectangle(
+            Rectangle rectangle,
+            int width,
+            int height)
+        {
+            return Rectangle.Intersect(
+                new Rectangle(
+                    0,
+                    0,
+                    width,
+                    height),
+                rectangle);
+        }
+
+        private static double Clamp01(
+            double value)
+        {
+            if (double.IsNaN(value) ||
+                double.IsInfinity(value))
+            {
+                return 0;
+            }
+
+            if (value < 0)
+                return 0;
+
+            if (value > 1)
+                return 1;
+
+            return value;
+        }
+
+        private static MLTextResult CreateResult(
+            string original,
+            string processed,
+            double confidence)
+        {
+            return new MLTextResult
+            {
+                OriginalText =
+                    original ?? string.Empty,
+
+                ProcessedText =
+                    processed ?? string.Empty,
+
+                Confidence =
+                    Clamp01(confidence),
+
+                Improvements =
+                    new List<string>(),
+
+                Timestamp =
+                    DateTime.Now
+            };
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(
+                    ref _disposed) != 0)
+            {
+                throw new ObjectDisposedException(
+                    nameof(MLTextProcessor));
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(
+                    ref _disposed,
+                    1) != 0)
+            {
+                return;
+            }
+
+            lock (_modelLock)
+            {
+                foreach (Net model in
+                         _dnnModels.Values)
+                {
+                    try
+                    {
+                        model?.Dispose();
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                _dnnModels.Clear();
+            }
+
+            lock (_historyLock)
+            {
+                _recentTexts.Clear();
+                _wordFrequency.Clear();
+                _contextPatterns.Clear();
+            }
         }
     }
 
-    /// ML metin işleme sonucu
-    public class MLTextResult
+    public sealed class MLTextResult
     {
-        public string OriginalText { get; set; }
-        public string ProcessedText { get; set; }
+        public string OriginalText { get; set; } = string.Empty;
+        public string ProcessedText { get; set; } = string.Empty;
         public double Confidence { get; set; }
         public List<string> Improvements { get; set; } = new List<string>();
         public DateTime Timestamp { get; set; } = DateTime.Now;
     }
 
-    /// ML istatistikleri
-
-    public class MLStatistics
+    public sealed class MLStatistics
     {
         public int TotalTextsProcessed { get; set; }
         public int UniqueWordsLearned { get; set; }
@@ -550,4 +1238,3 @@ namespace GameTranslatorUltimate
         public double AverageConfidence { get; set; }
     }
 }
-

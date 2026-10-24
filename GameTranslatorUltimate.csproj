@@ -9,6 +9,7 @@
     <RootNamespace>GameTranslatorUltimate</RootNamespace>
     <AssemblyName>GameTranslatorUltimate</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <RuntimeIdentifiers>win-x64;win-x86</RuntimeIdentifiers>
     <FileAlignment>512</FileAlignment>
     <ProjectTypeGuids>{60dc8134-eba5-43b8-bcc9-bb4bc16c2548};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
     <WarningLevel>4</WarningLevel>
@@ -118,11 +119,13 @@
     </Compile>
     <Compile Include="HotkeyManager.cs" />
     <Compile Include="IOcrEngine.cs" />
+    <Compile Include="OcrTextCorrector.cs" />
     <Compile Include="PerformanceOptimizedTranslationService.cs" />
     <Compile Include="PointerScanner.cs" />
     <Compile Include="TesseractOcrEngine.cs" />
     <Compile Include="TranslationCacheManager.cs" />
     <Compile Include="WindowsOcrEngine.cs" />
+    <Compile Include="GameTranslatorOcrEngine.cs" />
     <Compile Include="WindowsOcrService.cs" />
     <Page Include="HotkeyInputControl.xaml">
       <SubType>Designer</SubType>
@@ -145,6 +148,10 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="Themes\DarkTheme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="Themes\ControlStyles.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
@@ -191,6 +198,7 @@
     </Compile>
     <Compile Include="MemoryService.cs" />
     <Compile Include="OcrRegionProcessor.cs" />
+    <Compile Include="RegionScorer.cs" />
     <Compile Include="OcrService.cs" />
     <Compile Include="OutputWindow.xaml.cs">
       <DependentUpon>OutputWindow.xaml</DependentUpon>
@@ -274,5 +282,16 @@
   </ItemGroup>
   <ItemGroup>
     <Resource Include="logo.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="GameTranslator Ultimate.sln" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="OwnOCR\win-x64\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="OwnOCR\models\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>

@@ -2,18 +2,18 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Timers; 
+using System.Threading;
 
 namespace GameTranslatorUltimate
 {
     public class ProcessService : IProcessService, IDisposable
     {
-        private readonly ILogger _logger;
-        private List<Process> _processes = new List<Process>();
-        private Timer _refreshTimer;
-        private readonly object _lock = new object();
+        private sealed class CpuSample
+        {
+            public TimeSpan ProcessorTime { get; set; }
+            public DateTime Timestamp { get; set; }
+        }
 
-      
         public class ProcessInfo
         {
             public int Id { get; set; }
@@ -24,118 +24,429 @@ namespace GameTranslatorUltimate
             public long MemoryUsageBytes { get; set; }
         }
 
+        private const int RefreshIntervalMilliseconds = 30000;
+
+        private readonly ILogger _logger;
+        private readonly object _dataLock = new object();
+
+        private readonly Dictionary<int, CpuSample> _cpuSamples =
+            new Dictionary<int, CpuSample>();
+
+        private List<ProcessInfo> _processInfos =
+            new List<ProcessInfo>();
+
+        private Timer _refreshTimer;
+
+        private int _refreshing;
+        private int _disposed;
+
         public ProcessService(ILogger logger)
         {
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            RefreshProcesses(); // Başlangıçta bir kez listeyi doldur.
+            _logger =
+                logger ?? throw new ArgumentNullException(nameof(logger));
+
+            RefreshProcesses();
             StartAutoRefresh();
         }
 
         public IEnumerable<Process> GetProcesses()
         {
-            lock (_lock)
-            {
-                
-                return new List<Process>(_processes);
-            }
-        }
+            ThrowIfDisposed();
 
-        public void RefreshProcesses()
-        {
-            _logger.LogInformation("Proses listesi yenileniyor...");
-            try
-            {
-                var accessibleProcesses = Process.GetProcesses()
-                                                 .Where(IsProcessAccessible)
-                                                 .ToList();
-                lock (_lock)
-                {
-                    _processes = accessibleProcesses;
-                }
-                _logger.LogInformation($"Toplam {_processes.Count} adet erişilebilir proses bulundu.");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Proses listesi yenilenirken bir hata oluştu.", ex);
-                lock (_lock)
-                {
-                    _processes.Clear();
-                }
-            }
-        }
+            int[] processIds;
 
-        private bool IsProcessAccessible(Process p)
-        {
-            try
+            lock (_dataLock)
             {
-                // Sistem ve korumalı işlemlere erişmeye çalışırken oluşacak hataları engellemek için.
-                return !p.HasExited && p.MainModule != null;
+                processIds =
+                    _processInfos
+                        .Select(x => x.Id)
+                        .ToArray();
             }
-            catch
+
+            var result =
+                new List<Process>();
+
+            foreach (int processId in processIds)
             {
-                return false;
+                try
+                {
+                    Process process =
+                        Process.GetProcessById(processId);
+
+                    if (!process.HasExited)
+                    {
+                        result.Add(process);
+                    }
+                    else
+                    {
+                        process.Dispose();
+                    }
+                }
+                catch
+                {
+                }
             }
+
+            return result;
         }
 
         public IEnumerable<ProcessInfo> GetProcessInfos()
         {
-            var currentProcesses = GetProcesses(); // Kilitli ve güvenli kopyayı al.
+            ThrowIfDisposed();
 
-            return currentProcesses.Select(p =>
+            lock (_dataLock)
             {
-                try
-                {
-                    return new ProcessInfo
-                    {
-                        Id = p.Id,
-                        ProcessName = p.ProcessName,
-                        StartTime = p.StartTime,
-                        MainModuleFileName = p.MainModule?.FileName,
-                        CpuUsage = GetCpuUsage(p),
-                        MemoryUsageBytes = p.WorkingSet64
-                    };
-                }
-                catch (Exception)
-                {
-                    // Eğer işlem bu arada kapandıysa null döner
-                    return null;
-                }
-            }).Where(pi => pi != null).ToList(); // Null olanları listeden çıkarmak için.
+                return _processInfos
+                    .Select(CloneProcessInfo)
+                    .ToList();
+            }
         }
 
-        private float GetCpuUsage(Process process)
+        public IEnumerable<ProcessInfo> FilterProcesses(
+            Func<ProcessInfo, bool> predicate)
         {
+            ThrowIfDisposed();
+
+            if (predicate == null)
+                throw new ArgumentNullException(nameof(predicate));
+
+            return GetProcessInfos()
+                .Where(predicate)
+                .ToList();
+        }
+
+        public void RefreshProcesses()
+        {
+            ThrowIfDisposed();
+
+            if (Interlocked.CompareExchange(
+                    ref _refreshing,
+                    1,
+                    0) != 0)
+            {
+                return;
+            }
+
             try
             {
-                // Bu hesaplama, işlemin başlangıcından bu yana olan ORTALAMA CPU kullanımı analiz etmek için
-                var totalProcessorTime = process.TotalProcessorTime;
-                var runTime = DateTime.Now - process.StartTime;
-                if (runTime.TotalMilliseconds > 0)
+                Process[] processes = null;
+
+                try
                 {
-                    return (float)(totalProcessorTime.TotalMilliseconds / (Environment.ProcessorCount * runTime.TotalMilliseconds) * 100);
+                    processes =
+                        Process.GetProcesses();
+
+                    DateTime now =
+                        DateTime.UtcNow;
+
+                    var newProcessInfos =
+                        new List<ProcessInfo>();
+
+                    var activeProcessIds =
+                        new HashSet<int>();
+
+                    foreach (Process process in processes)
+                    {
+                        try
+                        {
+                            ProcessInfo info =
+                                CreateProcessInfo(
+                                    process,
+                                    now);
+
+                            if (info == null)
+                                continue;
+
+                            newProcessInfos.Add(info);
+                            activeProcessIds.Add(info.Id);
+                        }
+                        catch
+                        {
+                        }
+                        finally
+                        {
+                            try
+                            {
+                                process.Dispose();
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+
+                    lock (_dataLock)
+                    {
+                        _processInfos =
+                            newProcessInfos
+                                .OrderBy(x => x.ProcessName)
+                                .ThenBy(x => x.Id)
+                                .ToList();
+
+                        RemoveDeadCpuSamples(
+                            activeProcessIds);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        "Proses listesi yenilenirken hata oluştu.",
+                        ex);
+                }
+                finally
+                {
+                    if (processes != null)
+                    {
+                        foreach (Process process in processes)
+                        {
+                            try
+                            {
+                                process?.Dispose();
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
                 }
             }
-            catch {}
-            return 0f;
+            finally
+            {
+                Interlocked.Exchange(
+                    ref _refreshing,
+                    0);
+            }
         }
 
-        public IEnumerable<ProcessInfo> FilterProcesses(Func<ProcessInfo, bool> predicate)
+        private ProcessInfo CreateProcessInfo(
+            Process process,
+            DateTime timestamp)
         {
-            return GetProcessInfos().Where(predicate);
+            if (process == null)
+                return null;
+
+            int processId;
+            string processName;
+            DateTime startTime;
+            string moduleFileName;
+            long memoryUsage;
+            TimeSpan processorTime;
+
+            try
+            {
+                if (process.HasExited)
+                    return null;
+
+                processId =
+                    process.Id;
+
+                processName =
+                    process.ProcessName;
+
+                startTime =
+                    process.StartTime;
+
+                memoryUsage =
+                    process.WorkingSet64;
+
+                processorTime =
+                    process.TotalProcessorTime;
+            }
+            catch
+            {
+                return null;
+            }
+
+            try
+            {
+                moduleFileName =
+                    process.MainModule != null
+                        ? process.MainModule.FileName
+                        : null;
+            }
+            catch
+            {
+                return null;
+            }
+
+            float cpuUsage =
+                CalculateCpuUsage(
+                    processId,
+                    processorTime,
+                    timestamp);
+
+            return new ProcessInfo
+            {
+                Id = processId,
+                ProcessName = processName,
+                StartTime = startTime,
+                MainModuleFileName = moduleFileName,
+                CpuUsage = cpuUsage,
+                MemoryUsageBytes = memoryUsage
+            };
+        }
+
+        private float CalculateCpuUsage(
+            int processId,
+            TimeSpan currentProcessorTime,
+            DateTime currentTimestamp)
+        {
+            lock (_dataLock)
+            {
+                CpuSample previousSample;
+
+                float cpuUsage = 0f;
+
+                if (_cpuSamples.TryGetValue(
+                    processId,
+                    out previousSample))
+                {
+                    double elapsedMilliseconds =
+                        (currentTimestamp -
+                         previousSample.Timestamp)
+                        .TotalMilliseconds;
+
+                    double processorMilliseconds =
+                        (currentProcessorTime -
+                         previousSample.ProcessorTime)
+                        .TotalMilliseconds;
+
+                    if (elapsedMilliseconds > 0 &&
+                        processorMilliseconds >= 0)
+                    {
+                        double usage =
+                            processorMilliseconds /
+                            (elapsedMilliseconds *
+                             Environment.ProcessorCount) *
+                            100.0;
+
+                        if (usage < 0)
+                            usage = 0;
+
+                        if (usage > 100)
+                            usage = 100;
+
+                        cpuUsage =
+                            (float)usage;
+                    }
+                }
+
+                _cpuSamples[processId] =
+                    new CpuSample
+                    {
+                        ProcessorTime =
+                            currentProcessorTime,
+
+                        Timestamp =
+                            currentTimestamp
+                    };
+
+                return cpuUsage;
+            }
+        }
+
+        private void RemoveDeadCpuSamples(
+            HashSet<int> activeProcessIds)
+        {
+            int[] deadProcessIds =
+                _cpuSamples.Keys
+                    .Where(id =>
+                        !activeProcessIds.Contains(id))
+                    .ToArray();
+
+            foreach (int processId in deadProcessIds)
+            {
+                _cpuSamples.Remove(processId);
+            }
+        }
+
+        private static ProcessInfo CloneProcessInfo(
+            ProcessInfo source)
+        {
+            return new ProcessInfo
+            {
+                Id = source.Id,
+                ProcessName = source.ProcessName,
+                StartTime = source.StartTime,
+                MainModuleFileName = source.MainModuleFileName,
+                CpuUsage = source.CpuUsage,
+                MemoryUsageBytes = source.MemoryUsageBytes
+            };
         }
 
         private void StartAutoRefresh()
         {
-            _refreshTimer = new Timer(30000); // 30 saniyede bir
-            _refreshTimer.Elapsed += (sender, e) => RefreshProcesses();
-            _refreshTimer.AutoReset = true;
-            _refreshTimer.Enabled = true;
+            _refreshTimer =
+                new Timer(
+                    AutoRefreshCallback,
+                    null,
+                    RefreshIntervalMilliseconds,
+                    RefreshIntervalMilliseconds);
+        }
+
+        private void AutoRefreshCallback(object state)
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+
+            try
+            {
+                RefreshProcesses();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    "Otomatik proses yenileme sırasında hata oluştu.",
+                    ex);
+            }
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                throw new ObjectDisposedException(
+                    nameof(ProcessService));
+            }
         }
 
         public void Dispose()
         {
-            _refreshTimer?.Stop();
-            _refreshTimer?.Dispose();
+            if (Interlocked.Exchange(
+                    ref _disposed,
+                    1) != 0)
+            {
+                return;
+            }
+
+            Timer timer =
+                Interlocked.Exchange(
+                    ref _refreshTimer,
+                    null);
+
+            if (timer != null)
+            {
+                try
+                {
+                    timer.Change(
+                        Timeout.Infinite,
+                        Timeout.Infinite);
+                }
+                catch
+                {
+                }
+
+                timer.Dispose();
+            }
+
+            lock (_dataLock)
+            {
+                _processInfos.Clear();
+                _cpuSamples.Clear();
+            }
         }
     }
 }

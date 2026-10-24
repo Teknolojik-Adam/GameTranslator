@@ -16,8 +16,8 @@ namespace GameTranslatorUltimate
     {
         private readonly ILogger _logger;
         private OcrEngine _ocrEngine;
+        private readonly object _engineLock = new object();
 
-       
         private Language _currentLanguage;
 
         public OcrEngineType EngineType => OcrEngineType.WindowsOcr;
@@ -97,8 +97,11 @@ namespace GameTranslatorUltimate
                 var newOcrEngine = OcrEngine.TryCreateFromLanguage(lang);
                 if (newOcrEngine != null)
                 {
-                    _ocrEngine = newOcrEngine;
-                    _currentLanguage = lang;
+                    lock (_engineLock)
+                    {
+                        _ocrEngine = newOcrEngine;
+                        _currentLanguage = lang;
+                    }
                     _logger.LogInformation($"OCR motoru yeni dile ayarlandı: {_ocrEngine.RecognizerLanguage.DisplayName}");
                     return true;
                 }
@@ -115,8 +118,9 @@ namespace GameTranslatorUltimate
 
         public async Task<string> RecognizeTextAsync(Bitmap image, string language, Tesseract.PageSegMode psm = Tesseract.PageSegMode.Auto)
         {
-            // Not: Windows OCR PageSegMode parametresini kullanmaz (Tesseract'a özgü)
-            if (_ocrEngine == null)
+            OcrEngine engineCopy;
+            lock (_engineLock) { engineCopy = _ocrEngine; }
+            if (engineCopy == null)
             {
                 _logger.LogWarning("Windows OCR motoru kullanılamıyor, tanıma işlemi atlandı.");
                 return string.Empty;
@@ -128,13 +132,16 @@ namespace GameTranslatorUltimate
 
                 string windowsLanguageCode = MapToWindowsLanguageCode(language);
 
-                if (_currentLanguage == null || windowsLanguageCode != _currentLanguage.LanguageTag)
+                Language curLang;
+                lock (_engineLock) { curLang = _currentLanguage; }
+                if (curLang == null || windowsLanguageCode != curLang.LanguageTag)
                 {
                     bool languageLoaded = await LoadLanguageAsync(windowsLanguageCode);
                     if (!languageLoaded)
                     {
-                        _logger.LogWarning($"İstenen dil '{windowsLanguageCode}' yüklenemediği için varsayılan dil '{_currentLanguage?.DisplayName}' ile devam ediliyor.");
+                        _logger.LogWarning($"İstenen dil '{windowsLanguageCode}' yüklenemediği için varsayılan dil '{curLang?.DisplayName}' ile devam ediliyor.");
                     }
+                    lock (_engineLock) { engineCopy = _ocrEngine; }
                 }
 
                 using (SoftwareBitmap softwareBitmap = await CreateSoftwareBitmapFromBitmap(image))
@@ -145,7 +152,7 @@ namespace GameTranslatorUltimate
                         return string.Empty;
                     }
 
-                    OcrResult ocrResult = await _ocrEngine.RecognizeAsync(softwareBitmap);
+                    OcrResult ocrResult = await engineCopy.RecognizeAsync(softwareBitmap);
                     string rawText = ocrResult.Text?.Trim() ?? string.Empty;
                     
                     // Hafif temizlik (sadece boşluk/satır sonu normalizasyonu)

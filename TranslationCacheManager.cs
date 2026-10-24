@@ -7,203 +7,780 @@ using System.Threading;
 
 namespace GameTranslatorUltimate
 {
-    public class TranslationCacheManager
+    public class TranslationCacheManager : IDisposable
     {
-       
-        private class CacheEntry
+        private sealed class CacheEntry
         {
             public string TranslatedText { get; set; }
             public DateTime LastAccessTime { get; set; }
         }
 
         private readonly string _cacheFilePath;
+        private readonly string _tempFilePath;
+
         private readonly ILogger _logger;
-     
+
+        private readonly ReaderWriterLockSlim _cacheLock =
+            new ReaderWriterLockSlim(LockRecursionPolicy.NoRecursion);
+
+        private readonly object _saveTimerLock = new object();
+
         private Dictionary<string, CacheEntry> _cache;
 
-        
-        private readonly int _maxCacheSize = 5000;
-        private readonly TimeSpan _cacheTimeout = TimeSpan.FromHours(24);
+        private Timer _saveTimer;
 
-      
-        private static readonly ReaderWriterLockSlim _lock = new ReaderWriterLockSlim();
+        private bool _hasUnsavedChanges;
+        private bool _disposed;
+
+        private const int MaxCacheSize = 5000;
+
+        private static readonly TimeSpan CacheTimeout =
+            TimeSpan.FromHours(24);
+
+        // Birden fazla çeviri peş peşe gelirse her biri için
+        // dosyayı tekrar yazmak yerine son değişiklikten sonra bekle.
+        private const int SaveDelayMilliseconds = 750;
 
         public TranslationCacheManager(ILogger logger)
         {
-            _logger = logger;
-            _cacheFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "translation_cache.json");
-            
-            _cache = LoadCacheFromFile();
+            _logger =
+                logger ?? throw new ArgumentNullException(nameof(logger));
+
+            _cacheFilePath =
+                Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory,
+                    "translation_cache.json");
+
+            _tempFilePath =
+                _cacheFilePath + ".tmp";
+
+            _cache =
+                LoadCacheFromFile();
+
+            _saveTimer =
+                new Timer(
+                    SaveTimerCallback,
+                    null,
+                    Timeout.Infinite,
+                    Timeout.Infinite);
         }
 
-        
+        /// <summary>
+        /// Cache içinde kayıtlı çeviriyi döndürür.
+        /// Bulunamazsa null döner.
+        /// </summary>
         public string GetTranslation(string originalText)
         {
-            if (_cache.TryGetValue(originalText, out CacheEntry entry))
+            ThrowIfDisposed();
+
+            if (string.IsNullOrWhiteSpace(originalText))
+                return null;
+
+            /*
+             * LastAccessTime değiştiği için burada yalnızca read lock
+             * kullanamayız. CacheEntry üzerinde mutation yapıyoruz.
+             */
+            _cacheLock.EnterWriteLock();
+
+            try
             {
-             
-                entry.LastAccessTime = DateTime.UtcNow;
+                CacheEntry entry;
+
+                if (!_cache.TryGetValue(originalText, out entry) ||
+                    entry == null)
+                {
+                    return null;
+                }
+
+                // Süresi dolmuş entry ise doğrudan kaldır.
+                if (DateTime.UtcNow - entry.LastAccessTime >
+                    CacheTimeout)
+                {
+                    _cache.Remove(originalText);
+
+                    MarkDirty();
+
+                    return null;
+                }
+
+                entry.LastAccessTime =
+                    DateTime.UtcNow;
+
+                /*
+                 * Her cache hit'inde diske yazmıyoruz.
+                 * LastAccessTime sonraki normal save veya Dispose
+                 * sırasında persist edilir.
+                 */
+                _hasUnsavedChanges = true;
+
                 return entry.TranslatedText;
             }
-            return null;
+            finally
+            {
+                _cacheLock.ExitWriteLock();
+            }
         }
 
-        
-        public void AddTranslation(string originalText, string translatedText)
+        /// <summary>
+        /// Yeni çeviriyi cache'e ekler veya mevcut olanı günceller.
+        /// </summary>
+        public void AddTranslation(
+            string originalText,
+            string translatedText)
         {
-            _cache[originalText] = new CacheEntry
-            {
-                TranslatedText = translatedText,
-                LastAccessTime = DateTime.UtcNow
-            };
+            ThrowIfDisposed();
 
-            // Önbellek maksimum boyutu aştıysa, en eski girdileri temizle.
-            if (_cache.Count > _maxCacheSize)
+            if (string.IsNullOrWhiteSpace(originalText))
+                return;
+
+            if (translatedText == null)
+                return;
+
+            int removedCount = 0;
+
+            _cacheLock.EnterWriteLock();
+
+            try
             {
-                TrimCache();
+                _cache[originalText] =
+                    new CacheEntry
+                    {
+                        TranslatedText = translatedText,
+                        LastAccessTime = DateTime.UtcNow
+                    };
+
+                if (_cache.Count > MaxCacheSize)
+                {
+                    removedCount =
+                        TrimCacheInternal();
+                }
+
+                _hasUnsavedChanges = true;
+            }
+            finally
+            {
+                _cacheLock.ExitWriteLock();
             }
 
-            SaveChangesToFile();
+            if (removedCount > 0)
+            {
+                _logger.LogInformation(
+                    $"{removedCount} adet eski çeviri cache boyut sınırı nedeniyle silindi.");
+            }
+
+            ScheduleSave();
         }
 
-        // Zamanı dolmuş önbellek girdilerini temizler.
+        /// <summary>
+        /// Süresi dolmuş cache girdilerini temizler.
+        /// </summary>
         public void ExpireEntries()
         {
-            var now = DateTime.UtcNow;
-            var expiredKeys = _cache.Where(pair => now - pair.Value.LastAccessTime > _cacheTimeout)
-                                    .Select(pair => pair.Key)
-                                    .ToList();
+            ThrowIfDisposed();
 
-            if (expiredKeys.Any())
+            int removedCount = 0;
+
+            DateTime now =
+                DateTime.UtcNow;
+
+            _cacheLock.EnterWriteLock();
+
+            try
             {
-                foreach (var key in expiredKeys)
+                List<string> expiredKeys =
+                    _cache
+                        .Where(pair =>
+                            pair.Value == null ||
+                            now - pair.Value.LastAccessTime >
+                            CacheTimeout)
+                        .Select(pair => pair.Key)
+                        .ToList();
+
+                foreach (string key in expiredKeys)
                 {
-                    _cache.Remove(key);
+                    if (_cache.Remove(key))
+                    {
+                        removedCount++;
+                    }
                 }
-                _logger.LogInformation($"{expiredKeys.Count} adet zamanı dolmuş çeviri önbellekten silindi.");
-                SaveChangesToFile();
+
+                if (removedCount > 0)
+                {
+                    _hasUnsavedChanges = true;
+                }
+            }
+            finally
+            {
+                _cacheLock.ExitWriteLock();
+            }
+
+            if (removedCount > 0)
+            {
+                _logger.LogInformation(
+                    $"{removedCount} adet zamanı dolmuş çeviri önbellekten silindi.");
+
+                ScheduleSave();
             }
         }
 
-       
+        /// <summary>
+        /// Cache'in string-string snapshot'ını döndürür.
+        /// Dışarıya gerçek Dictionary instance verilmez.
+        /// </summary>
         public Dictionary<string, string> LoadCache()
         {
-            return _cache.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.TranslatedText);
+            ThrowIfDisposed();
+
+            _cacheLock.EnterReadLock();
+
+            try
+            {
+                return _cache
+                    .Where(pair =>
+                        pair.Value != null)
+                    .ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Value.TranslatedText,
+                        StringComparer.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                _cacheLock.ExitReadLock();
+            }
         }
 
-       
-        public void SaveCache(Dictionary<string, string> cacheData)
+        /// <summary>
+        /// Cache içeriğini tamamen verilen verilerle değiştirir.
+        /// Bu metod explicit save olduğu için doğrudan diske yazar.
+        /// </summary>
+        public void SaveCache(
+            Dictionary<string, string> cacheData)
         {
-            if (cacheData == null) return;
+            ThrowIfDisposed();
 
-            _cache.Clear();
-            foreach (var kvp in cacheData)
+            if (cacheData == null)
+                return;
+
+            _cacheLock.EnterWriteLock();
+
+            try
             {
-                _cache[kvp.Key] = new CacheEntry
+                _cache.Clear();
+
+                foreach (KeyValuePair<string, string> pair in cacheData)
                 {
-                    TranslatedText = kvp.Value,
-                    LastAccessTime = DateTime.UtcNow
-                };
+                    if (string.IsNullOrWhiteSpace(pair.Key))
+                        continue;
+
+                    if (pair.Value == null)
+                        continue;
+
+                    _cache[pair.Key] =
+                        new CacheEntry
+                        {
+                            TranslatedText = pair.Value,
+                            LastAccessTime = DateTime.UtcNow
+                        };
+                }
+
+                TrimCacheInternal();
+
+                _hasUnsavedChanges = true;
+            }
+            finally
+            {
+                _cacheLock.ExitWriteLock();
             }
 
             SaveChangesToFile();
         }
 
-        // Önbelleği maksimum boyuta getirmek için en son kullanılanları tutar, en eskileri atar .
-        private void TrimCache()
+        /// <summary>
+        /// Bekleyen cache değişikliklerini anında diske yazar.
+        /// Uygulama kapanırken kullanılabilir.
+        /// </summary>
+        public void Flush()
         {
-            int itemsToRemove = _cache.Count - _maxCacheSize;
-            if (itemsToRemove <= 0) return;
+            ThrowIfDisposed();
 
-           
-            var keysToRemove = _cache.OrderBy(pair => pair.Value.LastAccessTime)
-                                     .Take(itemsToRemove)
-                                     .Select(pair => pair.Key)
-                                     .ToList();
-
-            foreach (var key in keysToRemove)
-            {
-                _cache.Remove(key);
-            }
-            _logger.LogInformation($"{keysToRemove.Count} adet en eski çeviri, boyut sınırı için önbellekten silindi.");
+            SaveChangesToFile();
         }
 
-    
-        private Dictionary<string, CacheEntry> LoadCacheFromFile()
+        private int TrimCacheInternal()
+        {
+            int itemsToRemove =
+                _cache.Count - MaxCacheSize;
+
+            if (itemsToRemove <= 0)
+                return 0;
+
+            List<string> keysToRemove =
+                _cache
+                    .OrderBy(pair =>
+                        pair.Value?.LastAccessTime ??
+                        DateTime.MinValue)
+                    .Take(itemsToRemove)
+                    .Select(pair => pair.Key)
+                    .ToList();
+
+            int removedCount = 0;
+
+            foreach (string key in keysToRemove)
+            {
+                if (_cache.Remove(key))
+                {
+                    removedCount++;
+                }
+            }
+
+            return removedCount;
+        }
+
+        private Dictionary<string, CacheEntry>
+            LoadCacheFromFile()
         {
             if (!File.Exists(_cacheFilePath))
             {
-                _logger.LogInformation("Çeviri önbellek dosyası bulunamadı. Yeni bir tane oluşturulacak.");
-                return new Dictionary<string, CacheEntry>();
+                _logger.LogInformation(
+                    "Çeviri önbellek dosyası bulunamadı. Yeni önbellek oluşturuluyor.");
+
+                return CreateEmptyCache();
             }
 
             try
             {
-                _lock.EnterReadLock();
-                string json = File.ReadAllText(_cacheFilePath);
-                
-              
-                try
+                string json =
+                    File.ReadAllText(_cacheFilePath);
+
+                if (string.IsNullOrWhiteSpace(json))
                 {
-                    var cache = JsonSerializer.Deserialize<Dictionary<string, CacheEntry>>(json);
-                    _logger.LogInformation($"{cache.Count} adet çeviri önbellekten yüklendi.");
-                    return cache ?? new Dictionary<string, CacheEntry>();
+                    _logger.LogWarning(
+                        "Çeviri önbellek dosyası boş. Yeni önbellek oluşturuluyor.");
+
+                    return CreateEmptyCache();
                 }
-                catch
+
+                Dictionary<string, CacheEntry> newFormatCache =
+                    TryLoadNewFormat(json);
+
+                if (newFormatCache != null)
                 {
-                    
-                    try
-                    {
-                        var oldCache = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-                        var newCache = new Dictionary<string, CacheEntry>();
-                        
-                        foreach (var kvp in oldCache)
-                        {
-                            newCache[kvp.Key] = new CacheEntry
-                            {
-                                TranslatedText = kvp.Value,
-                                LastAccessTime = DateTime.UtcNow
-                            };
-                        }
-                        
-                        _logger.LogInformation($"{newCache.Count} adet çeviri eski formattan yeni formata dönüştürüldü.");
-                        return newCache;
-                    }
-                    catch
-                    {
-                        _logger.LogWarning("Önbellek dosyası geçersiz format. Yeni önbellek oluşturuluyor.");
-                        return new Dictionary<string, CacheEntry>();
-                    }
+                    _logger.LogInformation(
+                        $"{newFormatCache.Count} adet çeviri önbellekten yüklendi.");
+
+                    return newFormatCache;
                 }
+
+                Dictionary<string, CacheEntry> oldFormatCache =
+                    TryLoadOldFormat(json);
+
+                if (oldFormatCache != null)
+                {
+                    _logger.LogInformation(
+                        $"{oldFormatCache.Count} adet çeviri eski cache formatından dönüştürüldü.");
+
+                    return oldFormatCache;
+                }
+
+                _logger.LogWarning(
+                    "Çeviri önbellek dosyası geçersiz formatta.");
+
+                BackupCorruptedCacheFile();
+
+                return CreateEmptyCache();
             }
             catch (Exception ex)
             {
-                _logger.LogError("Çeviri önbelleği yüklenirken hata oluştu.", ex);
-                return new Dictionary<string, CacheEntry>();
-            }
-            finally
-            {
-                _lock.ExitReadLock();
+                _logger.LogError(
+                    "Çeviri önbelleği yüklenirken hata oluştu.",
+                    ex);
+
+                BackupCorruptedCacheFile();
+
+                return CreateEmptyCache();
             }
         }
 
-        
-        private void SaveChangesToFile()
+        private Dictionary<string, CacheEntry>
+            TryLoadNewFormat(string json)
         {
             try
             {
-                _lock.EnterWriteLock();
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                string json = JsonSerializer.Serialize(_cache, options);
-                File.WriteAllText(_cacheFilePath, json);
+                Dictionary<string, CacheEntry> cache =
+                    JsonSerializer.Deserialize<
+                        Dictionary<string, CacheEntry>>(json);
+
+                if (cache == null)
+                    return null;
+
+                var result =
+                    new Dictionary<string, CacheEntry>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                foreach (KeyValuePair<string, CacheEntry> pair in cache)
+                {
+                    if (string.IsNullOrWhiteSpace(pair.Key))
+                        continue;
+
+                    if (pair.Value == null)
+                        continue;
+
+                    if (pair.Value.TranslatedText == null)
+                        continue;
+
+                    if (pair.Value.LastAccessTime ==
+                        default(DateTime))
+                    {
+                        pair.Value.LastAccessTime =
+                            DateTime.UtcNow;
+                    }
+
+                    result[pair.Key] =
+                        pair.Value;
+                }
+
+                return result;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private Dictionary<string, CacheEntry>
+            TryLoadOldFormat(string json)
+        {
+            try
+            {
+                Dictionary<string, string> oldCache =
+                    JsonSerializer.Deserialize<
+                        Dictionary<string, string>>(json);
+
+                if (oldCache == null)
+                    return null;
+
+                var convertedCache =
+                    CreateEmptyCache();
+
+                foreach (KeyValuePair<string, string> pair in oldCache)
+                {
+                    if (string.IsNullOrWhiteSpace(pair.Key))
+                        continue;
+
+                    if (pair.Value == null)
+                        continue;
+
+                    convertedCache[pair.Key] =
+                        new CacheEntry
+                        {
+                            TranslatedText = pair.Value,
+                            LastAccessTime = DateTime.UtcNow
+                        };
+                }
+
+                return convertedCache;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private Dictionary<string, CacheEntry>
+            CreateEmptyCache()
+        {
+            return new Dictionary<string, CacheEntry>(
+                StringComparer.OrdinalIgnoreCase);
+        }
+
+        private void ScheduleSave()
+        {
+            if (_disposed)
+                return;
+
+            lock (_saveTimerLock)
+            {
+                if (_saveTimer == null)
+                    return;
+
+                /*
+                 * Her yeni ekleme timer'ı baştan başlatır.
+                 *
+                 * Örnek:
+                 * 50 paralel çeviri tamamlandı
+                 *     ↓
+                 * 50 ayrı disk write yerine
+                 *     ↓
+                 * yaklaşık 1 adet JSON write
+                 */
+                _saveTimer.Change(
+                    SaveDelayMilliseconds,
+                    Timeout.Infinite);
+            }
+        }
+
+        private void SaveTimerCallback(object state)
+        {
+            if (_disposed)
+                return;
+
+            try
+            {
+                SaveChangesToFile();
             }
             catch (Exception ex)
             {
-                _logger.LogError("Çeviri önbelleği kaydedilirken hata oluştu.", ex);
+                _logger.LogError(
+                    "Zamanlanmış cache kaydı sırasında hata oluştu.",
+                    ex);
+            }
+        }
+
+        private void SaveChangesToFile()
+        {
+            if (_disposed)
+                return;
+
+            Dictionary<string, CacheEntry> snapshot;
+
+            _cacheLock.EnterReadLock();
+
+            try
+            {
+                if (!_hasUnsavedChanges)
+                    return;
+
+                snapshot =
+                    _cache.ToDictionary(
+                        pair => pair.Key,
+                        pair => new CacheEntry
+                        {
+                            TranslatedText =
+                                pair.Value?.TranslatedText,
+
+                            LastAccessTime =
+                                pair.Value?.LastAccessTime ??
+                                DateTime.UtcNow
+                        },
+                        StringComparer.OrdinalIgnoreCase);
             }
             finally
             {
-                _lock.ExitWriteLock();
+                _cacheLock.ExitReadLock();
+            }
+
+            try
+            {
+                var options =
+                    new JsonSerializerOptions
+                    {
+                        WriteIndented = true
+                    };
+
+                string json =
+                    JsonSerializer.Serialize(
+                        snapshot,
+                        options);
+
+                /*
+                 * Önce geçici dosyaya yaz.
+                 *
+                 * Böylece uygulama JSON yazılırken çökerse ana cache
+                 * dosyasının yarım kalma ihtimali ciddi şekilde azalır.
+                 */
+                File.WriteAllText(
+                    _tempFilePath,
+                    json);
+
+                ReplaceCacheFileAtomically();
+
+                _cacheLock.EnterWriteLock();
+
+                try
+                {
+                    /*
+                     * Buradaki flag konusunda küçük bir yarış ihtimali
+                     * olabilir: snapshot alındıktan sonra yeni entry eklenmişse
+                     * onun dirty durumunu yanlışlıkla temizlemek istemiyoruz.
+                     *
+                     * Bu yüzden snapshot ile güncel cache boyutu kontrol edilir.
+                     */
+                    if (_cache.Count == snapshot.Count)
+                    {
+                        _hasUnsavedChanges = false;
+                    }
+                }
+                finally
+                {
+                    _cacheLock.ExitWriteLock();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    "Çeviri önbelleği diske kaydedilirken hata oluştu.",
+                    ex);
+
+                SafeDeleteTempFile();
+            }
+        }
+
+        private void ReplaceCacheFileAtomically()
+        {
+            if (!File.Exists(_cacheFilePath))
+            {
+                File.Move(
+                    _tempFilePath,
+                    _cacheFilePath);
+
+                return;
+            }
+
+            string backupPath =
+                _cacheFilePath + ".bak";
+
+            try
+            {
+                File.Replace(
+                    _tempFilePath,
+                    _cacheFilePath,
+                    backupPath,
+                    true);
+
+                TryDeleteFile(
+                    backupPath);
+            }
+            catch
+            {
+                /*
+                 * File.Replace bazı dosya sistemlerinde/problemli
+                 * ortamlarda başarısız olabilir.
+                 *
+                 * Fallback:
+                 * eski dosyayı kaldır ve temp dosyayı yerine taşı.
+                 */
+
+                TryDeleteFile(
+                    _cacheFilePath);
+
+                File.Move(
+                    _tempFilePath,
+                    _cacheFilePath);
+            }
+        }
+
+        private void BackupCorruptedCacheFile()
+        {
+            try
+            {
+                if (!File.Exists(_cacheFilePath))
+                    return;
+
+                string backupPath =
+                    _cacheFilePath +
+                    ".corrupt_" +
+                    DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+                File.Copy(
+                    _cacheFilePath,
+                    backupPath,
+                    true);
+
+                _logger.LogWarning(
+                    $"Bozuk cache dosyası yedeklendi: " +
+                    $"{Path.GetFileName(backupPath)}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    $"Bozuk cache dosyası yedeklenemedi: {ex.Message}");
+            }
+        }
+
+        private void SafeDeleteTempFile()
+        {
+            TryDeleteFile(
+                _tempFilePath);
+        }
+
+        private void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch
+            {
+                // Cleanup hatası ana işlemi bozmamalı.
+            }
+        }
+
+        private void MarkDirty()
+        {
+            _hasUnsavedChanges = true;
+
+            ScheduleSave();
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(
+                    nameof(TranslationCacheManager));
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            /*
+             * Önce son değişiklikleri yaz.
+             * _disposed henüz true yapılmıyor çünkü
+             * SaveChangesToFile dispose kontrolü yapıyor.
+             */
+            try
+            {
+                SaveChangesToFile();
+            }
+            catch
+            {
+                // SaveChangesToFile zaten logluyor.
+            }
+
+            _disposed = true;
+
+            lock (_saveTimerLock)
+            {
+                if (_saveTimer != null)
+                {
+                    try
+                    {
+                        _saveTimer.Change(
+                            Timeout.Infinite,
+                            Timeout.Infinite);
+
+                        _saveTimer.Dispose();
+                    }
+                    catch
+                    {
+                    }
+
+                    _saveTimer = null;
+                }
+            }
+
+            try
+            {
+                _cacheLock.Dispose();
+            }
+            catch
+            {
             }
         }
     }

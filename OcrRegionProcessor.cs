@@ -4,212 +4,799 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace GameTranslatorUltimate
 {
-    public class RegionProcessResult
+    public sealed class RegionProcessResult
     {
         public Rectangle Region { get; set; }
-        public string RecognizedText { get; set; }
-        public string TranslatedText { get; set; }
+        public string RecognizedText { get; set; } = string.Empty;
+        public string TranslatedText { get; set; } = string.Empty;
+        public double Score { get; set; }
         public DateTime ProcessedAt { get; set; }
+    }
+
+    public sealed class OcrRegionResult
+    {
+        public Rectangle Region { get; set; }
+        public string RecognizedText { get; set; } = string.Empty;
+        public double Score { get; set; }
     }
 
     public class OcrRegionProcessor : IDisposable
     {
         private readonly IOcrService _ocrService;
         private readonly ITranslationService _translationService;
-        private readonly string _ocrLanguage;
-        private readonly string _targetLanguage;
+        private readonly AppSettings _appSettings;
+
+        private readonly string _fallbackOcrLanguage;
+        private readonly string _fallbackTargetLanguage;
+
         private readonly double _changeThreshold;
         private readonly int _mergeTolerance;
-        private Bitmap _previousImage;
-        private bool _disposed = false;
 
-        public OcrRegionProcessor(IOcrService ocrService, ITranslationService translationService, string ocrLanguage, string targetLanguage, double changeThreshold = 0.01, int mergeTolerance = 15)
+        private readonly SemaphoreSlim _processLock =
+            new SemaphoreSlim(1, 1);
+
+        private Bitmap _previousImage;
+
+        private int _disposed;
+
+        public OcrRegionProcessor(
+            IOcrService ocrService,
+            ITranslationService translationService,
+            AppSettings appSettings,
+            double changeThreshold = 0.01,
+            int mergeTolerance = 15)
         {
-            _ocrService = ocrService ?? throw new ArgumentNullException(nameof(ocrService));
-            _translationService = translationService ?? throw new ArgumentNullException(nameof(translationService));
-            _ocrLanguage = ocrLanguage;
-            _targetLanguage = targetLanguage;
-            _changeThreshold = changeThreshold;
-            _mergeTolerance = mergeTolerance;
+            _ocrService =
+                ocrService ??
+                throw new ArgumentNullException(nameof(ocrService));
+
+            _translationService =
+                translationService ??
+                throw new ArgumentNullException(nameof(translationService));
+
+            _appSettings =
+                appSettings ??
+                throw new ArgumentNullException(nameof(appSettings));
+
+            _fallbackOcrLanguage =
+                null;
+
+            _fallbackTargetLanguage =
+                null;
+
+            _changeThreshold =
+                NormalizeChangeThreshold(
+                    changeThreshold);
+
+            _mergeTolerance =
+                Math.Max(
+                    0,
+                    mergeTolerance);
         }
 
-        public async Task<List<RegionProcessResult>> ProcessChangedRegionsAsync(Bitmap currentImage)
+        public OcrRegionProcessor(
+            IOcrService ocrService,
+            ITranslationService translationService,
+            string ocrLanguage,
+            string targetLanguage,
+            double changeThreshold = 0.01,
+            int mergeTolerance = 15)
         {
-            var results = new List<RegionProcessResult>();
+            _ocrService =
+                ocrService ??
+                throw new ArgumentNullException(nameof(ocrService));
+
+            _translationService =
+                translationService ??
+                throw new ArgumentNullException(nameof(translationService));
+
+            _fallbackOcrLanguage =
+                ocrLanguage;
+
+            _fallbackTargetLanguage =
+                targetLanguage;
+
+            try
+            {
+                _appSettings =
+                    ServiceContainer.GetService<AppSettings>();
+            }
+            catch
+            {
+                _appSettings = null;
+            }
+
+            _changeThreshold =
+                NormalizeChangeThreshold(
+                    changeThreshold);
+
+            _mergeTolerance =
+                Math.Max(
+                    0,
+                    mergeTolerance);
+        }
+
+        public Task<List<RegionProcessResult>> ProcessChangedRegionsAsync(Bitmap currentImage)
+        {
+            return ProcessChangedRegionsAsync(currentImage, null);
+        }
+
+        public async Task<List<RegionProcessResult>> ProcessChangedRegionsAsync(
+            Bitmap currentImage,
+            Rectangle? manualOcrRegion)
+        {
+            ThrowIfDisposed();
+
+            var results =
+                new List<RegionProcessResult>();
 
             if (currentImage == null)
                 return results;
 
-            if (_previousImage == null)
-            {
-                _previousImage = new Bitmap(currentImage);
-                return results;
-            }
+            await _processLock
+                .WaitAsync()
+                .ConfigureAwait(false);
 
             try
             {
-                // Değişen bölgeleri filtrele
-                var changedRegions = _ocrService
-                    .FindTextRegions(currentImage)
-                    .Where(r => IsRegionChanged(_previousImage, currentImage, r))
-                    .ToList();
+                ThrowIfDisposed();
 
-                if (!changedRegions.Any())
+                if (_previousImage == null ||
+                    _previousImage.Width != currentImage.Width ||
+                    _previousImage.Height != currentImage.Height)
                 {
-                    _previousImage?.Dispose();
-                    _previousImage = new Bitmap(currentImage);
+                    ReplacePreviousImage(
+                        currentImage);
+
                     return results;
                 }
 
-                // Bitişik bölgeleri birleştir
-                var mergedRegions = MergeAdjacentRegions(changedRegions, _mergeTolerance);
+                List<Rectangle> detectedRegions =
+                    _ocrService.FindTextRegions(
+                        currentImage);
 
-                var tasks = mergedRegions.Select(async region =>
+                bool isFullScreenFallback = IsFullScreenRegion(detectedRegions, currentImage.Width, currentImage.Height);
+
+                if (detectedRegions == null ||
+                    detectedRegions.Count == 0)
+                {
+                    ReplacePreviousImage(
+                        currentImage);
+
+                    return results;
+                }
+
+                if (manualOcrRegion.HasValue)
+                {
+                    Rectangle manual = ClampRegion(manualOcrRegion.Value, currentImage.Width, currentImage.Height);
+                    if (manual.Width > 0 && manual.Height > 0)
+                    {
+                        var filtered = new List<Rectangle>();
+                        foreach (var r in detectedRegions)
+                        {
+                            double ratio = RegionScorer.IntersectionRatio(r, manual);
+                            if (ratio > 0.05)
+                                filtered.Add(r);
+                        }
+                        if (filtered.Count > 0)
+                        {
+                            detectedRegions = filtered;
+                            isFullScreenFallback = false;
+                        }
+                        else
+                        {
+                            detectedRegions = new List<Rectangle> { manual };
+                            isFullScreenFallback = false;
+                        }
+                    }
+                }
+                else if (isFullScreenFallback)
+                {
+                    ReplacePreviousImage(currentImage);
+                    return results;
+                }
+
+                var changedRegions =
+                    new List<Rectangle>();
+
+                foreach (Rectangle region in detectedRegions)
+                {
+                    Rectangle safeRegion =
+                        ClampRegion(
+                            region,
+                            currentImage.Width,
+                            currentImage.Height);
+
+                    if (safeRegion.Width <= 0 ||
+                        safeRegion.Height <= 0)
+                    {
+                        continue;
+                    }
+
+                    if (isFullScreenFallback)
+                    {
+                        changedRegions.Add(safeRegion);
+                    }
+                    else if (IsRegionChanged(
+                        _previousImage,
+                        currentImage,
+                        safeRegion))
+                    {
+                        changedRegions.Add(
+                            safeRegion);
+                    }
+                }
+
+                if (changedRegions.Count == 0)
+                {
+                    ReplacePreviousImage(
+                        currentImage);
+
+                    return results;
+                }
+
+                List<Rectangle> mergedRegions =
+                    MergeAdjacentRegions(
+                        changedRegions,
+                        _mergeTolerance);
+
+                mergedRegions =
+                    mergedRegions
+                        .OrderBy(
+                            region =>
+                                region.Top)
+                        .ThenBy(
+                            region =>
+                                region.Left)
+                        .ToList();
+
+                string ocrLanguage =
+                    GetCurrentOcrLanguage();
+
+                if (string.IsNullOrWhiteSpace(
+                    ocrLanguage))
+                {
+                    ocrLanguage = "eng";
+                }
+
+                var scoredResults = new List<RegionProcessResult>();
+
+                foreach (Rectangle region in mergedRegions)
                 {
                     try
                     {
-                        using (var regionBmp = _ocrService.CropImage(currentImage, region))
+                        using (Bitmap regionBitmap =
+                               _ocrService.CropImage(
+                                   currentImage,
+                                   region))
                         {
-                            string recognized = await _ocrService.GetTextAdaptiveAsync(regionBmp, _ocrLanguage);
-                            if (!string.IsNullOrWhiteSpace(recognized))
-                            {
-                                string translated = await _translationService.TranslateAsync(recognized, _targetLanguage, null);
+                            if (regionBitmap == null)
+                                continue;
 
-                                var result = new RegionProcessResult
+                            string recognized =
+                                await _ocrService
+                                    .GetTextAdaptiveAsync(
+                                        regionBitmap,
+                                        ocrLanguage)
+                                    .ConfigureAwait(false);
+
+                            if (string.IsNullOrWhiteSpace(
+                                recognized))
+                            {
+                                continue;
+                            }
+
+                            recognized =
+                                recognized.Trim();
+
+                            if (recognized.Length < 2)
+                                continue;
+
+                            if (recognized.Length > 500)
+                                recognized = recognized.Substring(0, 500).Trim();
+
+                            double score = RegionScorer.ScoreRegion(region, recognized, currentImage.Width, currentImage.Height, manualOcrRegion);
+                            RegionScorer.RegisterTextSeen(recognized);
+
+                            var result =
+                                new RegionProcessResult
                                 {
-                                    Region = region,
-                                    RecognizedText = recognized,
-                                    TranslatedText = translated,
-                                    ProcessedAt = DateTime.Now
+                                    Region =
+                                        region,
+
+                                    RecognizedText =
+                                        recognized,
+
+                                    TranslatedText =
+                                        string.Empty,
+
+                                    Score =
+                                        score,
+
+                                    ProcessedAt =
+                                        DateTime.Now
                                 };
 
-                                lock (results)
-                                {
-                                    results.Add(result);
-                                }
+                            scoredResults.Add(result);
 
-                                OnOcrRegionProcessed(region, recognized, translated);
-                            }
+                            OnOcrRegionProcessed(
+                                region,
+                                recognized,
+                                score);
                         }
                     }
                     catch (Exception ex)
                     {
-                        OnOcrRegionProcessError(region, ex);
+                        OnOcrRegionProcessError(
+                            region,
+                            ex);
                     }
-                }).ToList();
+                }
 
-                await Task.WhenAll(tasks);
+                if (scoredResults.Count == 0)
+                {
+                    ReplacePreviousImage(currentImage);
+                    return results;
+                }
 
-                _previousImage?.Dispose();
-                _previousImage = new Bitmap(currentImage);
+                var ranked = RegionScorer.RankAndFilter(scoredResults);
+
+                if (ranked.Count == 0)
+                {
+                    var best = scoredResults.OrderByDescending(x => x.Score).FirstOrDefault();
+                    if (best != null && best.Score > -80)
+                        ranked.Add(best);
+                }
+
+                foreach (var r in ranked)
+                {
+                    Console.WriteLine($"[OCR Rank] Region={r.Region} Score={r.Score:F1} Text=\"{r.RecognizedText.Substring(0, Math.Min(60, r.RecognizedText.Length))}\" {(ranked.Contains(r) ? "SELECTED" : "REJECTED")}");
+                }
+
+                ReplacePreviousImage(
+                    currentImage);
+
+                return ranked;
             }
             catch (Exception ex)
             {
-                OnOcrRegionProcessError(Rectangle.Empty, ex);
+                OnOcrRegionProcessError(
+                    Rectangle.Empty,
+                    ex);
+
+                ReplacePreviousImage(
+                    currentImage);
+
+                return results;
+            }
+            finally
+            {
+                _processLock.Release();
+            }
+        }
+
+        private static bool IsFullScreenRegion(List<Rectangle> regions, int w, int h)
+        {
+            if (regions == null || regions.Count != 1)
+                return false;
+            var r = regions[0];
+            return r.X == 0 && r.Y == 0 && r.Width == w && r.Height == h;
+        }
+
+        private string GetCurrentOcrLanguage()
+        {
+            if (_appSettings != null)
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(
+                        _appSettings.OcrLanguage))
+                    {
+                        return _appSettings.OcrLanguage
+                            .Trim();
+                    }
+                }
+                catch
+                {
+                }
             }
 
-            return results;
+            return string.IsNullOrWhiteSpace(
+                    _fallbackOcrLanguage)
+                ? "eng"
+                : _fallbackOcrLanguage.Trim();
         }
 
-        private List<Rectangle> MergeAdjacentRegions(List<Rectangle> regions, int mergeTolerance)
+        private string GetCurrentTargetLanguage()
         {
-            if (regions.Count <= 1)
-                return regions;
+            if (_appSettings != null)
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(
+                        _appSettings.TargetLanguage))
+                    {
+                        return _appSettings.TargetLanguage
+                            .Trim();
+                    }
+                }
+                catch
+                {
+                }
+            }
 
-            bool merged;
+            return string.IsNullOrWhiteSpace(
+                    _fallbackTargetLanguage)
+                ? string.Empty
+                : _fallbackTargetLanguage.Trim();
+        }
+
+        private List<Rectangle> MergeAdjacentRegions(
+            List<Rectangle> regions,
+            int mergeTolerance)
+        {
+            if (regions == null ||
+                regions.Count == 0)
+            {
+                return new List<Rectangle>();
+            }
+
+            if (regions.Count == 1)
+            {
+                return new List<Rectangle>(
+                    regions);
+            }
+
+            var working =
+                new List<Rectangle>(
+                    regions);
+
+            bool changed;
+
             do
             {
-                merged = false;
-                var mergedRegions = new List<Rectangle>();
-                var used = new bool[regions.Count];
+                changed = false;
 
-                for (int i = 0; i < regions.Count; i++)
+                var result =
+                    new List<Rectangle>();
+
+                var used =
+                    new bool[working.Count];
+
+                for (int i = 0;
+                      i < working.Count;
+                      i++)
                 {
-                    if (used[i]) continue;
+                    if (used[i])
+                        continue;
 
-                    var currentRect = regions[i];
-                    for (int j = i + 1; j < regions.Count; j++)
+                    Rectangle current =
+                        working[i];
+
+                    used[i] =
+                        true;
+
+                    bool expanded;
+
+                    do
                     {
-                        if (used[j]) continue;
+                        expanded = false;
 
-                        var inflatedRect = currentRect;
-                        inflatedRect.Inflate(mergeTolerance, mergeTolerance);
-
-                        if (inflatedRect.IntersectsWith(regions[j]))
+                        for (int j = 0;
+                             j < working.Count;
+                              j++)
                         {
-                            currentRect = Rectangle.Union(currentRect, regions[j]);
-                            used[j] = true;
-                            merged = true;
+                            if (used[j])
+                                continue;
+
+                            Rectangle comparison =
+                                current;
+
+                            comparison.Inflate(
+                                mergeTolerance,
+                                mergeTolerance);
+
+                            if (!comparison.IntersectsWith(
+                                working[j]))
+                            {
+                                continue;
+                            }
+
+                            current =
+                                Rectangle.Union(
+                                    current,
+                                    working[j]);
+
+                            used[j] =
+                                true;
+
+                            expanded =
+                                true;
+
+                            changed =
+                                true;
                         }
                     }
-                    mergedRegions.Add(currentRect);
+                    while (expanded);
+
+                    result.Add(
+                        current);
                 }
-                regions = mergedRegions;
 
-            } while (merged);
+                working =
+                    result;
+            }
+            while (changed);
 
-            return regions;
+            return working;
         }
 
-        private bool IsRegionChanged(Bitmap prev, Bitmap curr, Rectangle region)
+        private bool IsRegionChanged(
+            Bitmap previous,
+            Bitmap current,
+            Rectangle region)
         {
+            if (previous == null ||
+                current == null)
+            {
+                return true;
+            }
+
+            Rectangle safeRegion =
+                Rectangle.Intersect(
+                    new Rectangle(
+                        0,
+                        0,
+                        Math.Min(
+                            previous.Width,
+                            current.Width),
+                        Math.Min(
+                            previous.Height,
+                            current.Height)),
+                    region);
+
+            if (safeRegion.Width <= 0 ||
+                safeRegion.Height <= 0)
+            {
+                return true;
+            }
+
             try
             {
-                using (var prevRoi = prev.Clone(region, prev.PixelFormat))
-                using (var currRoi = curr.Clone(region, curr.PixelFormat))
-                using (var prevMat = BitmapConverter.ToMat(prevRoi))
-                using (var currMat = BitmapConverter.ToMat(currRoi))
-                using (var diff = new Mat())
+                using (Bitmap previousRoi =
+                       previous.Clone(
+                           safeRegion,
+                           previous.PixelFormat))
+                using (Bitmap currentRoi =
+                       current.Clone(
+                           safeRegion,
+                           current.PixelFormat))
+                using (Mat previousMat =
+                       BitmapConverter.ToMat(
+                           previousRoi))
+                using (Mat currentMat =
+                       BitmapConverter.ToMat(
+                           currentRoi))
+                using (Mat previousGray =
+                       ConvertToGray(
+                           previousMat))
+                using (Mat currentGray =
+                       ConvertToGray(
+                           currentMat))
+                using (Mat diff =
+                       new Mat())
                 {
-                    Cv2.Absdiff(prevMat, currMat, diff);
-                    if (diff.Channels() > 1)
-                        Cv2.CvtColor(diff, diff, ColorConversionCodes.BGR2GRAY);
-                    return Cv2.CountNonZero(diff) > (region.Width * region.Height * _changeThreshold);
+                    Cv2.Absdiff(
+                        previousGray,
+                        currentGray,
+                        diff);
+
+                    Cv2.Threshold(
+                        diff,
+                        diff,
+                        15,
+                        255,
+                        ThresholdTypes.Binary);
+
+                    int changedPixels =
+                        Cv2.CountNonZero(
+                            diff);
+
+                    long totalPixels =
+                        (long)safeRegion.Width *
+                        safeRegion.Height;
+
+                    if (totalPixels <= 0)
+                        return true;
+
+                    double changeRatio =
+                        (double)changedPixels /
+                        totalPixels;
+
+                    return changeRatio >=
+                           _changeThreshold;
                 }
             }
             catch
             {
-                // If comparison fails (e.g. OpenCV missing), assume region changed so we process it
                 return true;
             }
         }
 
-        protected virtual void OnOcrRegionProcessed(Rectangle region, string recognizedText, string translatedText)
+        private static Mat ConvertToGray(
+            Mat source)
         {
-            if (!string.IsNullOrWhiteSpace(recognizedText) && !string.IsNullOrWhiteSpace(translatedText))
+            var gray =
+                new Mat();
+
+            if (source == null ||
+                source.Empty())
             {
-                Console.WriteLine($"[Bölge: {region}] \"{recognizedText}\" → \"{translatedText}\"");
+                return gray;
             }
-            else if (!string.IsNullOrWhiteSpace(recognizedText))
+
+            int channels =
+                source.Channels();
+
+            if (channels == 1)
             {
-                Console.WriteLine($"[Bölge: {region}] \"{recognizedText}\" → (çevrilemedi)");
+                source.CopyTo(
+                    gray);
+
+                return gray;
+            }
+
+            if (channels == 4)
+            {
+                Cv2.CvtColor(
+                    source,
+                    gray,
+                    ColorConversionCodes.BGRA2GRAY);
+
+                return gray;
+            }
+
+            Cv2.CvtColor(
+                source,
+                gray,
+                ColorConversionCodes.BGR2GRAY);
+
+            return gray;
+        }
+
+        private static Rectangle ClampRegion(
+            Rectangle region,
+            int width,
+            int height)
+        {
+            return Rectangle.Intersect(
+                new Rectangle(
+                    0,
+                    0,
+                    width,
+                    height),
+                region);
+        }
+
+        private static double NormalizeChangeThreshold(
+            double threshold)
+        {
+            if (double.IsNaN(threshold) ||
+                double.IsInfinity(threshold))
+            {
+                return 0.01;
+            }
+
+            if (threshold < 0.001)
+                return 0.001;
+
+            if (threshold > 1.0)
+                return 1.0;
+
+            return threshold;
+        }
+
+        private void ReplacePreviousImage(
+            Bitmap image)
+        {
+            Bitmap newImage =
+                image != null
+                    ? new Bitmap(image)
+                    : null;
+
+            Bitmap oldImage =
+                _previousImage;
+
+            _previousImage =
+                newImage;
+
+            if (oldImage != null)
+            {
+                oldImage.Dispose();
             }
         }
 
-        protected virtual void OnOcrRegionProcessError(Rectangle region, Exception exception)
+        protected void OnOcrRegionProcessed(
+            Rectangle region,
+            string recognizedText,
+            double score)
         {
-            Console.WriteLine($"[Hata - Bölge: {region}] {exception.Message}");
+            if (!string.IsNullOrWhiteSpace(recognizedText))
+            {
+                Console.WriteLine($"[Bölge: {region} Score:{score:F1}] \"{recognizedText}\"");
+            }
+        }
+
+        protected virtual void OnOcrRegionProcessed(
+            Rectangle region,
+            string recognizedText,
+            string translatedText)
+        {
+            if (!string.IsNullOrWhiteSpace(
+                    recognizedText) &&
+                !string.IsNullOrWhiteSpace(
+                    translatedText))
+            {
+                Console.WriteLine(
+                    $"[Bölge: {region}] \"{recognizedText}\" → \"{translatedText}\"");
+            }
+            else if (!string.IsNullOrWhiteSpace(
+                         recognizedText))
+            {
+                Console.WriteLine(
+                    $"[Bölge: {region}] \"{recognizedText}\" → (çevrilemedi)");
+            }
+        }
+
+        protected virtual void OnOcrRegionProcessError(
+            Rectangle region,
+            Exception exception)
+        {
+            Console.WriteLine(
+                $"[Hata - Bölge: {region}] {exception?.Message}");
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(
+                    ref _disposed) != 0)
+            {
+                throw new ObjectDisposedException(
+                    nameof(OcrRegionProcessor));
+            }
         }
 
         public void Dispose()
         {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if (!_disposed)
+            if (Interlocked.Exchange(
+                    ref _disposed,
+                    1) != 0)
             {
-                if (disposing)
-                {
-                    _previousImage?.Dispose();
-                }
-                _disposed = true;
+                return;
+            }
+
+            Bitmap previous =
+                _previousImage;
+
+            _previousImage =
+                null;
+
+            if (previous != null)
+            {
+                previous.Dispose();
+            }
+
+            try
+            {
+                _processLock.Dispose();
+            }
+            catch
+            {
             }
         }
     }

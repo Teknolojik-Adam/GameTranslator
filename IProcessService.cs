@@ -6,6 +6,7 @@ namespace GameTranslatorUltimate
     public interface IProcessService
     {
         IEnumerable<Process> GetProcesses();
+
         void RefreshProcesses();
     }
 }

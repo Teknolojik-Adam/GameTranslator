@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><TargetFramework>net8.0</TargetFramework><OutputType>Exe</OutputType>
+<ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+<AssemblyName>GameTranslatorOCR.Bridge</AssemblyName></PropertyGroup>
+<ItemGroup>
+<ProjectReference Include="../GameTranslatorOCR.Core/GameTranslatorOCR.Core.csproj"/>
+<PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.1"/>
+</ItemGroup></Project>
